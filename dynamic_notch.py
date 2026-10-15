@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 
 from PyQt6.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QPoint, QRect, QRectF,
+    Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QPoint, QPointF, QRect, QRectF,
     QThread, pyqtSignal
 )
 from PyQt6.QtGui import (
@@ -435,8 +435,8 @@ class DynamicNotch(QWidget):
         self.leave_timer.stop()
         if not self.is_expanded:
             self.expand_notch()
-            # Check for GitHub updates each time the user opens the notch!
-            self.trigger_github_update_check()
+            # Check for GitHub updates right after the smooth expand finishes
+            QTimer.singleShot(self.expand_duration + 50, self.trigger_github_update_check)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -729,14 +729,9 @@ class DynamicNotch(QWidget):
         now = datetime.now()
 
         # ==========================================
-        # CLOCK RENDERING: Standby (HH:MM) -> Extends (:SS)
+        # CLOCK RENDERING: Rock-Solid Flicker-Free Vector Scaling
         # ==========================================
-        clock_font_size = 9.5 + (10.0 * p)
-        font_weight = QFont.Weight.Medium if p < 0.5 else QFont.Weight.DemiBold
-        
-        clock_font = QFont("Segoe UI Variable Display")
-        clock_font.setPointSizeF(clock_font_size)
-        clock_font.setWeight(font_weight)
+        clock_font = QFont("Segoe UI Variable Display", 18, QFont.Weight.DemiBold)
         clock_font.setStyleHint(QFont.StyleHint.SansSerif)
         painter.setFont(clock_font)
 
@@ -751,45 +746,50 @@ class DynamicNotch(QWidget):
 
         metrics = QFontMetricsF(clock_font)
         w_base = metrics.horizontalAdvance(time_base)
-        w_sec_full = metrics.horizontalAdvance(time_sec)
+        w_sec = metrics.horizontalAdvance(time_sec)
         w_ampm = metrics.horizontalAdvance(time_ampm) if time_ampm else 0.0
 
-        if self.show_seconds:
-            sec_extend_factor = max(0.0, min(1.0, (p - 0.05) / 0.95))
-            w_sec_animated = w_sec_full * sec_extend_factor
-            sec_alpha = int(sec_extend_factor * 255)
-        else:
-            w_sec_animated = 0.0
-            sec_alpha = 0
+        # Scale factor smoothly scales text without re-rasterizing glyphs or snapping hints
+        s = 0.52 + (0.48 * p)
 
-        total_time_w = w_base + w_sec_animated + w_ampm
-        start_x = (w - total_time_w) / 2.0
+        # Seconds animation factor (smooth 0.0 -> 1.0)
+        sec_factor = p if self.show_seconds else 0.0
+        w_sec_anim = w_sec * sec_factor
+        sec_alpha = int(sec_factor * 255)
 
-        y_clock = 8.0 * p
-        h_clock = (h * (1.0 - p)) + (34.0 * p)
+        total_content_w = w_base + w_sec_anim + w_ampm
 
-        # 1. Base Time
+        # Center in unscaled coordinates
+        scaled_w = w / s
+        scaled_h = h / s
+        start_x = (scaled_w - total_content_w) / 2.0
+
+        # Vertical baseline position
+        text_baseline_offset = metrics.ascent() - (metrics.height() / 2.0)
+        y_standby = (scaled_h / 2.0) + text_baseline_offset
+        y_opened = 29.0
+        base_y = y_standby * (1.0 - p) + y_opened * p
+
+        painter.save()
+        painter.scale(s, s)
+
+        # 1. Base Time (Hours & Minutes): Constant font size & metrics, zero flicker
         clock_alpha = int(220 + 35 * p)
         painter.setPen(QColor(255, 255, 255, clock_alpha))
-        base_rect = QRectF(start_x, y_clock, w_base, h_clock)
-        painter.drawText(base_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, time_base)
+        painter.drawText(QPointF(start_x, base_y), time_base)
 
         # 2. Extended Seconds
-        if sec_alpha > 0 and w_sec_animated > 0:
-            painter.save()
-            clip_rect = QRectF(start_x + w_base, y_clock, w_sec_animated, h_clock)
-            painter.setClipRect(clip_rect)
-            painter.setPen(QColor(240, 240, 250, sec_alpha))
-            sec_draw_rect = QRectF(start_x + w_base, y_clock, w_sec_full, h_clock)
-            painter.drawText(sec_draw_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, time_sec)
-            painter.restore()
+        if sec_alpha > 0 and self.show_seconds:
+            painter.setPen(QColor(235, 235, 245, sec_alpha))
+            painter.drawText(QPointF(start_x + w_base, base_y), time_sec)
 
         # 3. AM/PM Tag
         if time_ampm:
-            ampm_rect = QRectF(start_x + w_base + w_sec_animated, y_clock, w_ampm + 4, h_clock)
             ampm_alpha = int(180 + 55 * p)
             painter.setPen(QColor(200, 200, 215, ampm_alpha))
-            painter.drawText(ampm_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, time_ampm)
+            painter.drawText(QPointF(start_x + w_base + w_sec_anim, base_y), time_ampm)
+
+        painter.restore()
 
         # ==========================================
         # EXPANDED REVEAL: Date & GitHub Status Pill
