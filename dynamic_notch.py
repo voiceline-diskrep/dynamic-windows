@@ -1,6 +1,5 @@
 import sys
 import os
-import time
 import json
 import ctypes
 import subprocess
@@ -19,12 +18,15 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QSlider, QPushButton, QInputDialog, QMessageBox
 )
 
-# Windows native constants for topmost enforcement
+# Windows native constants
 HWND_TOPMOST = -1
 SWP_NOMOVE = 0x0002
 SWP_NOSIZE = 0x0001
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
+
+# Windows subprocess flag: completely prevents console/cmd window flash
+CREATE_NO_WINDOW = 0x08000000
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +41,7 @@ SPEED_PRESETS = {
 
 
 class UpdateCheckerThread(QThread):
-    """Background worker that queries GitHub so the UI animation stays 100% fluid."""
+    """Background worker that queries GitHub quietly with zero CMD flashing."""
     status_signal = pyqtSignal(str, str)  # status_code, message
 
     def __init__(self, repo_dir):
@@ -51,44 +53,47 @@ class UpdateCheckerThread(QThread):
             # 1. Check if git remote origin is configured
             res = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
-                cwd=self.repo_dir, capture_output=True, text=True, timeout=3
+                cwd=self.repo_dir, capture_output=True, text=True, timeout=3,
+                creationflags=CREATE_NO_WINDOW
             )
             remote_url = res.stdout.strip()
             if res.returncode != 0 or not remote_url:
-                self.status_signal.emit("no_remote", "GitHub: Link remote in menu")
+                self.status_signal.emit("no_remote", "GitHub remote repository is not configured.")
                 return
 
             # 2. Get local HEAD commit hash
             head_res = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
-                cwd=self.repo_dir, capture_output=True, text=True, timeout=2
+                cwd=self.repo_dir, capture_output=True, text=True, timeout=2,
+                creationflags=CREATE_NO_WINDOW
             )
             local_hash = head_res.stdout.strip()
 
             # 3. Query remote for HEAD of main / master
             ls_res = subprocess.run(
                 ["git", "ls-remote", remote_url, "refs/heads/main", "refs/heads/master"],
-                cwd=self.repo_dir, capture_output=True, text=True, timeout=6
+                cwd=self.repo_dir, capture_output=True, text=True, timeout=6,
+                creationflags=CREATE_NO_WINDOW
             )
             if ls_res.returncode != 0 or not ls_res.stdout.strip():
-                self.status_signal.emit("error", "GitHub: Unable to reach repo")
+                self.status_signal.emit("error", "Unable to connect to GitHub. Please check your internet.")
                 return
 
             lines = ls_res.stdout.strip().splitlines()
             remote_hash = lines[0].split()[0] if lines else ""
 
             if remote_hash == local_hash:
-                self.status_signal.emit("up_to_date", "✓ Up to date with GitHub")
+                self.status_signal.emit("up_to_date", "You are running the latest version! (Up to date)")
             else:
-                self.status_signal.emit("update_available", "✦ Update available! Click to pull")
+                self.status_signal.emit("update_available", "A new update is available on GitHub!")
         except subprocess.TimeoutExpired:
-            self.status_signal.emit("error", "GitHub: Check timed out")
+            self.status_signal.emit("error", "Update check timed out. GitHub may be slow.")
         except Exception as e:
-            self.status_signal.emit("error", f"GitHub: {str(e)[:22]}")
+            self.status_signal.emit("error", f"Error checking updates: {str(e)[:35]}")
 
 
 class GitPullThread(QThread):
-    """Background worker to pull updates from GitHub."""
+    """Background worker to pull updates from GitHub with zero CMD flashing."""
     finished_signal = pyqtSignal(bool, str)
 
     def __init__(self, repo_dir):
@@ -99,22 +104,23 @@ class GitPullThread(QThread):
         try:
             res = subprocess.run(
                 ["git", "pull", "origin", "main"],
-                cwd=self.repo_dir, capture_output=True, text=True, timeout=20
+                cwd=self.repo_dir, capture_output=True, text=True, timeout=20,
+                creationflags=CREATE_NO_WINDOW
             )
             if res.returncode == 0:
-                self.finished_signal.emit(True, "Successfully updated from GitHub!")
+                self.finished_signal.emit(True, "Successfully updated from GitHub!\nPlease restart the app to apply.")
             else:
-                # Try master if main fails
                 res_master = subprocess.run(
                     ["git", "pull", "origin", "master"],
-                    cwd=self.repo_dir, capture_output=True, text=True, timeout=20
+                    cwd=self.repo_dir, capture_output=True, text=True, timeout=20,
+                    creationflags=CREATE_NO_WINDOW
                 )
                 if res_master.returncode == 0:
-                    self.finished_signal.emit(True, "Successfully updated from GitHub!")
+                    self.finished_signal.emit(True, "Successfully updated from GitHub!\nPlease restart the app to apply.")
                 else:
-                    self.finished_signal.emit(False, f"Pull failed: {res.stderr.strip()[:30]}")
+                    self.finished_signal.emit(False, f"Update failed: {res.stderr.strip()[:40]}")
         except Exception as e:
-            self.finished_signal.emit(False, str(e)[:30])
+            self.finished_signal.emit(False, str(e)[:40])
 
 
 class SpeedSliderDialog(QDialog):
@@ -187,7 +193,6 @@ class SpeedSliderDialog(QDialog):
         header.setStyleSheet("font-weight: 600; font-size: 14px; color: #ffffff;")
         layout.addWidget(header)
 
-        # Slider
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(80, 1500)
         self.slider.setSingleStep(20)
@@ -195,12 +200,10 @@ class SpeedSliderDialog(QDialog):
         self.slider.valueChanged.connect(self.on_slider_change)
         layout.addWidget(self.slider)
 
-        # Value label
         self.val_label = QLabel(f"Duration: {current_expand} ms")
         self.val_label.setStyleSheet("color: #a1a1aa; font-size: 12px;")
         layout.addWidget(self.val_label)
 
-        # Button row
         btn_layout = QHBoxLayout()
         btn_test = QPushButton("Test Animation")
         btn_test.clicked.connect(self.test_animation)
@@ -228,7 +231,7 @@ class DynamicNotch(QWidget):
     def __init__(self):
         super().__init__()
         
-        # 1. Window Flags: Always on top, frameless, tool (hidden from taskbar & Alt-Tab), doesn't steal focus
+        # 1. Window Flags: Always on top, frameless, tool, doesn't steal focus
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
@@ -254,9 +257,9 @@ class DynamicNotch(QWidget):
         self.rest_width = 136
         self.rest_height = 29
         
-        # Expanded dimensions (opened state with time, date & update status)
+        # Expanded dimensions (clean time & date display)
         self.exp_width = 360
-        self.exp_height = 104
+        self.exp_height = 88
         
         # Load persisted settings
         self.load_config()
@@ -266,12 +269,6 @@ class DynamicNotch(QWidget):
         self._current_width = float(self.rest_width)
         self._current_height = float(self.rest_height)
         self.is_expanded = False
-
-        # GitHub Update Status Tracking
-        self.update_status = "idle"  # idle, checking, up_to_date, update_available, no_remote, error
-        self.update_msg = ""
-        self.last_check_time = 0.0   # timestamp of last check
-        self.update_rect = QRectF()   # clickable area for update badge
 
         self.checker_thread = None
         self.pull_thread = None
@@ -304,9 +301,6 @@ class DynamicNotch(QWidget):
 
         # 7. System Tray Setup
         self.setup_tray()
-
-        # 8. Check GitHub updates immediately on launch
-        QTimer.singleShot(600, lambda: self.trigger_github_update_check(force=True))
 
     # Qt Property for animation
     def get_progress(self):
@@ -389,54 +383,10 @@ class DynamicNotch(QWidget):
         
         self.setGeometry(x, y, w, h)
 
-    def trigger_github_update_check(self, force=False):
-        """Checks GitHub for updates in background whenever the notch is opened."""
-        now_ts = time.time()
-        # Debounce: check whenever opened (at most once every 5s unless forced)
-        if not force and (now_ts - self.last_check_time < 5.0):
-            return
-
-        self.last_check_time = now_ts
-        self.update_status = "checking"
-        self.update_msg = "Checking GitHub..."
-        self.update()
-
-        if self.checker_thread and self.checker_thread.isRunning():
-            return
-
-        self.checker_thread = UpdateCheckerThread(APP_DIR)
-        self.checker_thread.status_signal.connect(self.on_update_checked)
-        self.checker_thread.start()
-
-    def on_update_checked(self, status, message):
-        self.update_status = status
-        self.update_msg = message
-        self.update()
-
-    def trigger_git_pull(self):
-        """Pulls latest updates from GitHub."""
-        self.update_status = "checking"
-        self.update_msg = "Pulling updates from GitHub..."
-        self.update()
-
-        if self.pull_thread and self.pull_thread.isRunning():
-            return
-
-        self.pull_thread = GitPullThread(APP_DIR)
-        self.pull_thread.finished_signal.connect(self.on_pull_finished)
-        self.pull_thread.start()
-
-    def on_pull_finished(self, success, message):
-        self.update_msg = message
-        self.update_status = "up_to_date" if success else "error"
-        self.update()
-
     def enterEvent(self, event):
         self.leave_timer.stop()
         if not self.is_expanded:
             self.expand_notch()
-            # Check for GitHub updates right after the smooth expand finishes
-            QTimer.singleShot(self.expand_duration + 50, self.trigger_github_update_check)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -472,13 +422,6 @@ class DynamicNotch(QWidget):
     # Dragging & Context Menu support
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            # Check if clicked on the Update Badge when update is available
-            if self._anim_progress > 0.8 and self.update_status == "update_available":
-                if self.update_rect.contains(event.position()):
-                    self.trigger_git_pull()
-                    event.accept()
-                    return
-
             if event.modifiers() & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier):
                 self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 event.accept()
@@ -491,13 +434,6 @@ class DynamicNotch(QWidget):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        # Change cursor to pointing hand if hovering over update badge
-        if self._anim_progress > 0.8 and self.update_status == "update_available":
-            if self.update_rect.contains(event.position()):
-                self.setCursor(Qt.CursorShape.PointingHandCursor)
-            else:
-                self.setCursor(Qt.CursorShape.ArrowCursor)
-
         if self.drag_position and (event.buttons() & Qt.MouseButton.LeftButton):
             screen = QApplication.primaryScreen()
             if screen:
@@ -542,19 +478,22 @@ class DynamicNotch(QWidget):
             }
         """)
 
-        # GitHub Updates Section
-        act_check = menu.addAction("🔄 Check GitHub Updates Now")
-        act_check.triggered.connect(lambda: self.trigger_github_update_check(force=True))
+        # 1. Updates Submenu
+        update_menu = menu.addMenu("🔄 Updates & GitHub")
+        update_menu.setStyleSheet(menu.styleSheet())
 
-        act_pull = menu.addAction("⬇️ Pull Updates from GitHub")
-        act_pull.triggered.connect(self.trigger_git_pull)
+        act_check = update_menu.addAction("Check for Updates Now...")
+        act_check.triggered.connect(self.menu_check_updates)
 
-        act_remote = menu.addAction("🔗 Set GitHub Remote URL...")
+        act_pull = update_menu.addAction("Pull Updates from GitHub")
+        act_pull.triggered.connect(self.menu_pull_updates)
+
+        act_remote = update_menu.addAction("Set GitHub Repository URL...")
         act_remote.triggered.connect(self.prompt_set_remote)
 
         menu.addSeparator()
 
-        # Animation Speed Submenu
+        # 2. Animation Speed Submenu
         speed_menu = menu.addMenu(f"⚡ Animation Speed ({self.speed_preset.replace('_', ' ').title()})")
         speed_menu.setStyleSheet(menu.styleSheet())
 
@@ -596,18 +535,100 @@ class DynamicNotch(QWidget):
 
         menu.exec(self.mapToGlobal(event.pos()))
 
+    def menu_check_updates(self):
+        """Clean update check triggered manually from right-click menu."""
+        if self.checker_thread and self.checker_thread.isRunning():
+            return
+        self.checker_thread = UpdateCheckerThread(APP_DIR)
+        self.checker_thread.status_signal.connect(self.on_menu_update_result)
+        self.checker_thread.start()
+
+    def on_menu_update_result(self, status, message):
+        msg_box = QMessageBox(self)
+        msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #121215;
+                color: #e4e4e7;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QLabel {
+                color: #e4e4e7;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #27272a;
+                color: #ffffff;
+                border: 1px solid #3f3f46;
+                border-radius: 6px;
+                padding: 6px 14px;
+            }
+            QPushButton:hover {
+                background-color: #3b82f6;
+            }
+        """)
+        msg_box.setWindowTitle("Dynamic Windows Update")
+        
+        if status == "update_available":
+            msg_box.setText("✦ A new update is available on GitHub!\n\nWould you like to pull the update now?")
+            btn_update = msg_box.addButton("Update Now", QMessageBox.ButtonRole.AcceptRole)
+            msg_box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+            msg_box.exec()
+            if msg_box.clickedButton() == btn_update:
+                self.menu_pull_updates()
+        elif status == "up_to_date":
+            msg_box.setText("✓ You are up to date!\n\nYour Dynamic Windows is running the latest version.")
+            msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+            msg_box.exec()
+        else:
+            msg_box.setText(f"{message}")
+            msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+            msg_box.exec()
+
+    def menu_pull_updates(self):
+        if self.pull_thread and self.pull_thread.isRunning():
+            return
+        self.pull_thread = GitPullThread(APP_DIR)
+        self.pull_thread.finished_signal.connect(self.on_menu_pull_finished)
+        self.pull_thread.start()
+
+    def on_menu_pull_finished(self, success, message):
+        msg_box = QMessageBox(self)
+        msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #121215;
+                color: #e4e4e7;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QLabel {
+                color: #e4e4e7;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #27272a;
+                color: #ffffff;
+                border: 1px solid #3f3f46;
+                border-radius: 6px;
+                padding: 6px 14px;
+            }
+        """)
+        msg_box.setWindowTitle("Update Result")
+        msg_box.setText(message)
+        msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        msg_box.exec()
+
     def prompt_set_remote(self):
         url, ok = QInputDialog.getText(
             self, "Set GitHub Remote",
-            "Enter GitHub Repository URL:\n(e.g. https://github.com/username/notch.git)"
+            "Enter GitHub Repository URL:\n(e.g. https://github.com/voiceline-diskrep/dynamic-windows.git)"
         )
         if ok and url.strip():
             target_url = url.strip()
-            # Remove existing origin if any
-            subprocess.run(["git", "remote", "remove", "origin"], cwd=APP_DIR, capture_output=True)
-            res = subprocess.run(["git", "remote", "add", "origin", target_url], cwd=APP_DIR, capture_output=True)
+            subprocess.run(["git", "remote", "remove", "origin"], cwd=APP_DIR, capture_output=True, creationflags=CREATE_NO_WINDOW)
+            res = subprocess.run(["git", "remote", "add", "origin", target_url], cwd=APP_DIR, capture_output=True, creationflags=CREATE_NO_WINDOW)
             if res.returncode == 0:
-                self.trigger_github_update_check(force=True)
+                self.menu_check_updates()
 
     def open_speed_dialog(self):
         dlg = SpeedSliderDialog(self, self.expand_duration)
@@ -633,7 +654,6 @@ class DynamicNotch(QWidget):
         self.pinned = not self.pinned
         if self.pinned:
             self.expand_notch()
-            self.trigger_github_update_check()
         else:
             self.collapse_notch()
 
@@ -661,8 +681,8 @@ class DynamicNotch(QWidget):
             }
         """)
 
-        check_action = QAction("Check GitHub Updates", self)
-        check_action.triggered.connect(lambda: self.trigger_github_update_check(force=True))
+        check_action = QAction("Check for Updates...", self)
+        check_action.triggered.connect(self.menu_check_updates)
         tray_menu.addAction(check_action)
 
         speed_action = QAction("Animation Speed...", self)
@@ -682,7 +702,7 @@ class DynamicNotch(QWidget):
         self.tray.show()
 
     # ==========================================
-    # PAINT EVENT: Fluid Standby, Seconds & Updates
+    # PAINT EVENT: Clean, Silent & Distraction-Free
     # ==========================================
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -792,7 +812,7 @@ class DynamicNotch(QWidget):
         painter.restore()
 
         # ==========================================
-        # EXPANDED REVEAL: Date & GitHub Status Pill
+        # EXPANDED REVEAL: Date Only (Pure & Clean)
         # ==========================================
         if p > 0.15:
             content_factor = (p - 0.15) / 0.85
@@ -816,48 +836,9 @@ class DynamicNotch(QWidget):
             painter.setFont(date_font)
             painter.setPen(QColor(165, 165, 180, date_alpha))
 
-            date_y = 51.0 + (3.0 * content_factor)
-            date_rect = QRectF(0, date_y, w, 20.0)
+            date_y = 52.0 + (3.0 * content_factor)
+            date_rect = QRectF(0, date_y, w, 22.0)
             painter.drawText(date_rect, Qt.AlignmentFlag.AlignCenter, date_str)
-
-            # GitHub Update Pill Badge at bottom
-            if self.update_msg:
-                badge_font = QFont("Segoe UI", 8, QFont.Weight.Medium)
-                badge_metrics = QFontMetricsF(badge_font)
-                badge_w = badge_metrics.horizontalAdvance(self.update_msg) + 16.0
-                badge_h = 18.0
-                badge_x = (w - badge_w) / 2.0
-                badge_y = 76.0 + (4.0 * content_factor)
-
-                self.update_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
-
-                badge_path = QPainterPath()
-                badge_path.addRoundedRect(self.update_rect, 9.0, 9.0)
-
-                # Color styles depending on status
-                if self.update_status == "update_available":
-                    bg_color = QColor(37, 99, 235, int(content_factor * 210))  # Vibrant Blue
-                    text_color = QColor(255, 255, 255, int(content_factor * 255))
-                    border_color = QColor(96, 165, 250, int(content_factor * 180))
-                elif self.update_status == "up_to_date":
-                    bg_color = QColor(24, 24, 27, int(content_factor * 160))
-                    text_color = QColor(74, 222, 128, int(content_factor * 210))  # Green
-                    border_color = QColor(34, 197, 94, int(content_factor * 60))
-                elif self.update_status == "checking":
-                    bg_color = QColor(24, 24, 27, int(content_factor * 160))
-                    text_color = QColor(161, 161, 170, int(content_factor * 200))
-                    border_color = QColor(63, 63, 70, int(content_factor * 80))
-                else:
-                    bg_color = QColor(24, 24, 27, int(content_factor * 140))
-                    text_color = QColor(140, 140, 150, int(content_factor * 190))
-                    border_color = QColor(50, 50, 55, int(content_factor * 60))
-
-                painter.fillPath(badge_path, bg_color)
-                painter.strokePath(badge_path, QPen(border_color, 1))
-
-                painter.setFont(badge_font)
-                painter.setPen(text_color)
-                painter.drawText(self.update_rect, Qt.AlignmentFlag.AlignCenter, self.update_msg)
 
 
 def main():
