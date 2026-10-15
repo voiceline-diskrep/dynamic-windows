@@ -5,11 +5,11 @@ import ctypes
 from datetime import datetime
 
 from PyQt6.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QPoint, QRect, QSize, QRectF
+    Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QPoint, QRect, QRectF
 )
 from PyQt6.QtGui import (
     QColor, QPainter, QPainterPath, QFont, QPen, QBrush, QLinearGradient,
-    QAction, QIcon, QCursor, QActionGroup
+    QAction, QIcon, QCursor
 )
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QMenu, QSystemTrayIcon, QDialog, QVBoxLayout,
@@ -162,23 +162,22 @@ class DynamicNotch(QWidget):
         self.is_24h = False              # 12h or 24h
         self.show_seconds = True
         self.pinned = False
-        self.show_resting_time = False   # Pure minimal notch by default
         self.speed_preset = "normal"
         self.expand_duration = 280
         self.collapse_duration = 220
         self.offset_x = 0
 
-        # Load persisted settings
-        self.load_config()
-
         # Resting dimensions (compact notch)
         self.rest_width = 160
         self.rest_height = 30
         
-        # Expanded dimensions (reveals time and date)
+        # Expanded dimensions (reveals date underneath)
         self.exp_width = 360
         self.exp_height = 96
         
+        # Load persisted settings
+        self.load_config()
+
         # Current animated state (0.0 = resting, 1.0 = fully expanded)
         self._anim_progress = 0.0
         self._current_width = float(self.rest_width)
@@ -235,7 +234,6 @@ class DynamicNotch(QWidget):
                     self.mode = data.get("mode", self.mode)
                     self.is_24h = data.get("is_24h", self.is_24h)
                     self.show_seconds = data.get("show_seconds", self.show_seconds)
-                    self.show_resting_time = data.get("show_resting_time", self.show_resting_time)
                     self.speed_preset = data.get("speed_preset", self.speed_preset)
                     self.expand_duration = data.get("expand_duration", self.expand_duration)
                     self.collapse_duration = data.get("collapse_duration", self.collapse_duration)
@@ -249,7 +247,6 @@ class DynamicNotch(QWidget):
                 "mode": self.mode,
                 "is_24h": self.is_24h,
                 "show_seconds": self.show_seconds,
-                "show_resting_time": self.show_resting_time,
                 "speed_preset": self.speed_preset,
                 "expand_duration": self.expand_duration,
                 "collapse_duration": self.collapse_duration,
@@ -305,7 +302,6 @@ class DynamicNotch(QWidget):
 
     def leaveEvent(self, event):
         if not self.pinned:
-            # Grace period scales slightly with animation duration
             grace = max(100, min(240, int(self.collapse_duration * 0.5)))
             self.leave_timer.start(grace)
         super().leaveEvent(event)
@@ -417,10 +413,6 @@ class DynamicNotch(QWidget):
         act_sec = menu.addAction("Hide Seconds" if self.show_seconds else "Show Seconds")
         act_sec.triggered.connect(self.toggle_seconds)
 
-        # Resting state display
-        act_rest = menu.addAction("Hide Time in Resting Notch" if self.show_resting_time else "Show Time in Resting Notch")
-        act_rest.triggered.connect(self.toggle_resting_time)
-
         # Style mode
         act_mode = menu.addAction("Style: Flush Notch (Bezel)" if self.mode == "floating" else "Style: Floating Island")
         act_mode.triggered.connect(self.toggle_style_mode)
@@ -450,11 +442,6 @@ class DynamicNotch(QWidget):
 
     def toggle_seconds(self):
         self.show_seconds = not self.show_seconds
-        self.save_config()
-        self.update()
-
-    def toggle_resting_time(self):
-        self.show_resting_time = not self.show_resting_time
         self.save_config()
         self.update()
 
@@ -512,7 +499,7 @@ class DynamicNotch(QWidget):
         self.tray.show()
 
     # ==========================================
-    # PAINT EVENT: Pure Minimal Sleek Notch
+    # PAINT EVENT: Continuous Single-Clock Scaling
     # ==========================================
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -559,61 +546,67 @@ class DynamicNotch(QWidget):
         now = datetime.now()
 
         # ==========================================
-        # RESTING STATE (Clean Minimal Notch)
+        # SINGLE UNIFIED CLOCK (Dynamically Scales)
         # ==========================================
-        if p < 0.95 and self.show_resting_time:
-            alpha = int((1.0 - p) * 230)
-            if self.is_24h:
-                compact_str = now.strftime("%H:%M")
-            else:
-                compact_str = now.strftime("%I:%M %p").lstrip("0")
-                
-            time_font = QFont("Segoe UI Variable Display", 9, QFont.Weight.Medium)
-            time_font.setStyleHint(QFont.StyleHint.SansSerif)
-            painter.setFont(time_font)
-            painter.setPen(QColor(220, 220, 230, alpha))
-            
-            text_rect = QRect(0, 0, int(w), int(h))
-            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, compact_str)
+        # Determine current time string (consistent across both states)
+        if self.is_24h:
+            time_str = now.strftime("%H:%M:%S") if self.show_seconds else now.strftime("%H:%M")
+        else:
+            time_str = now.strftime("%I:%M:%S %p").lstrip("0") if self.show_seconds else now.strftime("%I:%M %p").lstrip("0")
+
+        # Smooth font size: scales smoothly from 9.5pt (compact) to 19.5pt (expanded)
+        clock_font_size = 9.5 + (10.0 * p)
+        
+        # Smooth font weight: medium (500) -> demi-bold (600)
+        font_weight = QFont.Weight.Medium if p < 0.5 else QFont.Weight.DemiBold
+        
+        clock_font = QFont("Segoe UI Variable Display")
+        clock_font.setPointSizeF(clock_font_size)
+        clock_font.setWeight(font_weight)
+        clock_font.setStyleHint(QFont.StyleHint.SansSerif)
+        painter.setFont(clock_font)
+
+        # Smooth position interpolation:
+        # At p=0 (resting): centered vertically in the notch
+        # At p=1 (expanded): positioned at top (y=10, height=38)
+        y_clock = 9.0 * p
+        h_clock = (h * (1.0 - p)) + (38.0 * p)
+        clock_rect = QRectF(0, y_clock, w, h_clock)
+
+        # Smooth color from soft white to crisp white
+        clock_text_alpha = int(220 + 35 * p)
+        painter.setPen(QColor(255, 255, 255, clock_text_alpha))
+        painter.drawText(clock_rect, Qt.AlignmentFlag.AlignCenter, time_str)
 
         # ==========================================
-        # EXPANDED STATE (Hover reveal: Time & Date)
+        # EXPANDED REVEAL: Divider & Date
         # ==========================================
-        if p > 0.05:
-            alpha = int(p * 255)
+        # The date and divider smoothly reveal beneath the clock as p increases
+        if p > 0.15:
+            content_factor = (p - 0.15) / 0.85  # 0.0 -> 1.0
 
-            # Format primary time string
-            if self.is_24h:
-                time_str = now.strftime("%H:%M:%S") if self.show_seconds else now.strftime("%H:%M")
-            else:
-                time_str = now.strftime("%I:%M:%S %p").lstrip("0") if self.show_seconds else now.strftime("%I:%M %p").lstrip("0")
+            # Subtle Divider Line
+            div_alpha = int(content_factor * 32)
+            div_y = 52.0 + (2.0 * p)
+            div_left = w * (0.28 - 0.16 * content_factor)
+            div_right = w * (0.72 + 0.16 * content_factor)
 
-            # Main Time Header
-            clock_font = QFont("Segoe UI Variable Display", 20, QFont.Weight.DemiBold)
-            clock_font.setStyleHint(QFont.StyleHint.SansSerif)
-            painter.setFont(clock_font)
-            painter.setPen(QColor(255, 255, 255, alpha))
-            
-            time_rect = QRect(0, 10, int(w), 40)
-            painter.drawText(time_rect, Qt.AlignmentFlag.AlignCenter, time_str)
-
-            # Subtle Glowing Divider Line
-            div_y = 54
-            div_left = int(w * 0.12)
-            div_right = int(w * 0.88)
-            
-            div_pen = QPen(QColor(255, 255, 255, int(alpha * 0.14)), 1)
+            div_pen = QPen(QColor(255, 255, 255, div_alpha), 1)
             painter.setPen(div_pen)
-            painter.drawLine(div_left, div_y, div_right, div_y)
+            painter.drawLine(QPoint(int(div_left), int(div_y)), QPoint(int(div_right), int(div_y)))
 
             # Full Date String (e.g., Thursday, October 15, 2026)
+            date_alpha = int(content_factor * 230)
             date_str = now.strftime("%A, %B %d, %Y")
+            
             date_font = QFont("Segoe UI Variable Text", 9, QFont.Weight.Normal)
             date_font.setStyleHint(QFont.StyleHint.SansSerif)
             painter.setFont(date_font)
-            painter.setPen(QColor(165, 165, 180, int(alpha * 0.95)))
+            painter.setPen(QColor(165, 165, 180, date_alpha))
 
-            date_rect = QRect(0, 58, int(w), 24)
+            # Slides slightly upwards into place
+            date_y = 52.0 + (6.0 * content_factor)
+            date_rect = QRectF(0, date_y, w, 24.0)
             painter.drawText(date_rect, Qt.AlignmentFlag.AlignCenter, date_str)
 
 
