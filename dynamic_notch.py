@@ -9,7 +9,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QColor, QPainter, QPainterPath, QFont, QPen, QBrush, QLinearGradient,
-    QAction, QIcon, QCursor
+    QAction, QIcon, QCursor, QFontMetricsF
 )
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QMenu, QSystemTrayIcon, QDialog, QVBoxLayout,
@@ -160,25 +160,25 @@ class DynamicNotch(QWidget):
         # 2. Defaults & Config
         self.mode = "floating"          # "floating" or "anchored"
         self.is_24h = False              # 12h or 24h
-        self.show_seconds = True
+        self.show_seconds = True         # Extends to show seconds on hover
         self.pinned = False
         self.speed_preset = "normal"
         self.expand_duration = 280
         self.collapse_duration = 220
         self.offset_x = 0
 
-        # Resting dimensions (compact notch)
-        self.rest_width = 160
-        self.rest_height = 30
+        # Resting dimensions (compact standby mode without seconds)
+        self.rest_width = 136
+        self.rest_height = 29
         
-        # Expanded dimensions (reveals date underneath)
+        # Expanded dimensions (opened state revealing seconds & date)
         self.exp_width = 360
         self.exp_height = 96
         
         # Load persisted settings
         self.load_config()
 
-        # Current animated state (0.0 = resting, 1.0 = fully expanded)
+        # Current animated state (0.0 = standby, 1.0 = fully open)
         self._anim_progress = 0.0
         self._current_width = float(self.rest_width)
         self._current_height = float(self.rest_height)
@@ -195,10 +195,10 @@ class DynamicNotch(QWidget):
         self.anim.setDuration(self.expand_duration)
         self.anim.setEasingCurve(QEasingCurve.Type.OutBack)
 
-        # 4. Timer for Clock updates (every 500ms)
+        # 4. Timer for Clock updates (every 250ms for smooth seconds when open)
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.update)
-        self.clock_timer.start(500)
+        self.clock_timer.start(250)
 
         # 5. Timer for Mouse Leave grace period
         self.leave_timer = QTimer(self)
@@ -409,8 +409,8 @@ class DynamicNotch(QWidget):
         act_format = menu.addAction("Format: 24-Hour" if not self.is_24h else "Format: 12-Hour (AM/PM)")
         act_format.triggered.connect(self.toggle_time_format)
 
-        # Seconds toggle
-        act_sec = menu.addAction("Hide Seconds" if self.show_seconds else "Show Seconds")
+        # Seconds toggle on open
+        act_sec = menu.addAction("Disable Seconds on Open" if self.show_seconds else "Enable Seconds on Open")
         act_sec.triggered.connect(self.toggle_seconds)
 
         # Style mode
@@ -499,7 +499,7 @@ class DynamicNotch(QWidget):
         self.tray.show()
 
     # ==========================================
-    # PAINT EVENT: Continuous Single-Clock Scaling
+    # PAINT EVENT: Fluid Standby & Extended Seconds
     # ==========================================
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -508,15 +508,15 @@ class DynamicNotch(QWidget):
 
         w = float(self.width())
         h = float(self.height())
-        p = self._anim_progress  # 0.0 (compact) -> 1.0 (expanded)
+        p = self._anim_progress  # 0.0 (standby) -> 1.0 (opened)
 
         # Smooth Corner Radius
         path = QPainterPath()
         if self.mode == "floating":
-            radius = (15.0 + 10.0 * p)
+            radius = (14.0 + 11.0 * p)
             path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
         else:
-            radius = (15.0 + 8.0 * p)
+            radius = (14.0 + 9.0 * p)
             path.moveTo(0, 0)
             path.lineTo(w, 0)
             path.lineTo(w, h - radius)
@@ -546,18 +546,10 @@ class DynamicNotch(QWidget):
         now = datetime.now()
 
         # ==========================================
-        # SINGLE UNIFIED CLOCK (Dynamically Scales)
+        # CLOCK RENDERING: Standby (HH:MM) -> Extends (:SS)
         # ==========================================
-        # Determine current time string (consistent across both states)
-        if self.is_24h:
-            time_str = now.strftime("%H:%M:%S") if self.show_seconds else now.strftime("%H:%M")
-        else:
-            time_str = now.strftime("%I:%M:%S %p").lstrip("0") if self.show_seconds else now.strftime("%I:%M %p").lstrip("0")
-
-        # Smooth font size: scales smoothly from 9.5pt (compact) to 19.5pt (expanded)
+        # Clock font configuration
         clock_font_size = 9.5 + (10.0 * p)
-        
-        # Smooth font weight: medium (500) -> demi-bold (600)
         font_weight = QFont.Weight.Medium if p < 0.5 else QFont.Weight.DemiBold
         
         clock_font = QFont("Segoe UI Variable Display")
@@ -566,24 +558,70 @@ class DynamicNotch(QWidget):
         clock_font.setStyleHint(QFont.StyleHint.SansSerif)
         painter.setFont(clock_font)
 
-        # Smooth position interpolation:
-        # At p=0 (resting): centered vertically in the notch
-        # At p=1 (expanded): positioned at top (y=10, height=38)
+        # Components of the time
+        if self.is_24h:
+            time_base = now.strftime("%H:%M")
+            time_sec = now.strftime(":%S")
+            time_ampm = ""
+        else:
+            time_base = now.strftime("%I:%M").lstrip("0")
+            time_sec = now.strftime(":%S")
+            time_ampm = now.strftime(" %p")
+
+        # Measure text segments
+        metrics = QFontMetricsF(clock_font)
+        w_base = metrics.horizontalAdvance(time_base)
+        w_sec_full = metrics.horizontalAdvance(time_sec)
+        w_ampm = metrics.horizontalAdvance(time_ampm) if time_ampm else 0.0
+
+        # Extension physics: In standby (p=0), seconds have 0 width and 0 opacity
+        # As it opens (p: 0 -> 1), seconds extend in width and fade in smoothly
+        if self.show_seconds:
+            # Eased factor for seconds expansion
+            sec_extend_factor = max(0.0, min(1.0, (p - 0.05) / 0.95))
+            w_sec_animated = w_sec_full * sec_extend_factor
+            sec_alpha = int(sec_extend_factor * 255)
+        else:
+            w_sec_animated = 0.0
+            sec_alpha = 0
+
+        total_time_w = w_base + w_sec_animated + w_ampm
+        start_x = (w - total_time_w) / 2.0
+
+        # Vertical clock position (centered in standby, glides up when opened)
         y_clock = 9.0 * p
         h_clock = (h * (1.0 - p)) + (38.0 * p)
-        clock_rect = QRectF(0, y_clock, w, h_clock)
 
-        # Smooth color from soft white to crisp white
-        clock_text_alpha = int(220 + 35 * p)
-        painter.setPen(QColor(255, 255, 255, clock_text_alpha))
-        painter.drawText(clock_rect, Qt.AlignmentFlag.AlignCenter, time_str)
+        # 1. Draw Base Time (HH:MM)
+        clock_alpha = int(220 + 35 * p)
+        painter.setPen(QColor(255, 255, 255, clock_alpha))
+        base_rect = QRectF(start_x, y_clock, w_base, h_clock)
+        painter.drawText(base_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, time_base)
+
+        # 2. Draw Extended Seconds (:SS)
+        if sec_alpha > 0 and w_sec_animated > 0:
+            painter.save()
+            # Clip rect ensures seconds slide cleanly into view
+            clip_rect = QRectF(start_x + w_base, y_clock, w_sec_animated, h_clock)
+            painter.setClipRect(clip_rect)
+            painter.setPen(QColor(240, 240, 250, sec_alpha))
+            sec_draw_rect = QRectF(start_x + w_base, y_clock, w_sec_full, h_clock)
+            painter.drawText(sec_draw_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, time_sec)
+            painter.restore()
+
+        # 3. Draw AM/PM (pushed smoothly to the right by extending seconds)
+        if time_ampm:
+            ampm_rect = QRectF(start_x + w_base + w_sec_animated, y_clock, w_ampm + 4, h_clock)
+            # Subtle softer color for AM/PM tag
+            ampm_alpha = int(180 + 55 * p)
+            painter.setPen(QColor(200, 200, 215, ampm_alpha))
+            painter.drawText(ampm_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, time_ampm)
 
         # ==========================================
         # EXPANDED REVEAL: Divider & Date
         # ==========================================
-        # The date and divider smoothly reveal beneath the clock as p increases
         if p > 0.15:
-            content_factor = (p - 0.15) / 0.85  # 0.0 -> 1.0
+            content_factor = (p - 0.15) / 0.85
 
             # Subtle Divider Line
             div_alpha = int(content_factor * 32)
@@ -595,7 +633,7 @@ class DynamicNotch(QWidget):
             painter.setPen(div_pen)
             painter.drawLine(QPoint(int(div_left), int(div_y)), QPoint(int(div_right), int(div_y)))
 
-            # Full Date String (e.g., Thursday, October 15, 2026)
+            # Full Date String
             date_alpha = int(content_factor * 230)
             date_str = now.strftime("%A, %B %d, %Y")
             
@@ -604,7 +642,6 @@ class DynamicNotch(QWidget):
             painter.setFont(date_font)
             painter.setPen(QColor(165, 165, 180, date_alpha))
 
-            # Slides slightly upwards into place
             date_y = 52.0 + (6.0 * content_factor)
             date_rect = QRectF(0, date_y, w, 24.0)
             painter.drawText(date_rect, Qt.AlignmentFlag.AlignCenter, date_str)
