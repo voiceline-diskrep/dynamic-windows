@@ -2,7 +2,7 @@
 
 An Apple Dynamic Island / MacBook Notch overlay for Windows. It stays pinned on top of all windows at the top-center of your screen.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.0.exe)
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.1.exe)
 
 ---
 
@@ -11,7 +11,7 @@ An Apple Dynamic Island / MacBook Notch overlay for Windows. It stays pinned on 
 **No Python or dependencies required!**
 
 1. Download the installer:
-   👉 **[Download DynamicWindows-Setup-v1.0.0.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.0.exe)**
+   👉 **[Download DynamicWindows-Setup-v1.0.1.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.1.exe)**
 2. Run the downloaded installer.
 3. Done! It will install the app, create a Desktop & Start Menu shortcut, and optionally start with Windows.
 
