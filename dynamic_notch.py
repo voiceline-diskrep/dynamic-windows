@@ -375,8 +375,9 @@ class DynamicNotch(QWidget):
             return
         screen_geom = screen.geometry()
         
-        w = int(self._current_width)
-        h = int(self._current_height)
+        # Enforce even pixel width so screen centering has exact integer symmetry without 0.5px jitter
+        w = int(round(self._current_width / 2.0)) * 2
+        h = int(round(self._current_height))
         
         x = ((screen_geom.width() - w) // 2) + self.offset_x
         y = 6 if self.mode == "floating" else 0
@@ -406,7 +407,7 @@ class DynamicNotch(QWidget):
         self.anim.stop()
         self.anim.setStartValue(self._anim_progress)
         self.anim.setEndValue(1.0)
-        self.anim.setEasingCurve(QEasingCurve.Type.OutBack)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.anim.setDuration(self.expand_duration)
         self.anim.start()
 
@@ -439,7 +440,7 @@ class DynamicNotch(QWidget):
             if screen:
                 screen_w = screen.geometry().width()
                 new_x = event.globalPosition().toPoint().x() - self.drag_position.x()
-                w = int(self._current_width)
+                w = int(round(self._current_width / 2.0)) * 2
                 self.offset_x = new_x - ((screen_w - w) // 2)
                 self.recalculate_geometry()
                 self.save_config()
@@ -711,7 +712,7 @@ class DynamicNotch(QWidget):
 
         w = float(self.width())
         h = float(self.height())
-        p = self._anim_progress  # 0.0 (standby) -> 1.0 (opened)
+        p = max(0.0, min(1.0, self._anim_progress))  # Clamped strictly to [0.0, 1.0]
 
         # Smooth Corner Radius
         path = QPainterPath()
@@ -748,74 +749,43 @@ class DynamicNotch(QWidget):
 
         now = datetime.now()
 
-        # ==========================================
-        # CLOCK RENDERING: Rock-Solid Flicker-Free Vector Scaling
-        # ==========================================
-        clock_font = QFont("Segoe UI Variable Display", 18, QFont.Weight.DemiBold)
-        clock_font.setStyleHint(QFont.StyleHint.SansSerif)
-        painter.setFont(clock_font)
-
+        # Format strings for standby (no seconds) and expanded (with seconds)
         if self.is_24h:
-            time_base = now.strftime("%H:%M")
-            time_sec = now.strftime(":%S")
-            time_ampm = ""
+            time_standby = now.strftime("%H:%M")
+            time_expanded = now.strftime("%H:%M:%S") if self.show_seconds else now.strftime("%H:%M")
         else:
-            time_base = now.strftime("%I:%M").lstrip("0")
-            time_sec = now.strftime(":%S")
-            time_ampm = now.strftime(" %p")
+            time_standby = now.strftime("%I:%M %p").lstrip("0")
+            time_expanded = now.strftime("%I:%M:%S %p").lstrip("0") if self.show_seconds else now.strftime("%I:%M %p").lstrip("0")
 
-        metrics = QFontMetricsF(clock_font)
-        w_base = metrics.horizontalAdvance(time_base)
-        w_sec = metrics.horizontalAdvance(time_sec)
-        w_ampm = metrics.horizontalAdvance(time_ampm) if time_ampm else 0.0
+        # Smooth vertical travel for clock
+        y_clock = 9.0 * p
+        h_clock = (29.0 * (1.0 - p)) + (36.0 * p)
+        clock_rect = QRectF(0, y_clock, w, h_clock)
 
-        # Scale factor smoothly scales text without re-rasterizing glyphs or snapping hints
-        s = 0.52 + (0.48 * p)
+        # 1. Standby Clock: Only in resting mode; cleanly fades out in early hover (0.0 -> 0.18)
+        if p < 0.18:
+            alpha_standby = int(max(0.0, min(1.0, (0.18 - p) / 0.18)) * 235)
+            font_standby = QFont("Segoe UI Variable Display", 10, QFont.Weight.Medium)
+            font_standby.setStyleHint(QFont.StyleHint.SansSerif)
+            painter.setFont(font_standby)
+            painter.setPen(QColor(235, 235, 245, alpha_standby))
+            painter.drawText(clock_rect, Qt.AlignmentFlag.AlignCenter, time_standby)
 
-        # Seconds animation factor (smooth 0.0 -> 1.0)
-        sec_factor = p if self.show_seconds else 0.0
-        w_sec_anim = w_sec * sec_factor
-        sec_alpha = int(sec_factor * 255)
-
-        total_content_w = w_base + w_sec_anim + w_ampm
-
-        # Center in unscaled coordinates
-        scaled_w = w / s
-        scaled_h = h / s
-        start_x = (scaled_w - total_content_w) / 2.0
-
-        # Vertical baseline position
-        text_baseline_offset = metrics.ascent() - (metrics.height() / 2.0)
-        y_standby = (scaled_h / 2.0) + text_baseline_offset
-        y_opened = 29.0
-        base_y = y_standby * (1.0 - p) + y_opened * p
-
-        painter.save()
-        painter.scale(s, s)
-
-        # 1. Base Time (Hours & Minutes): Constant font size & metrics, zero flicker
-        clock_alpha = int(220 + 35 * p)
-        painter.setPen(QColor(255, 255, 255, clock_alpha))
-        painter.drawText(QPointF(start_x, base_y), time_base)
-
-        # 2. Extended Seconds
-        if sec_alpha > 0 and self.show_seconds:
-            painter.setPen(QColor(235, 235, 245, sec_alpha))
-            painter.drawText(QPointF(start_x + w_base, base_y), time_sec)
-
-        # 3. AM/PM Tag
-        if time_ampm:
-            ampm_alpha = int(180 + 55 * p)
-            painter.setPen(QColor(200, 200, 215, ampm_alpha))
-            painter.drawText(QPointF(start_x + w_base + w_sec_anim, base_y), time_ampm)
-
-        painter.restore()
+        # 2. Expanded Clock: Fades in smoothly once the capsule expands (0.35 -> 1.0)
+        # Note: Zero overlap with standby clock ensures zero character collisions or flickering!
+        if p > 0.35:
+            alpha_exp = int(max(0.0, min(1.0, (p - 0.35) / 0.65)) * 255)
+            font_exp = QFont("Segoe UI Variable Display", 18, QFont.Weight.DemiBold)
+            font_exp.setStyleHint(QFont.StyleHint.SansSerif)
+            painter.setFont(font_exp)
+            painter.setPen(QColor(255, 255, 255, alpha_exp))
+            painter.drawText(clock_rect, Qt.AlignmentFlag.AlignCenter, time_expanded)
 
         # ==========================================
         # EXPANDED REVEAL: Date Only (Pure & Clean)
         # ==========================================
-        if p > 0.15:
-            content_factor = (p - 0.15) / 0.85
+        if p > 0.45:
+            content_factor = (p - 0.45) / 0.55
 
             # Subtle Divider Line
             div_alpha = int(content_factor * 30)
