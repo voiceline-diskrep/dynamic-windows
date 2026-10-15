@@ -305,6 +305,9 @@ class DynamicNotch(QWidget):
         # 7. System Tray Setup
         self.setup_tray()
 
+        # 8. Check GitHub updates immediately on launch
+        QTimer.singleShot(600, lambda: self.trigger_github_update_check(force=True))
+
     # Qt Property for animation
     def get_progress(self):
         return self._anim_progress
@@ -389,8 +392,8 @@ class DynamicNotch(QWidget):
     def trigger_github_update_check(self, force=False):
         """Checks GitHub for updates in background whenever the notch is opened."""
         now_ts = time.time()
-        # Debounce: check at most once every 35s unless forced
-        if not force and (now_ts - self.last_check_time < 35.0):
+        # Debounce: check whenever opened (at most once every 5s unless forced)
+        if not force and (now_ts - self.last_check_time < 5.0):
             return
 
         self.last_check_time = now_ts
