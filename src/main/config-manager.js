@@ -15,7 +15,7 @@ const CONFIG_DIR = path.join(
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.0.7',
+  version: '1.0.8',
   startup: false,
   startupTakeover: false,
   clock24h: false,

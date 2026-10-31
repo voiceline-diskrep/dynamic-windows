@@ -22,6 +22,7 @@ let agentHooksServer = null;
 let oneShotEngine = null;
 let mediaController = null;
 let dropZone = null;
+let isQuitting = false;
 
 // Enforce single instance
 const gotTheLock = app.requestSingleInstanceLock();
@@ -68,6 +69,24 @@ function createIslandWindow() {
 
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'island.html'));
+
+  // Prevent accidental close via Ctrl+W / Alt+F4 unless quitting
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      return false;
+    }
+  });
+
+  // Intercept and prevent default browser accelerators (Ctrl+W, Ctrl+R, Alt+F4)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && ['w', 'r'].includes(input.key.toLowerCase())) {
+      event.preventDefault();
+    }
+    if (input.alt && input.key.toLowerCase() === 'f4') {
+      event.preventDefault();
+    }
+  });
 
   // Enable click-through on transparent margins while forwarding mouse moves
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -218,12 +237,13 @@ function setupTray() {
       {
         label: 'Exit Dynamic Windows',
         click: () => {
+          isQuitting = true;
           app.quit();
         }
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows + One-Shot (v1.0.7)');
+    tray.setToolTip('Dynamic Windows + One-Shot (v1.0.8)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);
@@ -297,6 +317,10 @@ app.whenReady().then(() => {
       createIslandWindow();
     }
   });
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
 });
 
 app.on('will-quit', () => {

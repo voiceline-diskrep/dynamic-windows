@@ -82,6 +82,14 @@ let hoveredButtonId = null;
 // Initial transparent click-through state
 ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
 
+// Prevent accidental window close or reload via shortcuts
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && ['w', 'r'].includes(e.key.toLowerCase())) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+});
+
 canvas.addEventListener('mousemove', (e) => {
   mouseX = e.clientX;
   mouseY = e.clientY;
