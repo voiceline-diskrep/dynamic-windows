@@ -13,6 +13,7 @@ const OneShotEngine = require('./oneshot-engine');
 const { createStartupTakeover } = require('./startup-takeover');
 const MediaController = require('./media-spotify');
 const DropZone = require('./drop-zone');
+const configManager = require('./config-manager');
 const { createSettingsWindow, registerSettingsIPC } = require('./settings-window');
 
 let mainWindow = null;
@@ -160,10 +161,65 @@ function createIslandWindow() {
     }
   });
 
-  // Drop Zone
+  // Drop Zone Window & Shelf Actions
   ipcMain.on('open-dropzone', () => {
     if (dropZone) {
       dropZone.revealInExplorer();
+    }
+  });
+
+  ipcMain.on('dropzone-get-files', (event) => {
+    if (dropZone) event.returnValue = dropZone.getFiles();
+  });
+
+  ipcMain.on('dropzone-add-file', (event, filePath) => {
+    if (dropZone && filePath) {
+      dropZone.addFile(filePath);
+      sendDropZoneFiles();
+    }
+  });
+
+  ipcMain.on('dropzone-open-file', (event, fileName) => {
+    if (dropZone && fileName) {
+      dropZone.openFile(fileName);
+    }
+  });
+
+  ipcMain.on('dropzone-delete-file', (event, fileName) => {
+    if (dropZone && fileName) {
+      dropZone.deleteFile(fileName);
+      sendDropZoneFiles();
+    }
+  });
+
+  ipcMain.on('dropzone-clear-all', () => {
+    if (dropZone) {
+      dropZone.clearAll();
+      sendDropZoneFiles();
+    }
+  });
+
+  ipcMain.on('dropzone-browse-file', async () => {
+    const { dialog } = require('electron');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const res = await dialog.showOpenDialog(mainWindow, {
+        title: 'Select Files for Drop Zone Shelf',
+        properties: ['openFile', 'multiSelections']
+      });
+      if (!res.canceled && res.filePaths) {
+        for (const fp of res.filePaths) {
+          dropZone.addFile(fp);
+        }
+        sendDropZoneFiles();
+      }
+    }
+  });
+
+  // Display Mode (Dynamic Island vs Dynamic Notch)
+  ipcMain.on('set-display-mode', (event, mode) => {
+    if (['island', 'notch'].includes(mode)) {
+      configManager.set('displayMode', mode);
+      sendDisplayMode();
     }
   });
 
@@ -182,6 +238,8 @@ function createIslandWindow() {
     sendAntigravityState();
     sendPresetsList();
     sendMediaState();
+    sendDropZoneFiles();
+    sendDisplayMode();
   });
 }
 
@@ -200,6 +258,19 @@ function sendPresetsList() {
 function sendMediaState() {
   if (mainWindow && !mainWindow.isDestroyed() && mediaController) {
     mainWindow.webContents.send('media-state', mediaController.getState());
+  }
+}
+
+function sendDropZoneFiles() {
+  if (mainWindow && !mainWindow.isDestroyed() && dropZone) {
+    mainWindow.webContents.send('dropzone-files', dropZone.getFiles());
+  }
+}
+
+function sendDisplayMode() {
+  const mode = configManager.get('displayMode') || 'island';
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('display-mode', mode);
   }
 }
 
@@ -243,7 +314,7 @@ function setupTray() {
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows + One-Shot (v1.0.8)');
+    tray.setToolTip('Dynamic Windows + One-Shot (v1.0.9)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);

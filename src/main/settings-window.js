@@ -64,7 +64,15 @@ function registerSettingsIPC(dropZoneInstance, oneShotEngineInstance) {
   });
 
   ipcMain.handle('save-app-settings', async (event, newSettings) => {
-    return configManager.set(newSettings);
+    const updated = configManager.set(newSettings);
+    if (newSettings && newSettings.displayMode) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('display-mode', newSettings.displayMode);
+        }
+      });
+    }
+    return updated;
   });
 
   ipcMain.handle('check-github-update', async () => {

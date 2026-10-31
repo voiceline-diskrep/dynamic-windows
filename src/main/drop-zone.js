@@ -92,6 +92,21 @@ class DropZone {
     } catch (e) {}
     return false;
   }
+
+  clearAll() {
+    this.ensureDir();
+    try {
+      const entries = fs.readdirSync(this.dir);
+      for (const name of entries) {
+        try {
+          fs.unlinkSync(path.join(this.dir, name));
+        } catch (e) {}
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
 }
 
 module.exports = DropZone;

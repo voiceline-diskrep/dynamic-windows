@@ -330,7 +330,21 @@
     <!-- 1. General Page -->
     <div class="page active" id="page-general">
       <h1 class="page-title">General Preferences</h1>
-      <p class="page-subtitle">Configure application startup, clock formats, and system behavior.</p>
+      <p class="page-subtitle">Configure interface style, application startup, clock formats, and system behavior.</p>
+
+      <div class="card">
+        <div class="card-header">Interface Style</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Display Mode</span>
+            <span class="setting-desc">Switch between floating Dynamic Island (detached pill) and flush-to-top Dynamic Notch (MacBook style).</span>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn" id="btn-mode-island">🏝️ Dynamic Island</button>
+            <button class="btn" id="btn-mode-notch">💻 Dynamic Notch</button>
+          </div>
+        </div>
+      </div>
 
       <div class="card">
         <div class="card-header">System Startup</div>
@@ -485,7 +499,7 @@
             <span class="setting-label">Currently Installed Version</span>
             <span class="setting-desc">Dynamic Windows + One-Shot Standalone Edition</span>
           </div>
-          <span class="badge" id="current-version-badge">v1.0.8</span>
+          <span class="badge" id="current-version-badge">v1.0.9</span>
         </div>
 
         <div class="setting-row">
@@ -521,7 +535,7 @@
       <div class="card" style="padding: 24px; text-align: center;">
         <img src="../../app_icon.png" alt="Dynamic Windows" style="width: 64px; height: 64px; border-radius: 14px; margin-bottom: 12px;">
         <h2 style="font-size: 18px; font-weight: 700; color: #ffffff;">Dynamic Windows + One-Shot</h2>
-        <p style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.0.8 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
+        <p style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.0.9 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
 
         <p style="font-size: 12.5px; color: #71717a; max-width: 480px; margin: 0 auto 20px auto; line-height: 1.5;">
           Featuring Apple-inspired 144Hz physics, Start Menu application discovery, one-click preset launching, and deep integration with Google Antigravity.
@@ -559,6 +573,9 @@
     async function loadSettings() {
       const data = await ipcRenderer.invoke('get-app-settings');
       const cfg = data.config || {};
+
+      // Display Mode
+      updateDisplayModeButtons(cfg.displayMode || 'island');
 
       // General
       document.getElementById('setting-startup').checked = !!cfg.startup;
@@ -615,6 +632,28 @@
     window.launchPreset = function(id) {
       ipcRenderer.send('launch-preset', id);
     };
+
+    function updateDisplayModeButtons(mode) {
+      const btnIsland = document.getElementById('btn-mode-island');
+      const btnNotch = document.getElementById('btn-mode-notch');
+      if (mode === 'notch') {
+        btnNotch.classList.add('btn-primary');
+        btnIsland.classList.remove('btn-primary');
+      } else {
+        btnIsland.classList.add('btn-primary');
+        btnNotch.classList.remove('btn-primary');
+      }
+    }
+
+    document.getElementById('btn-mode-island').addEventListener('click', async () => {
+      updateDisplayModeButtons('island');
+      await ipcRenderer.invoke('save-app-settings', { displayMode: 'island' });
+    });
+
+    document.getElementById('btn-mode-notch').addEventListener('click', async () => {
+      updateDisplayModeButtons('notch');
+      await ipcRenderer.invoke('save-app-settings', { displayMode: 'notch' });
+    });
 
     // Auto-save setting changes
     function bindSettingChange(elementId, configKey, isNumeric = false) {

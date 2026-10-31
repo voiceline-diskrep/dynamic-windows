@@ -17,6 +17,7 @@ const UI = {
   APPS_H: 230,
   AGENT_H: 156,
   MEDIA_H: 170,
+  DROPZONE_H: 220,
   PROMPT_H: 150,
 
   COMPACT_RADIUS: 16,
@@ -26,11 +27,14 @@ const UI = {
 };
 
 // State
+let displayMode = 'island'; // 'island' | 'notch'
 let animProgress = 0.0; // 0.0 = resting, 1.0 = expanded
 let targetProgress = 0.0;
 let isHovered = false;
-let currentView = 'home'; // 'home' | 'apps' | 'agent' | 'media' | 'prompt'
+let currentView = 'home'; // 'home' | 'apps' | 'agent' | 'media' | 'dropzone' | 'prompt'
 let leaveTimer = null;
+let dropZoneFiles = [];
+let isDraggingOver = false;
 
 let antigravityState = {
   status: 'idle', // 'idle' | 'running' | 'thinking' | 'waiting' | 'done' | 'error'
@@ -90,6 +94,37 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// Drag & Drop Shelf Support inside Island / Notch
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (!isDraggingOver) {
+    isDraggingOver = true;
+    targetProgress = 1.0;
+    currentView = 'dropzone';
+    ipcRenderer.send('set-ignore-mouse-events', false);
+  }
+});
+
+window.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  isDraggingOver = false;
+});
+
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  isDraggingOver = false;
+  if (e.dataTransfer && e.dataTransfer.files) {
+    for (const file of e.dataTransfer.files) {
+      if (file.path) {
+        ipcRenderer.send('dropzone-add-file', file.path);
+      }
+    }
+  }
+});
+
 canvas.addEventListener('mousemove', (e) => {
   mouseX = e.clientX;
   mouseY = e.clientY;
@@ -99,9 +134,10 @@ canvas.addEventListener('mousemove', (e) => {
   const curW = getTargetWidth(curP);
   const curH = getTargetHeight(curP);
   const curX = (window.innerWidth - curW) / 2;
-  const curY = 6;
+  const isNotch = displayMode === 'notch';
+  const curY = isNotch ? 0 : 8;
 
-  const isOverIsland = pointInRect(mouseX, mouseY, curX - 8, curY - 4, curW + 16, curH + 16);
+  const isOverIsland = pointInRect(mouseX, mouseY, curX - 8, Math.max(0, curY - 4), curW + 16, curH + 16);
 
   if (isOverIsland) {
     if (leaveTimer) {
@@ -185,9 +221,22 @@ function handleButtonClick(id, data) {
   } else if (id === 'nav_media') {
     currentView = 'media';
   } else if (id === 'nav_dropzone') {
-    ipcRenderer.send('open-dropzone');
+    currentView = 'dropzone';
   } else if (id === 'nav_settings') {
     ipcRenderer.send('open-settings');
+  } else if (id === 'toggle_display_mode') {
+    displayMode = displayMode === 'island' ? 'notch' : 'island';
+    ipcRenderer.send('set-display-mode', displayMode);
+  } else if (id === 'dropzone_reveal') {
+    ipcRenderer.send('open-dropzone');
+  } else if (id === 'dropzone_clear') {
+    ipcRenderer.send('dropzone-clear-all');
+  } else if (id === 'dropzone_browse') {
+    ipcRenderer.send('dropzone-browse-file');
+  } else if (id === 'dropzone_open_file') {
+    ipcRenderer.send('dropzone-open-file', data);
+  } else if (id === 'dropzone_delete_file') {
+    ipcRenderer.send('dropzone-delete-file', data);
   } else if (id === 'jump_antigravity') {
     ipcRenderer.send('focus-antigravity');
   } else if (id === 'media_play_pause') {
@@ -222,6 +271,14 @@ ipcRenderer.on('presets-list', (event, list) => {
 
 ipcRenderer.on('media-state', (event, state) => {
   mediaState = state;
+});
+
+ipcRenderer.on('dropzone-files', (event, files) => {
+  dropZoneFiles = files || [];
+});
+
+ipcRenderer.on('display-mode', (event, mode) => {
+  displayMode = mode || 'island';
 });
 
 ipcRenderer.on('permission-prompt', (event, prompt) => {
@@ -274,6 +331,7 @@ function getTargetHeight(p) {
   if (currentView === 'apps') expH = UI.APPS_H;
   else if (currentView === 'agent') expH = UI.AGENT_H;
   else if (currentView === 'media') expH = UI.MEDIA_H;
+  else if (currentView === 'dropzone') expH = UI.DROPZONE_H;
   else if (currentView === 'prompt') expH = UI.PROMPT_H;
 
   return restH + (expH - restH) * easeOutQuart(p);
@@ -287,9 +345,11 @@ function render() {
   const w = getTargetWidth(p);
   const h = getTargetHeight(p);
   const x = (window.innerWidth - w) / 2;
-  const y = 6; // Floating gap from top
+  const isNotch = displayMode === 'notch';
+  const y = isNotch ? 0 : 8; // Flush with top for notch, floating for island
 
   const radius = UI.COMPACT_RADIUS + (UI.EXPANDED_RADIUS - UI.COMPACT_RADIUS) * p;
+  const radii = isNotch ? [0, 0, radius, radius] : radius;
 
   // 1. Ambient Drop Shadow
   ctx.save();
@@ -304,7 +364,7 @@ function render() {
   grad.addColorStop(1.0, '#020204');
 
   ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radius);
+  ctx.roundRect(x, y, w, h, radii);
   ctx.fillStyle = grad;
   ctx.fill();
   ctx.restore();
@@ -312,9 +372,9 @@ function render() {
   // 3. Specular Border Rim (1px Glass Edge)
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radius);
+  ctx.roundRect(x, y, w, h, radii);
   ctx.lineWidth = 1;
-  ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
+  ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
   ctx.stroke();
   ctx.restore();
 
@@ -423,6 +483,8 @@ function renderExpandedView(x, y, w, h, alpha) {
     renderAgentView(x, y, w, h);
   } else if (currentView === 'media') {
     renderMediaView(x, y, w, h);
+  } else if (currentView === 'dropzone') {
+    renderDropZoneView(x, y, w, h);
   } else if (currentView === 'prompt') {
     renderPromptView(x, y, w, h);
   }
@@ -436,15 +498,14 @@ function renderTopNav(x, y, w) {
     { id: 'nav_apps', label: 'One-Shot' },
     { id: 'nav_agent', label: 'Antigravity' },
     { id: 'nav_media', label: 'Media' },
-    { id: 'nav_dropzone', label: 'Drop Zone' },
+    { id: 'nav_dropzone', label: 'Shelf' },
     { id: 'nav_settings', label: 'Settings' }
   ];
 
   const pillH = 22;
-  const pillW = 66;
-  const spacing = 6;
-  const totalW = navItems.length * pillW + (navItems.length - 1) * spacing;
-  const startX = x + (w - totalW) / 2;
+  const pillW = 58;
+  const spacing = 5;
+  const startX = x + 16;
   const topY = y + 12;
 
   navItems.forEach((item, idx) => {
@@ -465,6 +526,24 @@ function renderTopNav(x, y, w) {
 
     interactiveButtons.push({ id: item.id, x: px, y: topY, w: pillW, h: pillH });
   });
+
+  // Display Mode Quick Switcher (Notch vs Island)
+  const modeW = 74;
+  const modeH = 22;
+  const modeX = x + w - modeW - 16;
+  const isModeHov = hoveredButtonId === 'toggle_display_mode';
+
+  ctx.beginPath();
+  ctx.roundRect(modeX, topY, modeW, modeH, 11);
+  ctx.fillStyle = isModeHov ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.06)';
+  ctx.fill();
+  ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = '#93c5fd';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(displayMode === 'notch' ? '💻 Notch' : '🏝️ Island', modeX + modeW / 2, topY + modeH / 2);
+
+  interactiveButtons.push({ id: 'toggle_display_mode', x: modeX, y: topY, w: modeW, h: modeH });
 }
 
 function renderHomeView(x, y, w, h) {
@@ -729,4 +808,184 @@ function renderPromptView(x, y, w, h) {
   ctx.fillStyle = '#ffffff';
   ctx.fillText('Deny ✕', btnDenyX + btnW / 2, btnY + btnH / 2);
   interactiveButtons.push({ id: 'prompt_deny', data: pendingPrompt.id, x: btnDenyX, y: btnY, w: btnW, h: btnH });
+}
+
+// -------------------------------------------------------------
+// Drop Zone Shelf View (Inside Island / Notch)
+// -------------------------------------------------------------
+function renderDropZoneView(x, y, w, h) {
+  const topY = y + 42;
+  const padding = 16;
+  const contentW = w - padding * 2;
+  const contentX = x + padding;
+
+  // Header Title
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`📁 Drop Shelf (${dropZoneFiles.length})`, contentX, topY + 4);
+
+  // Header Actions
+  const btnY = topY;
+  const btnH = 22;
+
+  // + Add button
+  const addW = 54;
+  const addX = contentX + contentW - 176;
+  interactiveButtons.push({ id: 'dropzone_browse', x: addX, y: btnY, w: addW, h: btnH });
+  ctx.beginPath();
+  ctx.roundRect(addX, btnY, addW, btnH, 6);
+  ctx.fillStyle = hoveredButtonId === 'dropzone_browse' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.06)';
+  ctx.fill();
+  ctx.fillStyle = '#f4f4f5';
+  ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('+ Add', addX + addW / 2, btnY + btnH / 2);
+
+  // Open Folder button
+  const fldW = 58;
+  const fldX = contentX + contentW - 116;
+  interactiveButtons.push({ id: 'dropzone_reveal', x: fldX, y: btnY, w: fldW, h: btnH });
+  ctx.beginPath();
+  ctx.roundRect(fldX, btnY, fldW, btnH, 6);
+  ctx.fillStyle = hoveredButtonId === 'dropzone_reveal' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.06)';
+  ctx.fill();
+  ctx.fillStyle = '#f4f4f5';
+  ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('📂 Folder', fldX + fldW / 2, btnY + btnH / 2);
+
+  // Clear All button
+  const clrW = 50;
+  const clrX = contentX + contentW - 52;
+  interactiveButtons.push({ id: 'dropzone_clear', x: clrX, y: btnY, w: clrW, h: btnH });
+  ctx.beginPath();
+  ctx.roundRect(clrX, btnY, clrW, btnH, 6);
+  ctx.fillStyle = hoveredButtonId === 'dropzone_clear' ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.06)';
+  ctx.fill();
+  ctx.fillStyle = hoveredButtonId === 'dropzone_clear' ? '#f87171' : '#a1a1aa';
+  ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Clear', clrX + clrW / 2, btnY + btnH / 2);
+
+  // Files Area
+  const listY = topY + 28;
+  const listH = h - (listY - y) - 14;
+
+  if (dropZoneFiles.length === 0) {
+    // Empty Drop Target state
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(contentX, listY, contentW, listH, 10);
+    ctx.fillStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.02)';
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '22px "Segoe UI Emoji", sans-serif';
+    ctx.fillText('📥', contentX + contentW / 2, listY + listH / 2 - 16);
+
+    ctx.fillStyle = isDraggingOver ? '#93c5fd' : '#e4e4e7';
+    ctx.font = '600 12.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillText(isDraggingOver ? 'Release to shelf files!' : 'Drop files here to store on shelf', contentX + contentW / 2, listY + listH / 2 + 10);
+
+    ctx.fillStyle = '#71717a';
+    ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillText('Drag files from desktop or click + Add above', contentX + contentW / 2, listY + listH / 2 + 28);
+  } else {
+    // Display File Tiles in 2 columns
+    const cols = 2;
+    const itemGap = 8;
+    const itemW = Math.floor((contentW - itemGap) / cols);
+    const itemH = 54;
+
+    const maxItems = Math.min(dropZoneFiles.length, 4);
+    for (let i = 0; i < maxItems; i++) {
+      const file = dropZoneFiles[i];
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const ix = contentX + col * (itemW + itemGap);
+      const iy = listY + row * (itemH + itemGap);
+
+      const isItemHov = hoveredButtonId === `file_${i}`;
+      interactiveButtons.push({ id: 'dropzone_open_file', data: file.name, x: ix, y: iy, w: itemW - 28, h: itemH });
+
+      // Item Box
+      ctx.beginPath();
+      ctx.roundRect(ix, iy, itemW, itemH, 8);
+      ctx.fillStyle = isItemHov ? 'rgba(255, 255, 255, 0.09)' : 'rgba(255, 255, 255, 0.04)';
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = isItemHov ? 'rgba(59, 130, 246, 0.5)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.stroke();
+
+      // File Icon Glyph
+      const icon = getFileIcon(file.name);
+      ctx.font = '18px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(icon, ix + 22, iy + itemH / 2);
+
+      // File Name
+      ctx.fillStyle = '#f4f4f5';
+      ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const truncName = truncateText(file.name, 20);
+      ctx.fillText(truncName, ix + 42, iy + 12);
+
+      // File Size
+      ctx.fillStyle = '#71717a';
+      ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillText(formatBytes(file.size), ix + 42, iy + 30);
+
+      // Delete ✕ Button
+      const delBtnId = `del_${i}`;
+      const delX = ix + itemW - 26;
+      const delY = iy + 14;
+      const delSize = 18;
+      interactiveButtons.push({ id: 'dropzone_delete_file', data: file.name, x: delX, y: delY, w: delSize, h: delSize });
+      const isDelHov = hoveredButtonId === delBtnId;
+      ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
+      ctx.font = '700 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✕', delX + delSize / 2, delY + delSize / 2);
+    }
+  }
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function getFileIcon(filename) {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return '🖼️';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return '📦';
+  if (['mp3', 'wav', 'flac', 'ogg', 'm4a'].includes(ext)) return '🎵';
+  if (['mp4', 'mkv', 'mov', 'webm'].includes(ext)) return '🎬';
+  if (['exe', 'msi', 'bat', 'cmd'].includes(ext)) return '⚙️';
+  if (['js', 'ts', 'py', 'json', 'html', 'css', 'cpp', 'c', 'cs'].includes(ext)) return '📝';
+  if (['pdf'].includes(ext)) return '📕';
+  return '📄';
+}
+
+function truncateText(text, maxChars) {
+  if (!text) return '';
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars - 3) + '...';
 }

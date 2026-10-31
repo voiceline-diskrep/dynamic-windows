@@ -30,13 +30,24 @@ test('DropZone: safe calls with undefined arguments', () => {
     const res = dz.deleteFile(undefined);
     assert.strictEqual(res, false);
   });
+
+  assert.doesNotThrow(() => {
+    dz.clearAll();
+  });
 });
 
-test('ConfigManager: get and set settings', () => {
+test('ConfigManager: get and set settings including displayMode', () => {
   const cur = configManager.get();
   assert.ok(cur);
   assert.strictEqual(typeof cur.startup, 'boolean');
   assert.strictEqual(typeof cur.hooksPort, 'number');
+
+  // Test displayMode
+  assert.ok(['island', 'notch'].includes(cur.displayMode));
+  configManager.set('displayMode', 'notch');
+  assert.strictEqual(configManager.get('displayMode'), 'notch');
+  configManager.set('displayMode', 'island');
+  assert.strictEqual(configManager.get('displayMode'), 'island');
 
   // Test set
   configManager.set('showSeconds', true);
