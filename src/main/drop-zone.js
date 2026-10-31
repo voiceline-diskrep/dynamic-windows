@@ -6,7 +6,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const { shell } = require('electron');
+let electronShell = null;
+try {
+  electronShell = require('electron').shell;
+} catch (e) {}
 
 const DROP_DIR = path.join(process.env.APPDATA || path.join(process.env.USERPROFILE || 'C:\\', 'AppData', 'Roaming'), 'DynamicWindows', 'drop_zone');
 
@@ -58,22 +61,28 @@ class DropZone {
   }
 
   openFile(name) {
+    if (!name || typeof name !== 'string' || !electronShell) return;
     const fullPath = path.join(this.dir, name);
     if (fs.existsSync(fullPath)) {
-      shell.openPath(fullPath);
+      electronShell.openPath(fullPath);
     }
   }
 
   revealInExplorer(name) {
-    const fullPath = path.join(this.dir, name);
-    if (fs.existsSync(fullPath)) {
-      shell.showItemInFolder(fullPath);
-    } else {
-      shell.openPath(this.dir);
+    this.ensureDir();
+    if (!electronShell) return;
+    if (name && typeof name === 'string') {
+      const fullPath = path.join(this.dir, name);
+      if (fs.existsSync(fullPath)) {
+        electronShell.showItemInFolder(fullPath);
+        return;
+      }
     }
+    electronShell.openPath(this.dir);
   }
 
   deleteFile(name) {
+    if (!name || typeof name !== 'string') return false;
     const fullPath = path.join(this.dir, name);
     try {
       if (fs.existsSync(fullPath)) {

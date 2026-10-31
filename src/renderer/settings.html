@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Settings & Preferences — Dynamic Windows + One-Shot</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0d0d11;
+      color: #e4e4e7;
+      font-family: 'Segoe UI Variable Display', 'Segoe UI', -apple-system, sans-serif;
+      user-select: none;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Sidebar Navigation */
+    .sidebar {
+      width: 220px;
+      background-color: #121217;
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 20px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .brand-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px 18px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      margin-bottom: 12px;
+    }
+
+    .brand-header img {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+    }
+
+    .brand-title {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: -0.2px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      color: #a1a1aa;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .nav-item:hover {
+      background-color: rgba(255, 255, 255, 0.05);
+      color: #ffffff;
+    }
+
+    .nav-item.active {
+      background-color: #2563eb;
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .nav-icon {
+      font-size: 15px;
+      width: 18px;
+      text-align: center;
+    }
+
+    /* Main Content Area */
+    .content-area {
+      flex: 1;
+      padding: 32px 36px;
+      overflow-y: auto;
+      background: radial-gradient(circle at top right, rgba(37, 99, 235, 0.04), transparent 400px);
+    }
+
+    .page {
+      display: none;
+      animation: fadeIn 0.18s ease-out forwards;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .page-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 6px;
+      letter-spacing: -0.3px;
+    }
+
+    .page-subtitle {
+      font-size: 13px;
+      color: #71717a;
+      margin-bottom: 24px;
+    }
+
+    /* Settings Cards */
+    .card {
+      background-color: #16161c;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 12px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 14px 18px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #d4d4d8;
+      background-color: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .setting-row:last-child {
+      border-bottom: none;
+    }
+
+    .setting-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      max-width: 70%;
+    }
+
+    .setting-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f4f4f5;
+    }
+
+    .setting-desc {
+      font-size: 12px;
+      color: #71717a;
+      line-height: 1.4;
+    }
+
+    /* Modern Toggle Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background-color: #27272a;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 24px;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 2px;
+      bottom: 2px;
+      background-color: #ffffff;
+      border-radius: 50%;
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    input:checked + .slider {
+      background-color: #2563eb;
+      border-color: #3b82f6;
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+
+    /* Buttons & Inputs */
+    .btn {
+      background-color: #22222a;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+      font-size: 12.5px;
+      font-weight: 500;
+      padding: 7px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .btn:hover {
+      background-color: #2d2d38;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-primary {
+      background-color: #2563eb;
+      border-color: #3b82f6;
+    }
+
+    .btn-primary:hover {
+      background-color: #1d4ed8;
+    }
+
+    .input-text {
+      background-color: #1a1a22;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: #f4f4f5;
+      padding: 6px 12px;
+      font-size: 12.5px;
+      width: 90px;
+      text-align: center;
+      outline: none;
+    }
+
+    .input-text:focus {
+      border-color: #2563eb;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background-color: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    /* Update Box */
+    .update-box {
+      padding: 16px 20px;
+      background-color: #14141a;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      margin-top: 12px;
+    }
+
+    .update-status-text {
+      font-size: 13px;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .release-notes-box {
+      background-color: #0c0c10;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 6px;
+      padding: 12px;
+      font-family: Consolas, monospace;
+      font-size: 11.5px;
+      max-height: 140px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      color: #a1a1aa;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="brand-header">
+      <img src="../../app_icon.png" alt="Icon">
+      <div class="brand-title">Dynamic Windows</div>
+    </div>
+
+    <div class="nav-item active" data-page="general">
+      <span class="nav-icon">⚙️</span> General
+    </div>
+    <div class="nav-item" data-page="antigravity">
+      <span class="nav-icon">🤖</span> Google Antigravity
+    </div>
+    <div class="nav-item" data-page="presets">
+      <span class="nav-icon">⚡</span> One-Shot Presets
+    </div>
+    <div class="nav-item" data-page="dropzone">
+      <span class="nav-icon">📁</span> Drop Zone
+    </div>
+    <div class="nav-item" data-page="updates">
+      <span class="nav-icon">🔄</span> Updates
+    </div>
+    <div class="nav-item" data-page="about">
+      <span class="nav-icon">ℹ️</span> About
+    </div>
+  </div>
+
+  <!-- Content Area -->
+  <div class="content-area">
+
+    <!-- 1. General Page -->
+    <div class="page active" id="page-general">
+      <h1 class="page-title">General Preferences</h1>
+      <p class="page-subtitle">Configure application startup, clock formats, and system behavior.</p>
+
+      <div class="card">
+        <div class="card-header">System Startup</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Launch on Windows Startup</span>
+            <span class="setting-desc">Automatically launch Dynamic Windows when signing in to Windows.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-startup">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Startup Takeover Mode</span>
+            <span class="setting-desc">Display full-screen preset launcher at startup with the prominent 'Just Enter' button.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-startupTakeover">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Dynamic Island Clock</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Use 24-Hour Time Format</span>
+            <span class="setting-desc">Displays clock as 14:30 instead of 2:30 PM in resting mode.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-clock24h">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Show Seconds</span>
+            <span class="setting-desc">Include seconds in resting island clock display.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-showSeconds">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Google Antigravity Page -->
+    <div class="page" id="page-antigravity">
+      <h1 class="page-title">Google Antigravity & AI Integration</h1>
+      <p class="page-subtitle">Real-time session monitor, agent hooks, and live status indicator.</p>
+
+      <div class="card">
+        <div class="card-header">Antigravity Real-Time Monitoring</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Transcript Session Monitor</span>
+            <span class="setting-desc">Watches active Antigravity conversations for tool calls, commands, file edits, and thinking stages.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-antigravityMonitor">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Auto-Focus Antigravity Window</span>
+            <span class="setting-desc">Bring Google Antigravity window to the foreground when clicking the Jump button.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-autoFocusAntigravity">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Local Agent Hooks Server</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Agent Hooks Port</span>
+            <span class="setting-desc">HTTP port listening for Claude Code / Codex agent permissions and usage notifications.</span>
+          </div>
+          <input type="number" class="input-text" id="setting-hooksPort" min="1024" max="65535" value="47823">
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. One-Shot Presets Page -->
+    <div class="page" id="page-presets">
+      <h1 class="page-title">One-Shot Presets</h1>
+      <p class="page-subtitle">Quick multi-app launcher presets accessible via shortcuts and the Island.</p>
+
+      <div class="card">
+        <div class="card-header">Configured Presets</div>
+        <div id="presets-list-container" style="padding: 14px 18px;">
+          <p style="color: #71717a; font-size: 13px;">Loading presets...</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Startup Screen</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Preview Full-Screen Takeover</span>
+            <span class="setting-desc">Test the startup takeover interface with the 'Just Enter' escape button.</span>
+          </div>
+          <button class="btn btn-primary" id="btn-preview-takeover">Launch Screen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Drop Zone Page -->
+    <div class="page" id="page-dropzone">
+      <h1 class="page-title">Drop Zone File Shelf</h1>
+      <p class="page-subtitle">Manage persistent temporary storage and quick access files.</p>
+
+      <div class="card">
+        <div class="card-header">Shelf Storage</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Drop Zone Directory</span>
+            <span class="setting-desc" id="dropzone-path-text">%APPDATA%\DynamicWindows\drop_zone</span>
+          </div>
+          <button class="btn" id="btn-open-dropzone">Open in Explorer</button>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Total Files Stored</span>
+            <span class="setting-desc">Current items held in the Dynamic Island drop shelf.</span>
+          </div>
+          <span class="badge" id="dropzone-count-badge">0 items</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. Updates Page -->
+    <div class="page" id="page-updates">
+      <h1 class="page-title">Software Updates</h1>
+      <p class="page-subtitle">Official updates via GitHub Releases for Dynamic Windows + One-Shot.</p>
+
+      <div class="card">
+        <div class="card-header">Release Status</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Currently Installed Version</span>
+            <span class="setting-desc">Dynamic Windows + One-Shot Standalone Edition</span>
+          </div>
+          <span class="badge" id="current-version-badge">v1.0.7</span>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Automatic Update Check</span>
+            <span class="setting-desc">Periodically check GitHub Releases repository for newer versions.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-autoCheckUpdates">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div style="padding: 16px 18px;">
+          <button class="btn btn-primary" id="btn-check-updates">Check for Updates Now</button>
+
+          <div class="update-box" id="update-result-box" style="display: none;">
+            <div class="update-status-text" id="update-status-msg"></div>
+            <div id="update-action-area" style="display: none;">
+              <button class="btn btn-primary" id="btn-download-update">Download Update</button>
+            </div>
+            <div class="release-notes-box" id="release-notes-preview" style="display: none;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. About Page -->
+    <div class="page" id="page-about">
+      <h1 class="page-title">About Dynamic Windows</h1>
+      <p class="page-subtitle">Desktop Dynamic Island & One-Shot Application Launcher.</p>
+
+      <div class="card" style="padding: 24px; text-align: center;">
+        <img src="../../app_icon.png" alt="Dynamic Windows" style="width: 64px; height: 64px; border-radius: 14px; margin-bottom: 12px;">
+        <h2 style="font-size: 18px; font-weight: 700; color: #ffffff;">Dynamic Windows + One-Shot</h2>
+        <p style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.0.7 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
+
+        <p style="font-size: 12.5px; color: #71717a; max-width: 480px; margin: 0 auto 20px auto; line-height: 1.5;">
+          Featuring Apple-inspired 144Hz physics, Start Menu application discovery, one-click preset launching, and deep integration with Google Antigravity.
+        </p>
+
+        <div style="display: flex; justify-content: center; gap: 12px;">
+          <button class="btn" id="btn-open-repo">GitHub Repository</button>
+          <button class="btn" id="btn-view-releases">Release History</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    // Navigation Tabs
+    const navItems = document.querySelectorAll('.nav-item');
+    const pages = document.querySelectorAll('.page');
+
+    navItems.forEach(item => {
+      item.addEventListener('click', () => {
+        navItems.forEach(n => n.classList.remove('active'));
+        pages.forEach(p => p.classList.remove('active'));
+
+        item.classList.add('active');
+        const pageId = `page-${item.dataset.page}`;
+        const targetPage = document.getElementById(pageId);
+        if (targetPage) targetPage.classList.add('active');
+      });
+    });
+
+    // Load initial settings
+    async function loadSettings() {
+      const data = await ipcRenderer.invoke('get-app-settings');
+      const cfg = data.config || {};
+
+      // General
+      document.getElementById('setting-startup').checked = !!cfg.startup;
+      document.getElementById('setting-startupTakeover').checked = !!cfg.startupTakeover;
+      document.getElementById('setting-clock24h').checked = !!cfg.clock24h;
+      document.getElementById('setting-showSeconds').checked = !!cfg.showSeconds;
+
+      // Antigravity
+      document.getElementById('setting-antigravityMonitor').checked = !!cfg.antigravityMonitor;
+      document.getElementById('setting-autoFocusAntigravity').checked = !!cfg.autoFocusAntigravity;
+      document.getElementById('setting-hooksPort').value = cfg.hooksPort || 47823;
+
+      // DropZone
+      if (data.dropZonePath) {
+        document.getElementById('dropzone-path-text').textContent = data.dropZonePath;
+      }
+      document.getElementById('dropzone-count-badge').textContent = `${data.dropZoneCount || 0} items`;
+
+      // Updates
+      document.getElementById('current-version-badge').textContent = `v${data.version || '1.0.7'}`;
+      document.getElementById('setting-autoCheckUpdates').checked = !!cfg.autoCheckUpdates;
+
+      // Render presets
+      renderPresets(data.presets || []);
+    }
+
+    function renderPresets(presets) {
+      const container = document.getElementById('presets-list-container');
+      if (!presets || presets.length === 0) {
+        container.innerHTML = '<p style="color: #71717a; font-size: 13px;">No presets configured yet. Use the Island apps menu to add presets.</p>';
+        return;
+      }
+
+      let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
+      presets.forEach((p, idx) => {
+        const appsCount = (p.apps || []).length;
+        html += `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 16px;">${p.icon || '🚀'}</span>
+              <div>
+                <div style="font-size: 13px; font-weight: 600; color: #f4f4f5;">${p.name}</div>
+                <div style="font-size: 11.5px; color: #71717a;">${appsCount} application${appsCount === 1 ? '' : 's'} &bull; Shortcut: Ctrl+Alt+${idx + 1}</div>
+              </div>
+            </div>
+            <button class="btn" onclick="launchPreset('${p.id}')">Launch</button>
+          </div>
+        `;
+      });
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    window.launchPreset = function(id) {
+      ipcRenderer.send('launch-preset', id);
+    };
+
+    // Auto-save setting changes
+    function bindSettingChange(elementId, configKey, isNumeric = false) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      el.addEventListener('change', async () => {
+        const value = el.type === 'checkbox' ? el.checked : (isNumeric ? parseInt(el.value, 10) : el.value);
+        await ipcRenderer.invoke('save-app-settings', { [configKey]: value });
+      });
+    }
+
+    bindSettingChange('setting-startup', 'startup');
+    bindSettingChange('setting-startupTakeover', 'startupTakeover');
+    bindSettingChange('setting-clock24h', 'clock24h');
+    bindSettingChange('setting-showSeconds', 'showSeconds');
+    bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');
+    bindSettingChange('setting-autoFocusAntigravity', 'autoFocusAntigravity');
+    bindSettingChange('setting-hooksPort', 'hooksPort', true);
+    bindSettingChange('setting-autoCheckUpdates', 'autoCheckUpdates');
+
+    // Buttons
+    document.getElementById('btn-open-dropzone').addEventListener('click', () => {
+      ipcRenderer.send('settings-open-dropzone');
+    });
+
+    document.getElementById('btn-preview-takeover').addEventListener('click', () => {
+      ipcRenderer.send('trigger-startup-takeover');
+    });
+
+    document.getElementById('btn-open-repo').addEventListener('click', () => {
+      ipcRenderer.send('open-external-url', 'https://github.com/voiceline-diskrep/dynamic-windows');
+    });
+
+    document.getElementById('btn-view-releases').addEventListener('click', () => {
+      ipcRenderer.send('open-external-url', 'https://github.com/voiceline-diskrep/dynamic-windows/releases');
+    });
+
+    // Check for updates
+    let latestDownloadUrl = '';
+    const btnCheck = document.getElementById('btn-check-updates');
+    const resultBox = document.getElementById('update-result-box');
+    const statusMsg = document.getElementById('update-status-msg');
+    const actionArea = document.getElementById('update-action-area');
+    const notesPreview = document.getElementById('release-notes-preview');
+
+    btnCheck.addEventListener('click', async () => {
+      btnCheck.disabled = true;
+      btnCheck.textContent = 'Checking GitHub...';
+      resultBox.style.display = 'block';
+      statusMsg.innerHTML = '<span style="color: #93c5fd;">Checking GitHub Releases API...</span>';
+      actionArea.style.display = 'none';
+      notesPreview.style.display = 'none';
+
+      const res = await ipcRenderer.invoke('check-github-update');
+      btnCheck.disabled = false;
+      btnCheck.textContent = 'Check for Updates Now';
+
+      if (res.error) {
+        statusMsg.innerHTML = `<span style="color: #ef4444;">Error checking updates: ${res.error}</span>`;
+      } else if (res.updateAvailable) {
+        latestDownloadUrl = res.downloadUrl;
+        statusMsg.innerHTML = `
+          <strong style="color: #4ade80;">New update available! (v${res.latestVersion})</strong><br>
+          <span style="color: #a1a1aa; font-size: 12px;">You are currently running v${res.currentVersion}.</span>
+        `;
+        actionArea.style.display = 'block';
+        if (res.releaseNotes) {
+          notesPreview.style.display = 'block';
+          notesPreview.textContent = res.releaseNotes;
+        }
+      } else {
+        statusMsg.innerHTML = `<span style="color: #4ade80;">✓ You are running the latest version (v${res.currentVersion}).</span>`;
+      }
+    });
+
+    document.getElementById('btn-download-update').addEventListener('click', () => {
+      if (latestDownloadUrl) {
+        ipcRenderer.send('open-external-url', latestDownloadUrl);
+      }
+    });
+
+    // Initialize
+    loadSettings();
+  </script>
+</body>
+</html>

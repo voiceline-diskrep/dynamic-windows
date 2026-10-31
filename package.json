@@ -1,12 +1,12 @@
 {
   "name": "dynamic-windows",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Dynamic Windows + One-Shot: Apple Dynamic Island & One-Shot Application Launcher with Google Antigravity Integration",
   "main": "src/main/main.js",
   "type": "commonjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/antigravity.test.js tests/hooks.test.js tests/oneshot.test.js",
+    "test": "node --test tests/antigravity.test.js tests/hooks.test.js tests/oneshot.test.js tests/dropzone-config.test.js",
     "build:setup": "node tools/make-setup.cjs"
   },
   "keywords": [

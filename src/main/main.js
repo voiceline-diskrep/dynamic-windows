@@ -13,6 +13,7 @@ const OneShotEngine = require('./oneshot-engine');
 const { createStartupTakeover } = require('./startup-takeover');
 const MediaController = require('./media-spotify');
 const DropZone = require('./drop-zone');
+const { createSettingsWindow, registerSettingsIPC } = require('./settings-window');
 
 let mainWindow = null;
 let tray = null;
@@ -147,6 +148,16 @@ function createIslandWindow() {
     }
   });
 
+  // Settings Window
+  ipcMain.on('open-settings', () => {
+    createSettingsWindow(dropZone, oneShotEngine);
+  });
+
+  // Startup Takeover Trigger
+  ipcMain.on('trigger-startup-takeover', () => {
+    createStartupTakeover(oneShotEngine);
+  });
+
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
@@ -190,6 +201,12 @@ function setupTray() {
           if (dropZone) dropZone.revealInExplorer();
         }
       },
+      {
+        label: '⚙️ Settings & Preferences...',
+        click: () => {
+          createSettingsWindow(dropZone, oneShotEngine);
+        }
+      },
       { type: 'separator' },
       {
         label: 'Focus Google Antigravity',
@@ -206,7 +223,7 @@ function setupTray() {
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows + One-Shot (v1.0.6)');
+    tray.setToolTip('Dynamic Windows + One-Shot (v1.0.7)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);
@@ -242,6 +259,7 @@ app.whenReady().then(() => {
   oneShotEngine = new OneShotEngine();
   mediaController = new MediaController();
   dropZone = new DropZone();
+  registerSettingsIPC(dropZone, oneShotEngine);
 
   // 2. Google Antigravity Real-Time Monitor
   antigravityMonitor = new AntigravityMonitor();

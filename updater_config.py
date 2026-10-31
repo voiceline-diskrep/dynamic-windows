@@ -9,7 +9,7 @@ import json
 import logging
 
 APP_NAME = "Dynamic Windows"
-CURRENT_VERSION = "1.0.6"
+CURRENT_VERSION = "1.0.7"
 
 # Official GitHub repository defaults
 DEFAULT_REPO_OWNER = "voiceline-diskrep"
