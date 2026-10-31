@@ -6,6 +6,24 @@
 
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs');
+
+process.on('uncaughtException', (err) => {
+  try {
+    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'error.log'), `[${new Date().toISOString()}] UncaughtException: ${err.stack || err}\n`);
+  } catch (e) {}
+  console.error('[UNCAUGHT EXCEPTION]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  try {
+    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'error.log'), `[${new Date().toISOString()}] UnhandledRejection: ${reason && reason.stack ? reason.stack : reason}\n`);
+  } catch (e) {}
+  console.error('[UNHANDLED REJECTION]', reason);
+});
 
 const AntigravityMonitor = require('./antigravity-monitor');
 const AgentHooksServer = require('./agent-hooks-server');
@@ -44,7 +62,7 @@ function createIslandWindow() {
 
   // Initial standby dimensions
   const initialWidth = 560;  // Generous container width to allow fluid canvas animation
-  const initialHeight = 260; // Max expanded height container
+  const initialHeight = 300; // Expanded height container for spacious shelf and presets
 
   const initialX = Math.round((screenBounds.width - initialWidth) / 2);
   const initialY = 0;
@@ -276,7 +294,7 @@ function sendDisplayMode() {
 
 function setupTray() {
   try {
-    const iconPath = path.join(__dirname, '..', '..', 'app_icon.png');
+    const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');
     tray = new Tray(iconPath);
     const contextMenu = Menu.buildFromTemplate([
       {
@@ -314,7 +332,7 @@ function setupTray() {
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows + One-Shot (v1.0.9)');
+    tray.setToolTip('Dynamic Windows + One-Shot (v1.1.0)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);
@@ -360,13 +378,46 @@ app.whenReady().then(() => {
   });
   antigravityMonitor.start();
 
-  // 3. Agent Hooks Server (Claude Code / Codex)
+  // 3. Agent Hooks Server & Antigravity MCP Bridge
   agentHooksServer = new AgentHooksServer();
   agentHooksServer.on('permission-requested', (prompt) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('permission-prompt', prompt);
     }
   });
+
+  agentHooksServer.on('mcp-notify', (data) => {
+    if (antigravityMonitor) {
+      antigravityMonitor.lastState.status = data.status || 'running';
+      antigravityMonitor.lastState.phase = data.phase || 'Agent Active';
+      if (data.task) antigravityMonitor.lastState.task = data.task;
+      sendAntigravityState();
+    }
+  });
+
+  agentHooksServer.on('mcp-shelf-file', (data) => {
+    if (dropZone && data.path) {
+      dropZone.addFile(data.path);
+      sendDropZoneFiles();
+    }
+  });
+
+  agentHooksServer.on('mcp-set-mode', (data) => {
+    if (data.mode && ['island', 'notch'].includes(data.mode)) {
+      configManager.set('displayMode', data.mode);
+      sendDisplayMode();
+    }
+  });
+
+  agentHooksServer.stateGetter = () => {
+    return {
+      status: antigravityMonitor ? antigravityMonitor.getState().status : 'idle',
+      displayMode: configManager.get('displayMode'),
+      shelfFiles: dropZone ? dropZone.getFiles() : [],
+      presets: oneShotEngine ? oneShotEngine.getPresets() : []
+    };
+  };
+
   agentHooksServer.start();
 
   // 4. Check for startup takeover argument

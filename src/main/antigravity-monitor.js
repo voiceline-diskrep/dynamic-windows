@@ -198,17 +198,34 @@ class AntigravityMonitor extends EventEmitter {
   }
 
   focusAntigravityWindow() {
-    // Windows PowerShell script to find and bring Antigravity.exe to foreground
-    const ps = `
-      $proc = Get-Process -Name "Antigravity" -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-      if ($proc) {
-        $sig = '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);'
-        $type = Add-Type -MemberDefinition $sig -Name Win32SetForegroundWindow -Namespace Win32Functions -PassThru
-        $type::SetForegroundWindow($proc.MainWindowHandle)
+    const { execFile } = require('child_process');
+    const ps = [
+      "$ws = New-Object -ComObject WScript.Shell",
+      "$activated = $ws.AppActivate('Antigravity')",
+      "if (-not $activated) {",
+      "  $procs = Get-Process -Name 'Antigravity' -ErrorAction SilentlyContinue",
+      "  if ($procs) {",
+      "    foreach ($p in $procs) {",
+      "      if ($ws.AppActivate($p.Id)) { $activated = $true; break }",
+      "    }",
+      "  }",
+      "}",
+      "if ($activated) { Write-Output 'ACTIVATED' } else { Write-Output 'NOT_RUNNING' }"
+    ].join('\n');
+
+    execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], (err, stdout) => {
+      const output = (stdout || '').trim();
+      if (output.includes('NOT_RUNNING')) {
+        this.lastState.status = 'not_running';
+        this.lastState.phase = 'Antigravity is not running';
+        this.emit('change', this.getState());
+      } else if (output.includes('ACTIVATED')) {
+        if (this.lastState.status === 'not_running') {
+          this.lastState.status = 'idle';
+          this.lastState.phase = 'Ready';
+          this.emit('change', this.getState());
+        }
       }
-    `;
-    exec(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`, (err) => {
-      if (err) console.error('Failed to focus Antigravity window:', err.message);
     });
   }
 }

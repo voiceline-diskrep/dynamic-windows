@@ -10,11 +10,11 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Dynamic Windows Setup")]
 [assembly: AssemblyProduct("Dynamic Windows")]
 [assembly: AssemblyCompany("voiceline-diskrep")]
-[assembly: AssemblyVersion("1.0.9.0")]
-[assembly: AssemblyFileVersion("1.0.9.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 static class Setup {
-    public const string VERSION = "1.0.9";
+    public const string VERSION = "1.1.0";
     public static string Home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "DynamicWindows");
     public static bool NoStart, Quiet;
 
@@ -32,6 +32,10 @@ static class Setup {
                 if (!NoStart) Installer.Start(Home);
                 return 0;
             } catch (Exception e) {
+                try {
+                    string logFile = Path.Combine(Path.GetTempPath(), "DynamicWindows_setup_error.log");
+                    File.WriteAllText(logFile, e.ToString());
+                } catch { }
                 Console.Error.WriteLine(e.Message);
                 return 1;
             }
@@ -51,7 +55,7 @@ class SetupForm : Form {
     Button installButton;
 
     public SetupForm() {
-        this.Text = "Dynamic Windows + One-Shot Setup (v1.0.9)";
+        this.Text = "Dynamic Windows + One-Shot Setup (v1.1.0)";
         this.Size = new Size(480, 240);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -141,7 +145,10 @@ static class Installer {
         // Close any running instance of DynamicWindows
         try {
             foreach (var p in Process.GetProcessesByName("DynamicWindows")) {
-                try { p.Kill(); p.WaitForExit(2000); } catch { }
+                try {
+                    p.Kill();
+                    p.WaitForExit(5000);
+                } catch { }
             }
         } catch { }
 
@@ -189,12 +196,18 @@ static class Installer {
                 string dir = Path.GetDirectoryName(destPath);
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
-                try {
-                    entry.ExtractToFile(destPath, true);
-                } catch (Exception ex) {
-                    // Retry once
-                    Thread.Sleep(100);
-                    entry.ExtractToFile(destPath, true);
+                bool extracted = false;
+                for (int attempt = 0; attempt < 4; attempt++) {
+                    try {
+                        entry.ExtractToFile(destPath, true);
+                        extracted = true;
+                        break;
+                    } catch {
+                        Thread.Sleep(200 * (attempt + 1));
+                    }
+                }
+                if (!extracted) {
+                    throw new IOException("Failed to extract file: " + destPath);
                 }
 
                 if (progressCallback != null && (count % 5 == 0 || count == total)) {

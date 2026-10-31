@@ -70,6 +70,27 @@ class AgentHooksServer extends EventEmitter {
       // 3. Wait for reply endpoint: /twocode-wait
       else if (url.pathname === '/twocode-wait') {
         this.handleWaitReply(data, res);
+      }
+      // 4. MCP Bridge endpoints
+      else if (url.pathname === '/mcp/notify') {
+        this.emit('mcp-notify', data);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      }
+      else if (url.pathname === '/mcp/shelf-file') {
+        this.emit('mcp-shelf-file', data);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      }
+      else if (url.pathname === '/mcp/set-mode') {
+        this.emit('mcp-set-mode', data);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      }
+      else if (url.pathname === '/mcp/state') {
+        const state = typeof this.stateGetter === 'function' ? this.stateGetter() : {};
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(state));
       } else {
         res.writeHead(404);
         res.end();

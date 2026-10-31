@@ -1,6 +1,6 @@
 'use strict';
 
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, webUtils } = require('electron');
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -17,7 +17,7 @@ const UI = {
   APPS_H: 230,
   AGENT_H: 156,
   MEDIA_H: 170,
-  DROPZONE_H: 220,
+  DROPZONE_H: 260,
   PROMPT_H: 150,
 
   COMPACT_RADIUS: 16,
@@ -118,8 +118,11 @@ window.addEventListener('drop', (e) => {
   isDraggingOver = false;
   if (e.dataTransfer && e.dataTransfer.files) {
     for (const file of e.dataTransfer.files) {
-      if (file.path) {
-        ipcRenderer.send('dropzone-add-file', file.path);
+      const filePath = (webUtils && typeof webUtils.getPathForFile === 'function')
+        ? webUtils.getPathForFile(file)
+        : file.path;
+      if (filePath) {
+        ipcRenderer.send('dropzone-add-file', filePath);
       }
     }
   }
@@ -446,6 +449,8 @@ function renderTrafficLightDot(dx, dy, status) {
     color = '#f59e0b'; // Amber solid
   } else if (status === 'error') {
     color = '#ef4444'; // Red
+  } else if (status === 'not_running') {
+    color = '#64748b'; // Muted Gray
   }
 
   ctx.save();
@@ -594,24 +599,34 @@ function renderHomeView(x, y, w, h) {
   const phaseText = antigravityState.phase || 'Agent Ready';
   ctx.fillText(phaseText.length > 32 ? phaseText.slice(0, 32) + '...' : phaseText, cardX + 12, cardY + 50);
 
-  // Jump Button
-  const btnJumpW = 60;
-  const btnJumpH = 20;
+  // Jump Button (Open Antigravity)
+  const isRunning = antigravityState.status !== 'not_running';
+  const btnJumpW = 74;
+  const btnJumpH = 22;
   const btnJumpX = cardX + cardW - btnJumpW - 10;
   const btnJumpY = cardY + cardH - btnJumpH - 10;
 
   ctx.beginPath();
   ctx.roundRect(btnJumpX, btnJumpY, btnJumpW, btnJumpH, 6);
-  ctx.fillStyle = hoveredButtonId === 'jump_antigravity' ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
-  ctx.strokeStyle = '#3b82f6';
+  if (isRunning) {
+    ctx.fillStyle = hoveredButtonId === 'jump_antigravity' ? '#2563eb' : 'rgba(37, 99, 235, 0.25)';
+    ctx.strokeStyle = '#3b82f6';
+  } else {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+  }
+  ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
 
-  ctx.font = '600 9px "Segoe UI", sans-serif';
-  ctx.fillStyle = '#ffffff';
+  ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isRunning ? '#ffffff' : '#94a3b8';
   ctx.textAlign = 'center';
-  ctx.fillText('Open ➔', btnJumpX + btnJumpW / 2, btnJumpY + btnJumpH / 2);
-  interactiveButtons.push({ id: 'jump_antigravity', x: btnJumpX, y: btnJumpY, w: btnJumpW, h: btnJumpH });
+  ctx.textBaseline = 'middle';
+  ctx.fillText(isRunning ? 'Open ➔' : 'Not Running', btnJumpX + btnJumpW / 2, btnJumpY + btnJumpH / 2);
+  if (isRunning) {
+    interactiveButtons.push({ id: 'jump_antigravity', x: btnJumpX, y: btnJumpY, w: btnJumpW, h: btnJumpH });
+  }
 }
 
 function renderAppsView(x, y, w, h) {
@@ -814,8 +829,8 @@ function renderPromptView(x, y, w, h) {
 // Drop Zone Shelf View (Inside Island / Notch)
 // -------------------------------------------------------------
 function renderDropZoneView(x, y, w, h) {
-  const topY = y + 42;
-  const padding = 16;
+  const topY = y + 40;
+  const padding = 18;
   const contentW = w - padding * 2;
   const contentX = x + padding;
 
@@ -873,17 +888,17 @@ function renderDropZoneView(x, y, w, h) {
   ctx.fillText('Clear', clrX + clrW / 2, btnY + btnH / 2);
 
   // Files Area
-  const listY = topY + 28;
-  const listH = h - (listY - y) - 14;
+  const listY = topY + 30;
 
   if (dropZoneFiles.length === 0) {
     // Empty Drop Target state
+    const emptyH = 160;
     ctx.save();
     ctx.setLineDash([5, 5]);
     ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : 'rgba(255, 255, 255, 0.15)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.roundRect(contentX, listY, contentW, listH, 10);
+    ctx.roundRect(contentX, listY, contentW, emptyH, 10);
     ctx.fillStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.02)';
     ctx.fill();
     ctx.stroke();
@@ -891,76 +906,116 @@ function renderDropZoneView(x, y, w, h) {
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '22px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('📥', contentX + contentW / 2, listY + listH / 2 - 16);
+    ctx.font = '24px "Segoe UI Emoji", sans-serif';
+    ctx.fillText('📥', contentX + contentW / 2, listY + emptyH / 2 - 20);
 
     ctx.fillStyle = isDraggingOver ? '#93c5fd' : '#e4e4e7';
-    ctx.font = '600 12.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillText(isDraggingOver ? 'Release to shelf files!' : 'Drop files here to store on shelf', contentX + contentW / 2, listY + listH / 2 + 10);
+    ctx.font = '600 13px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillText(isDraggingOver ? 'Release to shelf files!' : 'Drop files here to store on shelf', contentX + contentW / 2, listY + emptyH / 2 + 8);
 
     ctx.fillStyle = '#71717a';
     ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillText('Drag files from desktop or click + Add above', contentX + contentW / 2, listY + listH / 2 + 28);
+    ctx.fillText('Drag files from desktop, apps, or click + Add', contentX + contentW / 2, listY + emptyH / 2 + 28);
   } else {
-    // Display File Tiles in 2 columns
-    const cols = 2;
-    const itemGap = 8;
-    const itemW = Math.floor((contentW - itemGap) / cols);
-    const itemH = 54;
+    // Full-width vertical rows
+    const rowH = 38;
+    const rowGap = 6;
+    const maxRows = Math.min(dropZoneFiles.length, 3);
 
-    const maxItems = Math.min(dropZoneFiles.length, 4);
-    for (let i = 0; i < maxItems; i++) {
+    for (let i = 0; i < maxRows; i++) {
       const file = dropZoneFiles[i];
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const ix = contentX + col * (itemW + itemGap);
-      const iy = listY + row * (itemH + itemGap);
+      const ry = listY + i * (rowH + rowGap);
+      const isRowHov = hoveredButtonId === `row_${i}` || hoveredButtonId === `file_open_${i}`;
 
-      const isItemHov = hoveredButtonId === `file_${i}`;
-      interactiveButtons.push({ id: 'dropzone_open_file', data: file.name, x: ix, y: iy, w: itemW - 28, h: itemH });
-
-      // Item Box
+      // Row background
       ctx.beginPath();
-      ctx.roundRect(ix, iy, itemW, itemH, 8);
-      ctx.fillStyle = isItemHov ? 'rgba(255, 255, 255, 0.09)' : 'rgba(255, 255, 255, 0.04)';
+      ctx.roundRect(contentX, ry, contentW, rowH, 8);
+      ctx.fillStyle = isRowHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.035)';
       ctx.fill();
       ctx.lineWidth = 1;
-      ctx.strokeStyle = isItemHov ? 'rgba(59, 130, 246, 0.5)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.strokeStyle = isRowHov ? 'rgba(59, 130, 246, 0.4)' : 'rgba(255, 255, 255, 0.06)';
       ctx.stroke();
 
       // File Icon Glyph
       const icon = getFileIcon(file.name);
-      ctx.font = '18px "Segoe UI Emoji", sans-serif';
+      ctx.font = '16px "Segoe UI Emoji", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(icon, ix + 22, iy + itemH / 2);
+      ctx.fillText(icon, contentX + 20, ry + rowH / 2);
 
       // File Name
       ctx.fillStyle = '#f4f4f5';
-      ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.font = '600 12px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      const truncName = truncateText(file.name, 20);
-      ctx.fillText(truncName, ix + 42, iy + 12);
+      ctx.textBaseline = 'middle';
+      const truncName = truncateText(file.name, 34);
+      ctx.fillText(truncName, contentX + 38, ry + rowH / 2 - 6);
 
       // File Size
       ctx.fillStyle = '#71717a';
       ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillText(formatBytes(file.size), ix + 42, iy + 30);
+      ctx.fillText(formatBytes(file.size), contentX + 38, ry + rowH / 2 + 8);
+
+      // Dedicated Open ↗ Button
+      const openBtnW = 54;
+      const openBtnH = 22;
+      const openBtnX = contentX + contentW - 90;
+      const openBtnY = ry + (rowH - openBtnH) / 2;
+      const isOpenHov = hoveredButtonId === `dropzone_open_file_${i}`;
+      interactiveButtons.push({ id: 'dropzone_open_file', data: file.name, x: openBtnX, y: openBtnY, w: openBtnW, h: openBtnH });
+
+      ctx.beginPath();
+      ctx.roundRect(openBtnX, openBtnY, openBtnW, openBtnH, 6);
+      ctx.fillStyle = isOpenHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
+      ctx.strokeStyle = isOpenHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = isOpenHov ? '#ffffff' : '#93c5fd';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Open ↗', openBtnX + openBtnW / 2, openBtnY + openBtnH / 2);
 
       // Delete ✕ Button
-      const delBtnId = `del_${i}`;
-      const delX = ix + itemW - 26;
-      const delY = iy + 14;
-      const delSize = 18;
+      const delX = contentX + contentW - 28;
+      const delY = ry + (rowH - 20) / 2;
+      const delSize = 20;
+      const isDelHov = hoveredButtonId === `dropzone_delete_file_${i}`;
       interactiveButtons.push({ id: 'dropzone_delete_file', data: file.name, x: delX, y: delY, w: delSize, h: delSize });
-      const isDelHov = hoveredButtonId === delBtnId;
+
+      ctx.beginPath();
+      ctx.roundRect(delX, delY, delSize, delSize, 5);
+      ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.2)' : 'transparent';
+      ctx.fill();
+
       ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
-      ctx.font = '700 11px sans-serif';
+      ctx.font = '700 12px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('✕', delX + delSize / 2, delY + delSize / 2);
     }
+
+    // Mini Drop Bar at bottom to drop more files
+    const barY = listY + maxRows * (rowH + rowGap) + 4;
+    const barH = 34;
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(contentX, barY, contentW, barH, 6);
+    ctx.fillStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.02)';
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isDraggingOver ? '#93c5fd' : '#71717a';
+    ctx.fillText(isDraggingOver ? 'Release to add to shelf!' : '+ Drag more files here to shelf', contentX + contentW / 2, barY + barH / 2);
   }
 }
 

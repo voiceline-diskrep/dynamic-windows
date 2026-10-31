@@ -15,7 +15,7 @@ const CONFIG_DIR = path.join(
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.0.9',
+  version: '1.1.0',
   displayMode: 'island', // 'island' | 'notch'
   startup: false,
   startupTakeover: false,
