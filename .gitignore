@@ -4,3 +4,7 @@ __pycache__/
 .vscode/
 .idea/
 config.json
+node_modules/
+dist/
+build/
+

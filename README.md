@@ -1,63 +1,61 @@
-# 🏝️ Dynamic Windows + One-Shot (v1.0.4)
+# 🏝️ Dynamic Windows + One-Shot (v1.0.5)
 
-A polished Windows desktop application combining two connected experiences:
-1. **One-Shot:** A smart application launcher with presets, automatic app discovery, startup takeover mode, and one-click launching.
-2. **Windows Dynamic Island:** An authentic Apple-inspired desktop interface that provides quick access to system information, notifications, music, AI coding agents, downloads, timers, files, and other activities.
+A polished Windows desktop application inspired by Apple's Dynamic Island and TwoCode, combining:
+1. **Windows Dynamic Island (Electron + HTML5 Canvas):** A 144Hz hardware-accelerated liquid glass desktop interface with deep Google Antigravity integration, live agent statusline, Spotify media controls, and Drop Zone shelf.
+2. **One-Shot:** A smart application launcher with presets, Start Menu discovery, and Startup Takeover mode.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.4.exe)
-
----
-
-## 📥 Download & Install (Easiest Method)
-
-**No Python or dependencies required!**
-
-1. Download the installer:
-   👉 **[Download DynamicWindows-Setup-v1.0.4.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.4.exe)**
-2. Run the downloaded installer.
-3. Done! It will install the app, create a Desktop & Start Menu shortcut, and optionally start with Windows.
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.5.exe)
 
 ---
 
-## ✨ Features in v1.0.4
+## 📥 Download & Install
 
-### Part A — 144Hz High-Precision Dynamic Island Engine
-- **True 144Hz Butter-Smooth Animation**: Driven by a precise 7ms frame timer (`Qt.TimerType.PreciseTimer` and high-resolution `time.perf_counter()`) with Apple Quartic ease-out dynamics.
-- **Pure Apple Liquid Glass Aesthetics**: Spacious, uncluttered, OLED black pill with specular border rim and ambient drop shadow.
-- **Official Google Antigravity Logo**: Integrates the official high-DPI Antigravity logo in the pill badge, live activity card, and settings without placeholder emojis.
-- **Spacious, Breathable Design**: No cramped tabs or overflowing windows. Quick launch buttons for One-Shot, Drop Zone, Task Manager, and Settings open dedicated floating windows.
+👉 **[Download DynamicWindows-Setup-v1.0.5.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.5.exe)**
 
-### Part B — One-Shot Application Launcher
-- **Smart App Discovery**: Automatically scans Windows Start Menu shortcuts, standard program directories, and Windows Registry with native icon extraction and filtering out uninstallers/helpers.
-- **Preset Management**: Create, edit, duplicate, rename, and reorder presets (e.g. Gaming, Work & Code, Creative Studio) with custom launch delays and arguments.
-- **Asynchronous Launch Engine**: Reliable 1-click launching using non-blocking detached processes without frozen UI or duplicate launches.
-- **Startup Takeover Mode**: Optional full-screen workspace selection on Windows sign-in with a prominent **`Just Enter ➔`** bypass button and keyboard shortcuts (`Enter`/`Esc`) for safe recovery.
-
-### Part C — Dynamic Island Live Activities & Tools
-- **Live Activity Engine**: Displays active Google Antigravity tasks, music playback, downloads, and focus timers with progress indicators and action buttons.
-- **Persistent Drop Zone Shelf**: Drag-and-drop storage in `%APPDATA%\DynamicWindows\drop_zone\`.
-- **System Task Manager & Audio**: Real-time CPU, RAM, Disk, Network usage, and process list with protected system process safeguards.
-- **Music & Media Controls**: Windows Media session controls (Play/Pause, Next, Previous) and track info.
-
-### Part D — Automatic GitHub Updates
-- **GitHub Release Monitoring**: Checks GitHub Releases API in the background using configurable intervals.
-- **SemVer 2.0.0 Support**: Detects newer versions automatically, with optional pre-release / beta channel.
-- **Verified Downloads & Safe Replacement**: SHA256 integrity verification, Windows PE validation, and non-blocking detached process replacement.
+- **TwoCode-Style Single-File Setup**: Embedded installer package compiled with native C# (`.NET`).
+- Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` with **zero admin rights / UAC prompts required**.
+- Automatically creates Desktop and Start Menu shortcuts.
 
 ---
 
-## 🛠️ Developer Setup (Running from source)
+## ✨ What's New in v1.0.5
 
-If you prefer to run or build from Python source:
+### 🚀 Electron + HTML5 Canvas 2D Engine (TwoCode-Inspired)
+- Migrated to an ultra-fluid **Electron + HTML5 `<canvas>` 2D rendering pipeline** syncing with 144Hz monitors for zero-lag, tear-free animations.
+- **Pure Minimalist Identity (No Mascot)**: Removed the cartoon companion in favor of clean Inter / Segoe UI typography, the official Google Antigravity logo, and a geometric traffic light status indicator.
+
+### ✦ Real-Time Google Antigravity Integration
+- **Live Transcript Watcher**: Automatically monitors active Antigravity conversations at `~/.gemini/antigravity/brain/*/transcript.jsonl`.
+- **Live Tool Execution**: Displays running commands (`run_command`), file modifications (`write_file`, `edit_file`), and thinking phases.
+- **Traffic Light Status**:
+  - 🟢 Green: Ready / Done
+  - 🟠 Orange Pulse: Working (Executing tool / shell command)
+  - 🟠 Orange Solid: Awaiting user input
+  - 🔴 Red: Error
+- **1-Click Window Focus**: Focus the Antigravity IDE window directly from the island.
+
+### 🛡️ Agent Hooks Server (`127.0.0.1:47823`)
+- Built-in local hook server compatible with Claude Code and Codex hook events.
+- **1-Click In-Island Permissions**: Suspends tool requests so users can click `[ Allow ]` or `[ Deny ]` right in the island.
+- **Rate Limit Tracking**: Tracks 5-hour and 7-day quota usage directly from Claude Code status line reports.
+
+### ⚡ Integrated One-Shot & Startup Takeover
+- **In-Island Presets**: Launch preset application groups directly from the expanded island (`apps` view).
+- **Startup Takeover Mode**: Full-screen workspace picker on sign-in with a prominent **`Just Enter ➔`** desktop bypass button (`Ctrl+Alt+T` or `--startup-mode`).
+
+---
+
+## 🛠️ Developer Setup
 
 ```bash
 git clone https://github.com/voiceline-diskrep/dynamic-windows.git
 cd dynamic-windows
-pip install -r requirements.txt
-python dynamic_notch.py
+npm install
+npm test
+npm start
 ```
 
-To run in Startup Takeover Mode directly:
+To compile the single-file installer:
 ```bash
-python dynamic_notch.py --startup-mode
+npm run build:setup
 ```
