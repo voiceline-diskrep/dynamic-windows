@@ -1,61 +1,56 @@
 'use strict';
 /**
- * Dynamic Windows - TwoCode-style Setup Compiler
- * Compiles Setup.cs with native Windows csc.exe, zips application payload,
- * and concatenates them into a single-file executable.
+ * Dynamic Windows - TwoCode-style Single-File Setup Builder
+ * Stages Electron distribution, compresses to zip, and embeds into C# Setup stub.
  */
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
-const ROOT_DIR = path.resolve(__dirname, '..');
-const SETUP_CS = path.join(__dirname, 'setup', 'Setup.cs');
-const OUTPUT_DIR = path.join(ROOT_DIR, 'installer_output');
-const STUB_EXE = path.join(__dirname, 'setup', 'stub.exe');
-const PAYLOAD_ZIP = path.join(__dirname, 'setup', 'payload.zip');
-const FINAL_EXE = path.join(OUTPUT_DIR, 'DynamicWindows-Setup-v1.0.5.exe');
+const repo = path.resolve(__dirname, '..');
+const version = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8')).version;
 
-const CSC_PATH = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
+// 1. Build Full Electron Distribution Zip
+console.log('Step 1: Staging and creating full payload zip...');
+execFileSync('node', [path.join(__dirname, 'make-full.cjs')], { cwd: repo, stdio: 'inherit' });
 
-console.log('--- Building Dynamic Windows Single-File Installer (TwoCode-style) ---');
-
-if (!fs.existsSync(OUTPUT_DIR)) {
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+const zipPath = path.join(repo, 'dist', `DynamicWindows-${version}.zip`);
+if (!fs.existsSync(zipPath)) {
+  console.error(`Payload zip ${zipPath} was not created!`);
+  process.exit(1);
 }
 
-// 1. Compile Setup.cs
-console.log('Compiling C# stub with csc.exe...');
-const cscCmd = `"${CSC_PATH}" /target:winexe /optimize+ /platform:anycpu /out:"${STUB_EXE}" /r:System.Drawing.dll,System.Windows.Forms.dll,System.IO.Compression.dll,System.IO.Compression.FileSystem.dll "${SETUP_CS}"`;
-execSync(cscCmd, { stdio: 'inherit' });
+// 2. Compile C# Setup Stub with embedded resource
+console.log('\nStep 2: Compiling C# Setup stub with embedded payload...');
+const csc = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
+const fw = path.dirname(csc);
+const outDir = path.join(repo, 'installer_output');
+if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-// 2. Create Application Payload Zip
-console.log('Creating application payload zip...');
-const filesToZip = [
-  'package.json',
-  'app_icon.png',
-  'app_icon.ico',
-  'antigravity_logo.png',
-  'src'
+const exePath = path.join(outDir, `DynamicWindows-Setup-v${version}.exe`);
+const setupCs = path.join(__dirname, 'setup', 'Setup.cs');
+const iconIco = path.join(repo, 'app_icon.ico');
+
+const cscArgs = [
+  '/nologo',
+  '/target:winexe',
+  '/optimize+',
+  '/platform:anycpu',
+  `/out:${exePath}`,
+  `/win32icon:${iconIco}`,
+  `/resource:${zipPath},DynamicWindows.zip`,
+  `/r:${path.join(fw, 'System.dll')}`,
+  `/r:${path.join(fw, 'System.Drawing.dll')}`,
+  `/r:${path.join(fw, 'System.Windows.Forms.dll')}`,
+  `/r:${path.join(fw, 'System.IO.Compression.dll')}`,
+  `/r:${path.join(fw, 'System.IO.Compression.FileSystem.dll')}`,
+  setupCs
 ];
 
-// Use PowerShell Compress-Archive for reliable compression without external dependencies
-const psZipCmd = `powershell -NoProfile -NonInteractive -Command "Compress-Archive -Path 'package.json','app_icon.png','app_icon.ico','antigravity_logo.png','src' -DestinationPath '${PAYLOAD_ZIP}' -Force"`;
-execSync(psZipCmd, { cwd: ROOT_DIR, stdio: 'inherit' });
+execFileSync(csc, cscArgs, { stdio: 'inherit' });
 
-// 3. Concatenate stub.exe + payload.zip
-console.log('Concatenating stub and payload...');
-const stubBuf = fs.readFileSync(STUB_EXE);
-const zipBuf = fs.readFileSync(PAYLOAD_ZIP);
-const combined = Buffer.concat([stubBuf, zipBuf]);
-
-fs.writeFileSync(FINAL_EXE, combined);
-console.log(`✓ Single-file installer generated successfully:`);
-console.log(`  Path: ${FINAL_EXE}`);
-console.log(`  Size: ${combined.length} bytes (${(combined.length / 1024 / 1024).toFixed(2)} MB)`);
-
-// Cleanup temporary files
-try {
-  fs.unlinkSync(STUB_EXE);
-  fs.unlinkSync(PAYLOAD_ZIP);
-} catch (e) {}
+const stat = fs.statSync(exePath);
+console.log(`\n✓ Single-file standalone installer successfully generated:`);
+console.log(`  Path: ${exePath}`);
+console.log(`  Size: ${(stat.size / 1024 / 1024).toFixed(1)} MB (${stat.size} bytes)`);

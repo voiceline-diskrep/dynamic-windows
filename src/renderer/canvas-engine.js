@@ -79,10 +79,51 @@ let mouseX = -1000;
 let mouseY = -1000;
 let hoveredButtonId = null;
 
+// Initial transparent click-through state
+ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+
 canvas.addEventListener('mousemove', (e) => {
   mouseX = e.clientX;
   mouseY = e.clientY;
 
+  // Island pill hit detection
+  const curP = Math.max(0, Math.min(1, animProgress));
+  const curW = getTargetWidth(curP);
+  const curH = getTargetHeight(curP);
+  const curX = (window.innerWidth - curW) / 2;
+  const curY = 6;
+
+  const isOverIsland = pointInRect(mouseX, mouseY, curX - 8, curY - 4, curW + 16, curH + 16);
+
+  if (isOverIsland) {
+    if (leaveTimer) {
+      clearTimeout(leaveTimer);
+      leaveTimer = null;
+    }
+    if (!isHovered) {
+      isHovered = true;
+      targetProgress = 1.0;
+      ipcRenderer.send('set-ignore-mouse-events', false);
+      ipcRenderer.send('island-hover-start');
+    }
+  } else {
+    if (isHovered && !leaveTimer) {
+      leaveTimer = setTimeout(() => {
+        isHovered = false;
+        targetProgress = 0.0;
+        currentView = 'home';
+        ipcRenderer.send('island-hover-end');
+        leaveTimer = null;
+        setTimeout(() => {
+          if (!isHovered) {
+            ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+          }
+        }, 320);
+      }, UI.LEAVE_DELAY);
+    }
+  }
+
+  // Button hover inspection
   let found = null;
   for (const btn of interactiveButtons) {
     if (pointInRect(mouseX, mouseY, btn.x, btn.y, btn.w, btn.h)) {
@@ -97,16 +138,6 @@ canvas.addEventListener('mousemove', (e) => {
   }
 });
 
-canvas.addEventListener('mouseenter', () => {
-  if (leaveTimer) {
-    clearTimeout(leaveTimer);
-    leaveTimer = null;
-  }
-  isHovered = true;
-  targetProgress = 1.0;
-  ipcRenderer.send('island-hover-start');
-});
-
 canvas.addEventListener('mouseleave', () => {
   if (leaveTimer) clearTimeout(leaveTimer);
   leaveTimer = setTimeout(() => {
@@ -114,6 +145,8 @@ canvas.addEventListener('mouseleave', () => {
     targetProgress = 0.0;
     currentView = 'home';
     ipcRenderer.send('island-hover-end');
+    leaveTimer = null;
+    ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
   }, UI.LEAVE_DELAY);
 });
 

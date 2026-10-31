@@ -68,6 +68,9 @@ function createIslandWindow() {
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'island.html'));
 
+  // Enable click-through on transparent margins while forwarding mouse moves
+  mainWindow.setIgnoreMouseEvents(true, { forward: true });
+
   // Multi-monitor centering helper
   function recenterWindow(targetW, targetH) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -75,6 +78,14 @@ function createIslandWindow() {
     const x = Math.round((curScreen.width - targetW) / 2);
     mainWindow.setBounds({ x, y: 0, width: targetW, height: targetH });
   }
+
+  // Mouse ignore IPC listener from canvas engine
+  ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) {
+      win.setIgnoreMouseEvents(ignore, options || { forward: true });
+    }
+  });
 
   // Window bounds IPC listener from canvas engine
   ipcMain.on('window-bounds-update', (event, bounds) => {
@@ -163,39 +174,43 @@ function sendMediaState() {
 }
 
 function setupTray() {
-  const iconPath = path.join(__dirname, '..', '..', 'app_icon.png');
-  tray = new Tray(iconPath);
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: '⚡ One-Shot Takeover Screen',
-      click: () => {
-        createStartupTakeover(oneShotEngine);
+  try {
+    const iconPath = path.join(__dirname, '..', '..', 'app_icon.png');
+    tray = new Tray(iconPath);
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: '⚡ One-Shot Takeover Screen',
+        click: () => {
+          createStartupTakeover(oneShotEngine);
+        }
+      },
+      {
+        label: '📁 Open Drop Zone Folder',
+        click: () => {
+          if (dropZone) dropZone.revealInExplorer();
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Focus Google Antigravity',
+        click: () => {
+          if (antigravityMonitor) antigravityMonitor.focusAntigravityWindow();
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Exit Dynamic Windows',
+        click: () => {
+          app.quit();
+        }
       }
-    },
-    {
-      label: '📁 Open Drop Zone Folder',
-      click: () => {
-        if (dropZone) dropZone.revealInExplorer();
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Focus Google Antigravity',
-      click: () => {
-        if (antigravityMonitor) antigravityMonitor.focusAntigravityWindow();
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Exit Dynamic Windows',
-      click: () => {
-        app.quit();
-      }
-    }
-  ]);
+    ]);
 
-  tray.setToolTip('Dynamic Windows + One-Shot (v1.0.5)');
-  tray.setContextMenu(contextMenu);
+    tray.setToolTip('Dynamic Windows + One-Shot (v1.0.6)');
+    tray.setContextMenu(contextMenu);
+  } catch (err) {
+    console.error('Tray setup warning:', err);
+  }
 }
 
 function setupGlobalShortcuts() {
