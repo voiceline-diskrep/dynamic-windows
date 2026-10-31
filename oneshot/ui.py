@@ -471,3 +471,24 @@ class OneShotWidget(QWidget):
         if QMessageBox.question(self, "Delete Preset", f"Delete preset '{preset.name}'?") == QMessageBox.StandardButton.Yes:
             self.preset_manager.delete_preset(preset.id)
             self.refresh_presets()
+
+
+class OneShotWindow(QDialog):
+    """Spacious standalone window for the One-Shot application launcher."""
+    def __init__(self, preset_manager: PresetManager, launch_engine: AppLaunchEngine, discovery_engine: AppDiscoveryEngine, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("One-Shot Application Launcher")
+        self.resize(760, 560)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #121215;
+                color: #e4e4e7;
+                border: 1px solid #27272a;
+                border-radius: 12px;
+                font-family: 'Segoe UI', sans-serif;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        self.widget = OneShotWidget(preset_manager, launch_engine, discovery_engine, self)
+        layout.addWidget(self.widget)

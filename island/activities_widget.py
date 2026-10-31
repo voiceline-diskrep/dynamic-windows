@@ -3,9 +3,11 @@ Dynamic Windows - Activities Tab Widget
 Displays live activities: AI Coding Agents, Downloads, Call status, and Background tasks.
 """
 
+import os
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame, QProgressBar
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame, QProgressBar, QDialog
 )
 
 from ai_agents.manager import AIAgentActivityManager, AgentActivity
@@ -89,10 +91,19 @@ class ActivitiesWidget(QWidget):
         card.setStyleSheet("background-color: #18181c; border: 1px solid #27272a; border-radius: 8px; padding: 10px;")
         l = QVBoxLayout(card)
         l.setContentsMargins(10, 8, 10, 8)
-        l.setSpacing(4)
+        l.setSpacing(6)
 
         top = QHBoxLayout()
-        prov = QLabel(f"🤖 {agent.provider}")
+        # Antigravity official logo or provider tag
+        is_ag = "antigravity" in agent.provider.lower()
+        logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "antigravity_logo.png")
+        if is_ag and os.path.exists(logo_path):
+            img_lbl = QLabel()
+            pm = QPixmap(logo_path).scaled(22, 22, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            img_lbl.setPixmap(pm)
+            top.addWidget(img_lbl)
+
+        prov = QLabel(agent.provider)
         prov.setStyleSheet("font-size: 13px; font-weight: 600; color: #38bdf8;")
         top.addWidget(prov)
         top.addStretch()
@@ -152,3 +163,24 @@ class ActivitiesWidget(QWidget):
         top.addWidget(rem_lbl)
         l.addLayout(top)
         return card
+
+
+class ActivitiesWindow(QDialog):
+    """Spacious standalone dialog for viewing all live AI agents and background activities."""
+    def __init__(self, ai_manager, download_monitor, focus_timer, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Live Activities & AI Coding Agents")
+        self.resize(600, 480)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #121215;
+                color: #e4e4e7;
+                border: 1px solid #27272a;
+                border-radius: 12px;
+                font-family: 'Segoe UI', sans-serif;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        self.widget = ActivitiesWidget(ai_manager, download_monitor, focus_timer, self)
+        layout.addWidget(self.widget)

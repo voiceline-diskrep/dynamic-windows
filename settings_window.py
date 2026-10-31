@@ -7,6 +7,7 @@ Activities, AI Agents, Drop Zone, Task Manager, Updates, Privacy, and About.
 import os
 import subprocess
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QStackedWidget, QCheckBox,
@@ -99,7 +100,7 @@ class CompleteSettingsWindow(QDialog):
             ("👆 Interaction", self.create_interaction_page),
             ("🔊 Sound & Feedback", self.create_sound_page),
             ("⚡ Activities", self.create_activities_page),
-            ("🤖 AI Coding Agents", self.create_ai_page),
+            ("✦ AI Coding Agents", self.create_ai_page),
             ("📦 Files & Drop Zone", self.create_files_page),
             ("📊 Task Manager", self.create_task_mgr_page),
             ("🔄 Updates & GitHub", self.create_updates_page),
@@ -241,9 +242,17 @@ class CompleteSettingsWindow(QDialog):
         l = QVBoxLayout(w)
         l.setSpacing(12)
 
+        hdr_row = QHBoxLayout()
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "antigravity_logo.png")
+        if os.path.exists(logo_path):
+            img = QLabel()
+            img.setPixmap(QPixmap(logo_path).scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            hdr_row.addWidget(img)
         hdr = QLabel("AI Coding Agent Integrations")
         hdr.setStyleSheet("font-size: 16px; font-weight: 600; color: #ffffff;")
-        l.addWidget(hdr)
+        hdr_row.addWidget(hdr)
+        hdr_row.addStretch()
+        l.addLayout(hdr_row)
 
         self.chk_ai_antigravity = QCheckBox("Enable Google Antigravity transcript monitoring")
         self.chk_ai_antigravity.setChecked(True)

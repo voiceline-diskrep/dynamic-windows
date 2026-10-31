@@ -12,7 +12,7 @@ from PyQt6.QtGui import QIcon, QDrag
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QFileIconProvider, QMessageBox,
-    QProgressBar, QMenu, QFrame
+    QProgressBar, QMenu, QFrame, QDialog
 )
 
 from updater_config import DROP_ZONE_DIR
@@ -223,3 +223,24 @@ class DropZoneWidget(QWidget):
                 except Exception:
                     pass
             self.refresh_files()
+
+
+class DropZoneWindow(QDialog):
+    """Spacious standalone window for the persistent Drop Zone shelf."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Drop Zone File Shelf")
+        self.resize(600, 500)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #121215;
+                color: #e4e4e7;
+                border: 1px solid #27272a;
+                border-radius: 12px;
+                font-family: 'Segoe UI', sans-serif;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        self.widget = DropZoneWidget(self)
+        layout.addWidget(self.widget)

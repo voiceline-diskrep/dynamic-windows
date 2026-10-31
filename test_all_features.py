@@ -36,7 +36,7 @@ from dynamic_notch import DynamicNotch
 
 class TestFullSystem(unittest.TestCase):
     def test_version_bump(self):
-        self.assertEqual(cfg.CURRENT_VERSION, "1.0.3")
+        self.assertEqual(cfg.CURRENT_VERSION, "1.0.4")
 
     def test_oneshot_app_discovery(self):
         engine = AppDiscoveryEngine()
@@ -89,13 +89,15 @@ class TestFullSystem(unittest.TestCase):
         win = CompleteSettingsWindow()
         self.assertEqual(win.nav_list.count(), 11)
 
-    def test_dynamic_notch_expanded_tabs(self):
+    def test_dynamic_notch_144hz_and_logo(self):
         notch = DynamicNotch()
-        self.assertEqual(len(notch.tab_indices), 11)
-        notch.set_progress(1.0)
-        notch.switch_tab("One-Shot")
-        notch.switch_tab("Activities")
-        notch.switch_tab("Home")
+        self.assertEqual(notch.anim_timer.interval(), 7)
+        self.assertIsNotNone(notch.antigravity_logo)
+        self.assertFalse(notch.antigravity_logo.isNull())
+        notch.expand_notch()
+        self.assertTrue(notch.is_expanded)
+        notch.collapse_notch()
+        self.assertFalse(notch.is_expanded)
 
     def test_startup_takeover_window(self):
         pm = PresetManager()

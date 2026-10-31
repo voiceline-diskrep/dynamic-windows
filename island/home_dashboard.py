@@ -4,7 +4,9 @@ Combines One-Shot quick preset tiles, live AI Agent activities,
 Now Playing music card, active focus timer, and system resources.
 """
 
+import os
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QGridLayout, QScrollArea
@@ -78,13 +80,21 @@ class HomeDashboardWidget(QWidget):
         ai_l = QVBoxLayout(self.ai_card)
         ai_l.setContentsMargins(8, 8, 8, 8)
         ai_l.setSpacing(4)
-        ai_hdr = QLabel("🤖 AI Coding Agents")
+        ai_hdr_row = QHBoxLayout()
+        logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "antigravity_logo.png")
+        if os.path.exists(logo_path):
+            img = QLabel()
+            img.setPixmap(QPixmap(logo_path).scaled(16, 16, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            ai_hdr_row.addWidget(img)
+        ai_hdr = QLabel("AI Coding Agents")
         ai_hdr.setStyleSheet("font-size: 11px; font-weight: 600; color: #a1a1aa;")
+        ai_hdr_row.addWidget(ai_hdr)
+        ai_hdr_row.addStretch()
+        ai_l.addLayout(ai_hdr_row)
         self.lbl_ai_status = QLabel("Idle (No active agent)")
         self.lbl_ai_status.setStyleSheet("font-size: 13px; font-weight: 600; color: #ffffff;")
         self.lbl_ai_sub = QLabel("Antigravity & CLI ready")
         self.lbl_ai_sub.setStyleSheet("font-size: 11px; color: #71717a;")
-        ai_l.addWidget(ai_hdr)
         ai_l.addWidget(self.lbl_ai_status)
         ai_l.addWidget(self.lbl_ai_sub)
         cards_grid.addWidget(self.ai_card, 0, 0)

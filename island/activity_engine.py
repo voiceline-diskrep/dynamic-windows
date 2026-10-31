@@ -27,6 +27,7 @@ class PrimaryIslandActivity:
     subtitle: str
     badge: str
     progress: Optional[float] = None
+    icon_type: Optional[str] = None  # 'antigravity', 'music', 'download', 'timer', 'updater'
 
 
 class DynamicActivityEngine(QObject):
@@ -94,12 +95,14 @@ class DynamicActivityEngine(QObject):
         agents = self.ai_manager.get_active_activities()
         if agents:
             a = agents[0]
+            icon = "antigravity" if "antigravity" in a.provider.lower() else "ai"
             self.current_primary = PrimaryIslandActivity(
                 category="ai_agent",
                 title=f"{a.provider}: {a.status}",
-                subtitle=a.phase,
-                badge=f"🤖 {a.provider.split()[-1]}",
-                progress=a.progress
+                subtitle=a.phase or a.task_name,
+                badge=a.provider.split()[-1],
+                progress=a.progress,
+                icon_type=icon
             )
             self.primary_activity_changed.emit(self.current_primary)
             self.activities_changed.emit()

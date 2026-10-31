@@ -5,7 +5,7 @@ a = Analysis(
     ['dynamic_notch.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('antigravity_logo.png', '.'), ('app_icon.png', '.'), ('app_icon.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit,
-    QProgressBar, QMessageBox
+    QProgressBar, QMessageBox, QDialog
 )
 
 CRITICAL_SYSTEM_PROCESSES = {
@@ -222,3 +222,24 @@ class TaskManagerWidget(QWidget):
                 self.refresh_metrics()
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to terminate process: {e}")
+
+
+class TaskManagerWindow(QDialog):
+    """Spacious standalone window for Windows Task Manager & Diagnostics."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Task Manager & System Diagnostics")
+        self.resize(700, 520)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #121215;
+                color: #e4e4e7;
+                border: 1px solid #27272a;
+                border-radius: 12px;
+                font-family: 'Segoe UI', sans-serif;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        self.widget = TaskManagerWidget(self)
+        layout.addWidget(self.widget)
