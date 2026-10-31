@@ -36,7 +36,7 @@ from dynamic_notch import DynamicNotch
 
 class TestFullSystem(unittest.TestCase):
     def test_version_bump(self):
-        self.assertEqual(cfg.CURRENT_VERSION, "1.0.2")
+        self.assertEqual(cfg.CURRENT_VERSION, "1.0.3")
 
     def test_oneshot_app_discovery(self):
         engine = AppDiscoveryEngine()

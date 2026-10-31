@@ -1,10 +1,10 @@
-# 🏝️ Dynamic Windows + One-Shot (v1.0.2)
+# 🏝️ Dynamic Windows + One-Shot (v1.0.3)
 
 A polished Windows desktop application combining two connected experiences:
 1. **One-Shot:** A smart application launcher with presets, automatic app discovery, startup takeover mode, and one-click launching.
 2. **Windows Dynamic Island:** An Apple-inspired desktop interface that provides quick access to system information, notifications, music, AI coding agents, downloads, timers, files, and other activities.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.2.exe)
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.3.exe)
 
 ---
 
@@ -13,7 +13,7 @@ A polished Windows desktop application combining two connected experiences:
 **No Python or dependencies required!**
 
 1. Download the installer:
-   👉 **[Download DynamicWindows-Setup-v1.0.2.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.2.exe)**
+   👉 **[Download DynamicWindows-Setup-v1.0.3.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.3.exe)**
 2. Run the downloaded installer.
 3. Done! It will install the app, create a Desktop & Start Menu shortcut, and optionally start with Windows.
 
