@@ -160,3 +160,28 @@ test('AntigravityMonitor: updateFromMcp sets detailed progress and overrides pol
   assert.strictEqual(state.progress, 75);
   assert.ok(Date.now() - mon.lastMcpTime < 100);
 });
+
+test('AntigravityMonitor: multi-project tracking stores and reports multiple concurrent projects', () => {
+  const mon = new AntigravityMonitor();
+  mon.updateFromMcp({
+    conversationId: 'proj-1',
+    project: 'Island',
+    status: 'running',
+    phase: 'Editing canvas-engine.js'
+  });
+
+  mon.updateFromMcp({
+    conversationId: 'proj-2',
+    project: 'Forma',
+    status: 'thinking',
+    phase: 'Planning UI architecture'
+  });
+
+  const state = mon.getState();
+  assert.ok(Array.isArray(state.projects));
+  assert.strictEqual(state.projects.length, 2);
+  assert.strictEqual(state.projects[0].project, 'Island');
+  assert.strictEqual(state.projects[0].status, 'running');
+  assert.strictEqual(state.projects[1].project, 'Forma');
+  assert.strictEqual(state.projects[1].status, 'thinking');
+});

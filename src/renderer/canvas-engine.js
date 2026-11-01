@@ -9,7 +9,7 @@ const ctx = canvas.getContext('2d');
 const UI = {
   REST_W: 124,
   BAR_H: 32,
-  ACTIVE_REST_W: 216,
+  ACTIVE_REST_W: 226,
   ACTIVE_BAR_H: 36,
 
   EXPANDED_W: 520,
@@ -298,6 +298,8 @@ canvas.addEventListener('click', (e) => {
 
   // Click on resting badge or main body
   if (animProgress < 0.3) {
+    if (mediaState.isPlaying) currentView = 'media';
+    else if (hasActiveAgent()) currentView = 'agent';
     targetProgress = 1.0;
   }
 });
@@ -326,7 +328,7 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('dropzone-open-file', data);
   } else if (id && (id === 'dropzone_delete_file' || id.startsWith('dropzone_delete_file_'))) {
     ipcRenderer.send('dropzone-delete-file', data);
-  } else if (id === 'jump_antigravity') {
+  } else if (id === 'jump_antigravity' || (id && id.startsWith('focus_proj_'))) {
     ipcRenderer.send('focus-antigravity');
   } else if (id === 'media_play_pause') {
     ipcRenderer.send('media-play-pause');
@@ -396,25 +398,85 @@ function animate(now) {
 }
 requestAnimationFrame(animate);
 
+function getActiveProjects() {
+  if (antigravityState && antigravityState.projects && Array.isArray(antigravityState.projects) && antigravityState.projects.length > 0) {
+    return antigravityState.projects;
+  }
+  return [antigravityState || { status: 'idle', phase: 'Ready', project: 'Antigravity' }];
+}
+
 function hasActiveAgent() {
-  return antigravityState.status === 'running' ||
-         antigravityState.status === 'thinking' ||
-         antigravityState.status === 'waiting' ||
-         pendingPrompt !== null;
+  const projs = getActiveProjects();
+  return projs.some(p => ['running', 'thinking', 'waiting'].includes(p.status)) || pendingPrompt !== null;
+}
+
+function truncateToWidth(text, maxW, font) {
+  if (!text) return '';
+  ctx.save();
+  if (font) ctx.font = font;
+  if (ctx.measureText(text).width <= maxW) {
+    ctx.restore();
+    return text;
+  }
+  let str = text;
+  while (str.length > 0 && ctx.measureText(str + '...').width > maxW) {
+    str = str.slice(0, -1);
+  }
+  ctx.restore();
+  return str.trim() ? str.trim() + '...' : '...';
+}
+
+function getRestingWidth() {
+  if (hasActiveAgent()) {
+    return UI.ACTIVE_REST_W;
+  }
+
+  if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
+    const hasLyric = !!(mediaState.track.currentLyric && mediaState.track.currentLyric.trim());
+    const textToShow = hasLyric ? mediaState.track.currentLyric.trim() : mediaState.track.title.trim();
+
+    ctx.save();
+    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+    const textW = ctx.measureText(textToShow).width;
+    ctx.restore();
+
+    // 12 (pad) + 48 (clock) + 10 (gap) + 14 (icon) + 18 (gap) + textW + 14 (gap) + 12 (dot) + 16 (pad) = 144 + textW
+    const needed = 144 + textW;
+    // Allow pill to smoothly extend up to 360px so longer song titles/lyrics fit naturally
+    return Math.max(180, Math.min(360, Math.round(needed)));
+  }
+
+  return UI.REST_W;
 }
 
 function getTargetWidth(p) {
-  const restW = hasActiveAgent() ? UI.ACTIVE_REST_W : UI.REST_W;
+  const restW = getRestingWidth();
   return restW + (UI.EXPANDED_W - restW) * easeOutQuart(p);
 }
 
 function getTargetHeight(p) {
-  const restH = hasActiveAgent() ? UI.ACTIVE_BAR_H : UI.BAR_H;
+  const projs = getActiveProjects();
+  const activeProjs = projs.filter(pr => ['running', 'thinking', 'waiting'].includes(pr.status));
+  const stackCount = Math.max(1, Math.min(4, activeProjs.length));
+
+  let restH = UI.BAR_H;
+  if (hasActiveAgent()) {
+    restH = UI.ACTIVE_BAR_H + (stackCount - 1) * 37;
+  } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
+    restH = UI.ACTIVE_BAR_H;
+  }
+
   let expH = UI.HOME_H;
-  if (currentView === 'agent') expH = UI.AGENT_H;
-  else if (currentView === 'media') expH = UI.MEDIA_H;
-  else if (currentView === 'dropzone') expH = UI.DROPZONE_H;
-  else if (currentView === 'prompt') expH = UI.PROMPT_H;
+  if (currentView === 'agent') {
+    const cardCount = Math.max(1, Math.min(3, projs.length));
+    expH = cardCount === 1 ? UI.AGENT_H : Math.min(340, 160 + (cardCount - 1) * 82);
+  } else if (currentView === 'media') {
+    expH = UI.MEDIA_H;
+  } else if (currentView === 'dropzone') {
+    expH = UI.DROPZONE_H;
+  } else if (currentView === 'prompt') {
+    expH = UI.PROMPT_H;
+  }
 
   return restH + (expH - restH) * easeOutQuart(p);
 }
@@ -480,71 +542,135 @@ function renderRestingPill(x, y, w, h, alpha) {
   const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
   if (hasActiveAgent()) {
-    // Digital clock on left
-    ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#e4e4e7';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(timeStr, x + 12, y + h / 2);
+    const projs = getActiveProjects();
+    const activeProjs = projs.filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
+    const listToRender = activeProjs.length > 0 ? activeProjs : [projs[0]];
+    const maxStack = Math.min(4, listToRender.length);
 
-    // Antigravity official logo
-    if (antigravityLogo.complete && antigravityLogo.naturalWidth > 0) {
-      ctx.drawImage(antigravityLogo, x + 64, y + (h - 16) / 2, 16, 16);
-    }
+    for (let row = 0; row < maxStack; row++) {
+      const proj = listToRender[row];
+      const rowH = row === 0 ? UI.ACTIVE_BAR_H : 32;
+      const rowGap = 5;
+      const rowY = row === 0 ? y : (y + UI.ACTIVE_BAR_H + (row - 1) * (32 + rowGap) + rowGap);
+      const rowX = x;
+      const rowW = w;
+      const rowRadius = UI.COMPACT_RADIUS;
 
-    // Antigravity label
-    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = '#38bdf8';
-    ctx.textAlign = 'left';
-    ctx.fillText('Antigravity', x + 84, y + h / 2);
+      // Draw secondary stacked pill background and rim if row > 0
+      if (row > 0) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+        ctx.shadowBlur = 12;
+        ctx.shadowOffsetY = 4;
 
-    // Mini 4-Segment Progress Bar in Resting Pill
-    const prog = getAntigravityProgress(antigravityState);
-    const miniSegW = 10;
-    const miniSegH = 3;
-    const miniGap = 3;
-    const miniStartX = x + w - 76;
-    const miniY = y + (h - miniSegH) / 2;
+        const rowGrad = ctx.createLinearGradient(rowX, rowY, rowX, rowY + rowH);
+        rowGrad.addColorStop(0.0, '#101014');
+        rowGrad.addColorStop(0.5, '#08080a');
+        rowGrad.addColorStop(1.0, '#020204');
 
-    for (let i = 0; i < 4; i++) {
-      const sx = miniStartX + i * (miniSegW + miniGap);
-      ctx.beginPath();
-      ctx.roundRect(sx, miniY, miniSegW, miniSegH, 1.5);
-      if (prog.segments[i]) {
-        ctx.fillStyle = '#22c55e'; // Finished segment filled with green
-      } else if (prog.activeSegment === i) {
-        ctx.fillStyle = '#38bdf8'; // Active segment pulsing cyan
-      } else {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.beginPath();
+        ctx.roundRect(rowX, rowY, rowW, rowH, rowRadius);
+        ctx.fillStyle = rowGrad;
+        ctx.fill();
+        ctx.restore();
+
+        // 1px Glass edge
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(rowX, rowY, rowW, rowH, rowRadius);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.stroke();
+        ctx.restore();
       }
-      ctx.fill();
-    }
 
-    // Traffic light indicator dot
-    const dotX = x + w - 14;
-    const dotY = y + h / 2;
-    renderTrafficLightDot(dotX, dotY, antigravityState.status);
+      // 1. Digital clock (only on top row 0)
+      if (row === 0) {
+        ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
+        ctx.fillStyle = '#e4e4e7';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(timeStr, rowX + 12, rowY + rowH / 2);
+      }
+
+      // 2. Antigravity official logo
+      const logoX = row === 0 ? (rowX + 64) : (rowX + 16);
+      if (antigravityLogo.complete && antigravityLogo.naturalWidth > 0) {
+        ctx.drawImage(antigravityLogo, logoX, rowY + (rowH - 16) / 2, 16, 16);
+      }
+
+      // 3. Project label
+      ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#38bdf8';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const projLabel = (proj && proj.project) ? proj.project : 'Antigravity';
+      const truncLabel = projLabel.length > 12 ? projLabel.slice(0, 11) + '…' : projLabel;
+      ctx.fillText(truncLabel, logoX + 20, rowY + rowH / 2);
+
+      // 4. Mini 4-Segment Progress Bar in this row
+      const prog = getAntigravityProgress(proj);
+      const miniSegW = 10;
+      const miniSegH = 3;
+      const miniGap = 3;
+      const miniStartX = rowX + rowW - 76;
+      const miniY = rowY + (rowH - miniSegH) / 2;
+
+      for (let i = 0; i < 4; i++) {
+        const sx = miniStartX + i * (miniSegW + miniGap);
+        ctx.beginPath();
+        ctx.roundRect(sx, miniY, miniSegW, miniSegH, 1.5);
+        if (prog.segments[i]) {
+          ctx.fillStyle = '#22c55e'; // Finished segment filled with vibrant green
+        } else if (prog.activeSegment === i) {
+          ctx.fillStyle = '#38bdf8'; // Active segment pulsing cyan
+        } else {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        }
+        ctx.fill();
+      }
+
+      // 5. Traffic light indicator dot for this row
+      const dotX = rowX + rowW - 14;
+      const dotY = rowY + rowH / 2;
+      renderTrafficLightDot(dotX, dotY, proj ? proj.status : 'running');
+
+      // Clickable target to open Antigravity view
+      interactiveButtons.push({ id: 'nav_agent', x: rowX, y: rowY, w: rowW, h: rowH });
+    }
   } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
     // Media Playing in Resting Pill (Liner / Spotify)
+    // 1. Digital Clock on left
     ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#e4e4e7';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(timeStr, x + 12, y + h / 2);
+    const clockW = ctx.measureText(timeStr).width;
 
+    // 2. Music Icon
+    const iconX = x + 12 + clockW + 10;
     ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#22c55e';
-    ctx.fillText('🎵', x + 66, y + h / 2);
+    ctx.fillText('🎵', iconX, y + h / 2);
 
-    ctx.fillStyle = '#f4f4f5';
-    const songName = mediaState.track.title;
-    const truncSong = songName.length > 18 ? songName.slice(0, 18) + '...' : songName;
-    ctx.fillText(truncSong, x + 84, y + h / 2);
-
-    // Pulsing green audio dot
-    const dotX = x + w - 14;
+    // 3. Audio traffic light dot on far right
+    const dotX = x + w - 16;
     const dotY = y + h / 2;
     renderTrafficLightDot(dotX, dotY, 'running');
+
+    // 4. Text (Current Live Lyric or Song Title)
+    const textStartX = iconX + 18;
+    const maxTextW = Math.max(20, dotX - 14 - textStartX); // STRICT BOUNDARY: stops 14px before dot
+
+    const hasLyric = !!(mediaState.track.currentLyric && mediaState.track.currentLyric.trim());
+    const fullText = hasLyric ? mediaState.track.currentLyric.trim() : mediaState.track.title.trim();
+
+    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = hasLyric ? '#22c55e' : '#f4f4f5'; // Vibrant green highlight when showing synced lyric, crisp white for title
+
+    const fittedText = truncateToWidth(fullText, maxTextW, ctx.font);
+    ctx.fillText(fittedText, textStartX, y + h / 2);
   } else {
     // Pure minimalist clock
     ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
@@ -777,124 +903,211 @@ function renderHomeView(x, y, w, h) {
 // Antigravity Real-Time Monitor View with 4-Segment Progress Bar
 // -------------------------------------------------------------
 function renderAgentView(x, y, w, h) {
-  const topY = y + 42;
+  const topY = y + 40;
   const contentW = w - 48;
   const contentX = x + 24;
 
-  // Header Title
+  const projs = getActiveProjects();
+
+  // If only 1 project, render the classic spacious card
+  if (projs.length <= 1) {
+    const proj = projs[0] || antigravityState;
+
+    // Header Title
+    ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#38bdf8';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const projTitle = (proj.project && proj.project !== 'Antigravity') ? `✦ Google Antigravity: ${proj.project}` : '✦ Google Antigravity Real-Time Monitor';
+    ctx.fillText(projTitle, contentX, topY);
+
+    // Jump to IDE window button
+    const jW = 110;
+    const jH = 24;
+    const jX = contentX + contentW - jW;
+    const jY = topY - 2;
+
+    ctx.beginPath();
+    ctx.roundRect(jX, jY, jW, jH, 6);
+    ctx.fillStyle = hoveredButtonId === 'jump_antigravity' ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = '600 10px "Segoe UI", sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Focus Window ↗', jX + jW / 2, jY + jH / 2);
+    interactiveButtons.push({ id: 'jump_antigravity', x: jX, y: jY, w: jW, h: jH });
+
+    // 4-Segment Progress Bar (Green fill when a part finishes)
+    const prog = getAntigravityProgress(proj);
+    const barY = topY + 30;
+    const barH = 6;
+    const gap = 6;
+    const segW = (contentW - 3 * gap) / 4;
+
+    for (let i = 0; i < 4; i++) {
+      const sx = contentX + i * (segW + gap);
+      ctx.beginPath();
+      ctx.roundRect(sx, barY, segW, barH, 3);
+
+      if (prog.segments[i]) {
+        ctx.fillStyle = '#22c55e'; // Green
+      } else if (prog.activeSegment === i) {
+        ctx.fillStyle = '#38bdf8'; // Cyan
+      } else {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+      }
+      ctx.fill();
+
+      if (prog.segments[i]) {
+        ctx.shadowColor = 'rgba(34, 197, 94, 0.4)';
+        ctx.shadowBlur = 4;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    // Segment Labels under the 4 lines
+    const labelY = barY + 12;
+    for (let i = 0; i < 4; i++) {
+      const sx = contentX + i * (segW + gap);
+      const isDone = prog.segments[i];
+      const isActive = prog.activeSegment === i;
+
+      ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+
+      if (isDone) {
+        ctx.fillStyle = '#22c55e';
+        ctx.fillText(`✓ ${i + 1}. ${prog.labels[i]}`, sx, labelY);
+      } else if (isActive) {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillText(`● ${i + 1}. ${prog.labels[i]}`, sx, labelY);
+      } else {
+        ctx.fillStyle = '#71717a';
+        ctx.fillText(`${i + 1}. ${prog.labels[i]}`, sx, labelY);
+      }
+    }
+
+    // Detailed State Card below Progress Bar
+    const infoY = labelY + 24;
+    const infoH = 58;
+
+    ctx.beginPath();
+    ctx.roundRect(contentX, infoY, contentW, infoH, 8);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    // Active Phase & Tool Details
+    ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#f4f4f5';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`Phase: ${proj.phase || 'Ready'}`, contentX + 12, infoY + 10);
+
+    ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    if (proj.command) {
+      const cmdStr = `Command: ${proj.command}`;
+      ctx.fillText(cmdStr.length > 56 ? cmdStr.slice(0, 56) + '...' : cmdStr, contentX + 12, infoY + 30);
+    } else if (proj.tool) {
+      ctx.fillText(`Active Tool: ${proj.tool}`, contentX + 12, infoY + 30);
+    } else {
+      ctx.fillText(`Status: ${proj.status.toUpperCase()} • All progress synced with IDE`, contentX + 12, infoY + 30);
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------
+  // MULTI-PROJECT VIEW (2 or more concurrent Antigravity projects)
+  // -----------------------------------------------------------
   ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#38bdf8';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText('✦ Google Antigravity Real-Time Monitor', contentX, topY);
+  ctx.fillText(`✦ Active Antigravity Projects (${projs.length})`, contentX, topY);
 
-  // Jump to IDE window button
-  const jW = 110;
-  const jH = 24;
-  const jX = contentX + contentW - jW;
-  const jY = topY - 2;
+  const cardGap = 8;
+  const maxProjects = Math.min(3, projs.length);
+  const cardH = maxProjects === 2 ? 78 : 66;
+  const startY = topY + 22;
 
-  ctx.beginPath();
-  ctx.roundRect(jX, jY, jW, jH, 6);
-  ctx.fillStyle = hoveredButtonId === 'jump_antigravity' ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
-  ctx.strokeStyle = '#3b82f6';
-  ctx.lineWidth = 1;
-  ctx.fill();
-  ctx.stroke();
+  for (let idx = 0; idx < maxProjects; idx++) {
+    const proj = projs[idx];
+    const cy = startY + idx * (cardH + cardGap);
 
-  ctx.font = '600 10px "Segoe UI", sans-serif';
-  ctx.fillStyle = '#ffffff';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('Focus Window ↗', jX + jW / 2, jY + jH / 2);
-  interactiveButtons.push({ id: 'jump_antigravity', x: jX, y: jY, w: jW, h: jH });
-
-  // -----------------------------------------------------------
-  // 4-Segment Progress Bar (Green fill when a part finishes)
-  // -----------------------------------------------------------
-  const prog = getAntigravityProgress(antigravityState);
-  const barY = topY + 30;
-  const barH = 6;
-  const gap = 6;
-  const segW = (contentW - 3 * gap) / 4;
-
-  for (let i = 0; i < 4; i++) {
-    const sx = contentX + i * (segW + gap);
+    // Card background
     ctx.beginPath();
-    ctx.roundRect(sx, barY, segW, barH, 3);
-
-    if (prog.segments[i]) {
-      // Completed part: FILLED WITH VIBRANT GREEN (#22c55e)
-      ctx.fillStyle = '#22c55e';
-    } else if (prog.activeSegment === i) {
-      // In-progress part: Glowing active cyan
-      ctx.fillStyle = '#38bdf8';
-    } else {
-      // Pending part: dark subtle line
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-    }
+    ctx.roundRect(contentX, cy, contentW, cardH, 8);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+    ctx.strokeStyle = ['running', 'thinking'].includes(proj.status) ? 'rgba(56, 189, 248, 0.28)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.lineWidth = 1;
     ctx.fill();
+    ctx.stroke();
 
-    // Subtle glow on completed green segments
-    if (prog.segments[i]) {
-      ctx.shadowColor = 'rgba(34, 197, 94, 0.4)';
-      ctx.shadowBlur = 4;
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    }
-  }
-
-  // Segment Labels under the 4 lines
-  const labelY = barY + 12;
-  for (let i = 0; i < 4; i++) {
-    const sx = contentX + i * (segW + gap);
-    const isDone = prog.segments[i];
-    const isActive = prog.activeSegment === i;
-
-    ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    // 1. Project Title & Status badge
+    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#38bdf8';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
+    const titleText = `✦ ${proj.project || ('Project ' + (idx + 1))}`;
+    ctx.fillText(titleText, contentX + 10, cy + 8);
 
-    if (isDone) {
-      ctx.fillStyle = '#22c55e';
-      ctx.fillText(`✓ ${i + 1}. ${prog.labels[i]}`, sx, labelY);
-    } else if (isActive) {
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillText(`● ${i + 1}. ${prog.labels[i]}`, sx, labelY);
-    } else {
-      ctx.fillStyle = '#71717a';
-      ctx.fillText(`${i + 1}. ${prog.labels[i]}`, sx, labelY);
+    // Phase text
+    ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#e4e4e7';
+    const phaseStr = proj.phase || (proj.tool ? `⚙ ${proj.tool}` : 'Active');
+    ctx.fillText(truncateToWidth(phaseStr, contentW - 170, ctx.font), contentX + 10, cy + 26);
+
+    // Focus button
+    const btnW = 90;
+    const btnH = 20;
+    const btnX = contentX + contentW - btnW - 10;
+    const btnY = cy + 8;
+    const isHov = hoveredButtonId === `focus_proj_${idx}`;
+    ctx.beginPath();
+    ctx.roundRect(btnX, btnY, btnW, btnH, 5);
+    ctx.fillStyle = isHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Focus ➔', btnX + btnW / 2, btnY + btnH / 2);
+    interactiveButtons.push({ id: `focus_proj_${idx}`, data: proj.conversationId, x: btnX, y: btnY, w: btnW, h: btnH });
+
+    // 2. 4-Segment Progress Bar for this project
+    const prog = getAntigravityProgress(proj);
+    const pBarY = cy + cardH - 18;
+    const pBarH = 5;
+    const pGap = 4;
+    const pSegW = (contentW - 20 - 3 * pGap) / 4;
+
+    for (let s = 0; s < 4; s++) {
+      const sx = contentX + 10 + s * (pSegW + pGap);
+      ctx.beginPath();
+      ctx.roundRect(sx, pBarY, pSegW, pBarH, 2.5);
+      if (prog.segments[s]) {
+        ctx.fillStyle = '#22c55e'; // Finished segment filled with vibrant green
+      } else if (prog.activeSegment === s) {
+        ctx.fillStyle = '#38bdf8'; // Active segment cyan
+      } else {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+      }
+      ctx.fill();
     }
-  }
-
-  // Detailed State Card below Progress Bar
-  const infoY = labelY + 24;
-  const infoH = 58;
-
-  ctx.beginPath();
-  ctx.roundRect(contentX, infoY, contentW, infoH, 8);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
-  ctx.lineWidth = 1;
-  ctx.fill();
-  ctx.stroke();
-
-  // Active Phase & Tool Details
-  ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = '#f4f4f5';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(`Phase: ${antigravityState.phase || 'Ready'}`, contentX + 12, infoY + 10);
-
-  ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = '#94a3b8';
-  if (antigravityState.command) {
-    const cmdStr = `Command: ${antigravityState.command}`;
-    ctx.fillText(cmdStr.length > 56 ? cmdStr.slice(0, 56) + '...' : cmdStr, contentX + 12, infoY + 30);
-  } else if (antigravityState.tool) {
-    ctx.fillText(`Active Tool: ${antigravityState.tool}`, contentX + 12, infoY + 30);
-  } else {
-    ctx.fillText(`Status: ${antigravityState.status.toUpperCase()} • All progress synced with IDE`, contentX + 12, infoY + 30);
   }
 }
 

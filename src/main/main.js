@@ -65,7 +65,7 @@ function createIslandWindow() {
 
   // Initial standby dimensions
   const initialWidth = 560;  // Generous container width to allow fluid canvas animation
-  const initialHeight = 300; // Expanded height container for spacious shelf and presets
+  const initialHeight = 360; // Expanded height container for spacious shelf and multi-project stack
 
   const initialX = Math.round((screenBounds.width - initialWidth) / 2);
   const initialY = 0;
@@ -340,7 +340,7 @@ function setupTray() {
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows (v1.1.3)');
+    tray.setToolTip('Dynamic Windows (v1.1.4)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);

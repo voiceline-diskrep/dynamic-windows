@@ -40,6 +40,28 @@ data: {"type":"provider","provider":"Liner Atlas","candidate":{"lyrics":{"format
   mc.destroy();
 });
 
+test('MediaController: parseLyricsFromCache parses Liner Atlas richsync JSON', () => {
+  const mc = new MediaController();
+  const mockCache = `
+event: metadata
+data: {"type":"metadata","track":{"title":"Richsync Song","artists":[{"name":"Atlas Artist"}]}}
+
+event: provider
+data: {"type":"provider","provider":"Liner Atlas","candidate":{"lyrics":{"format":"richsync","content":"[{\\"ts\\":1.2,\\"te\\":3.5,\\"x\\":\\"First rich line\\"},{\\"ts\\":3.8,\\"te\\":6.0,\\"x\\":\\"Second rich line\\"}]"}}}
+`;
+
+  const lines = mc.parseLyricsFromCache(mockCache);
+  assert.ok(Array.isArray(lines));
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines[0], 'First rich line');
+  assert.strictEqual(lines[1], 'Second rich line');
+  assert.ok(Array.isArray(lines.timed));
+  assert.strictEqual(lines.timed.length, 2);
+  assert.strictEqual(lines.timed[0].time, 1.2);
+  assert.strictEqual(lines.timed[0].text, 'First rich line');
+  mc.destroy();
+});
+
 test('MediaController: getState returns clean track structure', () => {
   const mc = new MediaController();
   const state = mc.getState();

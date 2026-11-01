@@ -2,12 +2,13 @@
 /**
  * Dynamic Windows - Google Antigravity Real-Time Monitor
  * Monitors local Antigravity brain transcripts, tool executions, and step states.
+ * Supports concurrent multi-project tracking and stacked Dynamic Island status.
  */
 
 const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 
 const USER_HOME = process.env.USERPROFILE || process.env.HOME || 'C:\\Users\\russell';
 const BRAIN_DIR = path.join(USER_HOME, '.gemini', 'antigravity', 'brain');
@@ -22,9 +23,15 @@ class AntigravityMonitor extends EventEmitter {
     this.lastMcpTime = 0;
     this.pollInterval = options.pollInterval || 350;
     this.timer = null;
+
+    // Multi-project tracking Map: conversationId -> ProjectState
+    this.projects = new Map();
+    this.fileOffsets = new Map();
+
     this.lastState = {
       status: 'idle', // 'idle' | 'running' | 'thinking' | 'waiting' | 'done' | 'error'
       provider: 'Google Antigravity',
+      project: 'Antigravity',
       task: '',
       phase: '',
       tool: '',
@@ -37,7 +44,7 @@ class AntigravityMonitor extends EventEmitter {
   }
 
   start() {
-    this.findLatestConversation();
+    this.poll();
     this.timer = setInterval(() => this.poll(), this.pollInterval);
   }
 
@@ -49,22 +56,57 @@ class AntigravityMonitor extends EventEmitter {
   }
 
   getState() {
-    return { ...this.lastState };
+    const list = Array.from(this.projects.values()).filter(p => {
+      if (p.status === 'not_running') return false;
+      // Prune idle projects older than 20 minutes
+      if (p.status === 'idle' && Date.now() - p.updatedAt > 20 * 60 * 1000) return false;
+      return true;
+    }).sort((a, b) => {
+      const aAct = ['running', 'thinking', 'waiting'].includes(a.status) ? 1 : 0;
+      const bAct = ['running', 'thinking', 'waiting'].includes(b.status) ? 1 : 0;
+      if (aAct !== bAct) return bAct - aAct;
+      return b.updatedAt - a.updatedAt;
+    });
+
+    const primary = list[0] || this.lastState;
+
+    return {
+      ...primary,
+      projects: list.length > 0 ? list : [this.lastState]
+    };
   }
 
   updateFromMcp(data) {
     if (!data) return;
     this.lastMcpTime = Date.now();
-    const prevState = this.lastState.status;
+    const convId = data.conversationId || (this.projects.size > 0 ? Array.from(this.projects.keys())[0] : 'default');
+    const existing = this.projects.get(convId) || {
+      provider: 'Google Antigravity',
+      project: data.project || 'Antigravity',
+      conversationId: convId,
+      status: 'running',
+      phase: 'Agent Active',
+      tool: '',
+      file: '',
+      command: '',
+      progress: null,
+      updatedAt: Date.now()
+    };
+
+    const prevState = existing.status;
     const newStatus = data.status || 'running';
-    this.lastState.status = newStatus;
-    this.lastState.phase = data.phase || 'Agent Active';
-    if (data.task) this.lastState.task = data.task;
-    if (data.tool) this.lastState.tool = data.tool;
-    if (data.file) this.lastState.file = data.file;
-    if (data.command) this.lastState.command = data.command;
-    if (typeof data.progress === 'number') this.lastState.progress = data.progress;
-    this.lastState.updatedAt = Date.now();
+    existing.status = newStatus;
+    existing.phase = data.phase || 'Agent Active';
+    if (data.project) existing.project = data.project;
+    if (data.task) existing.task = data.task;
+    if (data.tool) existing.tool = data.tool;
+    if (data.file) existing.file = data.file;
+    if (data.command) existing.command = data.command;
+    if (typeof data.progress === 'number') existing.progress = data.progress;
+    existing.updatedAt = Date.now();
+
+    this.projects.set(convId, existing);
+    this.lastState = { ...existing };
 
     if (prevState !== 'done' && newStatus === 'done') {
       this.emit('task-completed', this.getState());
@@ -72,109 +114,105 @@ class AntigravityMonitor extends EventEmitter {
     this.emit('change', this.getState());
   }
 
-  findLatestConversation() {
+  extractProjectName(transcriptPath, fallback) {
+    try {
+      const headBuf = Buffer.alloc(8192);
+      const fd = fs.openSync(transcriptPath, 'r');
+      fs.readSync(fd, headBuf, 0, 8192, 0);
+      fs.closeSync(fd);
+      const str = headBuf.toString('utf8');
+
+      // 1. Try finding Active Workspaces: - C:\...\ProjectName
+      const m = str.match(/Active Workspaces:\s*[\r\n]+-\s*(?:[a-zA-Z]:)?[\\/].*?[\\/]([^\\r\\n\\/]+)/i);
+      if (m && m[1] && m[1].trim() && m[1].trim() !== 'Documents' && m[1].trim() !== 'antigravity') {
+        return m[1].trim();
+      }
+
+      // 2. Try extracting from first user request
+      const reqMatch = str.match(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/i);
+      if (reqMatch && reqMatch[1]) {
+        const clean = reqMatch[1].replace(/\r?\n/g, ' ').trim();
+        if (clean.length > 0 && clean.length <= 24) return clean;
+        if (clean.length > 24) return clean.slice(0, 22) + '...';
+      }
+    } catch (e) {}
+
+    return fallback || 'Antigravity';
+  }
+
+  poll() {
     try {
       if (!fs.existsSync(this.brainDir)) return;
       const entries = fs.readdirSync(this.brainDir, { withFileTypes: true });
-      let latestId = null;
-      let latestMtime = 0;
 
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         const transcriptFile = path.join(this.brainDir, entry.name, '.system_generated', 'logs', 'transcript.jsonl');
-        if (fs.existsSync(transcriptFile)) {
-          const stat = fs.statSync(transcriptFile);
-          if (stat.mtimeMs > latestMtime) {
-            latestMtime = stat.mtimeMs;
-            latestId = entry.name;
+        if (!fs.existsSync(transcriptFile)) continue;
+
+        const stat = fs.statSync(transcriptFile);
+        const ageMs = Date.now() - stat.mtimeMs;
+        const existing = this.projects.get(entry.name);
+        const isActive = existing && ['running', 'thinking', 'waiting'].includes(existing.status);
+
+        // Track conversations modified within 25 minutes or currently active
+        if (ageMs > 25 * 60 * 1000 && !isActive) {
+          if (existing && existing.status === 'done' && Date.now() - existing.updatedAt > 20 * 60 * 1000) {
+            this.projects.delete(entry.name);
           }
+          continue;
+        }
+
+        const lastSize = this.fileOffsets.get(entry.name) || 0;
+        if (stat.size === lastSize && existing) {
+          // If task completed > 8s ago, transition to idle Ready
+          if (existing.status === 'done' && Date.now() - existing.updatedAt > 8000) {
+            existing.status = 'idle';
+            existing.phase = 'Ready';
+            this.emit('change', this.getState());
+          }
+          continue;
+        }
+
+        this.fileOffsets.set(entry.name, stat.size);
+        const readLen = Math.min(stat.size, 32768);
+        const fd = fs.openSync(transcriptFile, 'r');
+        const buf = Buffer.alloc(readLen);
+        fs.readSync(fd, buf, 0, readLen, Math.max(0, stat.size - readLen));
+        fs.closeSync(fd);
+
+        const chunk = buf.toString('utf8');
+        const lines = chunk.split('\n').filter(l => l.trim().length > 0);
+        if (lines.length === 0) continue;
+
+        // Parse latest step
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const step = JSON.parse(lines[i]);
+            const projName = existing ? existing.project : this.extractProjectName(transcriptFile, 'Antigravity');
+            const parsed = this.parseStepToState(step, entry.name, projName);
+            if (parsed) {
+              const prev = this.projects.get(entry.name);
+              this.projects.set(entry.name, parsed);
+
+              if (!prev || prev.status !== parsed.status || prev.phase !== parsed.phase) {
+                if (prev && prev.status !== 'done' && parsed.status === 'done') {
+                  this.emit('task-completed', this.getState());
+                }
+                this.lastState = { ...parsed };
+                this.emit('change', this.getState());
+              }
+              break;
+            }
+          } catch (e) {}
         }
       }
-
-      if (latestId && latestId !== this.activeConversationId) {
-        this.activeConversationId = latestId;
-        this.transcriptPath = path.join(this.brainDir, latestId, '.system_generated', 'logs', 'transcript.jsonl');
-        this.lastFileSize = 0; // Trigger full read
-      }
-    } catch (err) {
-      // Brain dir access error handling
-    }
+    } catch (err) {}
   }
 
-  poll() {
-    // If an explicit MCP notification arrived recently (within 5 seconds), let MCP take priority!
-    if (Date.now() - this.lastMcpTime < 5000) {
-      return;
-    }
+  parseStepToState(step, conversationId, projectName) {
+    if (!step) return null;
 
-    this.findLatestConversation();
-    if (!this.transcriptPath || !fs.existsSync(this.transcriptPath)) {
-      return;
-    }
-
-    try {
-      const stat = fs.statSync(this.transcriptPath);
-      if (stat.size === this.lastFileSize) {
-        const timeSinceUpdate = Date.now() - this.lastState.updatedAt;
-        // If task finished > 8s ago, transition cleanly to idle Ready
-        if (this.lastState.status === 'done' && timeSinceUpdate > 8000) {
-          this.lastState.status = 'idle';
-          this.lastState.phase = 'Ready';
-          this.lastState.tool = '';
-          this.lastState.command = '';
-          this.emit('change', this.getState());
-        }
-        // If left on thinking or running with no file activity for > 15s and no active MCP, reset to idle
-        else if ((this.lastState.status === 'thinking' || this.lastState.status === 'running') &&
-                 timeSinceUpdate > 15000 &&
-                 Date.now() - this.lastMcpTime > 15000) {
-          this.lastState.status = 'idle';
-          this.lastState.phase = 'Ready';
-          this.lastState.tool = '';
-          this.lastState.command = '';
-          this.emit('change', this.getState());
-        }
-        return;
-      }
-
-      const fd = fs.openSync(this.transcriptPath, 'r');
-      let startOffset = 0;
-      // If file grew, read from last position or read last 64KB for speed
-      if (this.lastFileSize > 0 && stat.size > this.lastFileSize) {
-        startOffset = this.lastFileSize;
-      } else if (stat.size > 65536) {
-        startOffset = stat.size - 65536;
-      }
-
-      const length = stat.size - startOffset;
-      const buffer = Buffer.alloc(length);
-      fs.readSync(fd, buffer, 0, length, startOffset);
-      fs.closeSync(fd);
-      this.lastFileSize = stat.size;
-
-      const chunk = buffer.toString('utf-8');
-      const lines = chunk.split('\n').filter(l => l.trim().length > 0);
-      if (lines.length === 0) return;
-
-      // Parse the latest JSON line
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          const step = JSON.parse(lines[i]);
-          this.processStep(step);
-          break;
-        } catch (e) {
-          // Incomplete line, try previous
-        }
-      }
-    } catch (err) {
-      // Polling read error
-    }
-  }
-
-  processStep(step) {
-    if (!step) return;
-
-    // Helper to unwrap stringified arguments (e.g. "\"foo\"")
     const cleanArg = (val) => {
       if (typeof val !== 'string') return val;
       val = val.trim();
@@ -184,7 +222,6 @@ class AntigravityMonitor extends EventEmitter {
       return val;
     };
 
-    const prevState = this.lastState.status;
     let newStatus = 'running';
     let phase = '';
     let toolName = '';
@@ -202,8 +239,8 @@ class AntigravityMonitor extends EventEmitter {
       }
 
       if (fn === 'run_command') {
-        cmd = args.toolSummary || args.CommandLine || 'Executing shell command';
-        phase = `Command: ${cmd.length > 36 ? cmd.slice(0, 36) + '...' : cmd}`;
+        cmd = args.toolSummary || args.CommandLine || 'Executing command';
+        phase = `Command: ${cmd.length > 34 ? cmd.slice(0, 34) + '...' : cmd}`;
       } else if (fn === 'write_file' || fn === 'edit_file') {
         const fp = args.Path || '';
         fileName = path.basename(fp) || 'file';
@@ -221,7 +258,7 @@ class AntigravityMonitor extends EventEmitter {
         phase = `${server}: ${mcpTool}`;
         toolName = `${server}.${mcpTool}`;
       } else if (fn === 'search_web') {
-        phase = `Searching: ${args.query ? args.query.slice(0, 30) : 'web'}`;
+        phase = `Searching: ${args.query ? args.query.slice(0, 28) : 'web'}`;
       } else if (fn === 'search_marketplace') {
         phase = 'Searching marketplace';
       } else if (fn === 'invoke_subagent') {
@@ -233,51 +270,55 @@ class AntigravityMonitor extends EventEmitter {
       newStatus = 'running';
       phase = 'Processing request...';
     } else if (step.type === 'PLANNER_RESPONSE' && step.status === 'DONE' && (!step.tool_calls || step.tool_calls.length === 0)) {
-      // Final response produced with no additional tool calls needed
       newStatus = 'done';
       phase = 'Task finished';
     } else if (step.thinking) {
       newStatus = 'thinking';
       phase = 'Thinking & analyzing solution...';
     } else if (step.type === 'GENERIC' || step.type === 'TOOL_RESPONSE') {
-      // Intermediate tool execution completed - agent is still active, not done!
       newStatus = 'running';
-      phase = this.lastState.phase && this.lastState.phase !== 'Ready' && this.lastState.phase !== 'Task finished'
-        ? this.lastState.phase
-        : 'Processing tool results...';
-      toolName = this.lastState.tool || '';
-      cmd = this.lastState.command || '';
-      fileName = this.lastState.file || '';
-    } else if (step.status === 'ERROR') {
-      newStatus = 'error';
-      phase = 'Error occurred';
-    } else if (step.status === 'DONE') {
-      newStatus = 'done';
-      phase = 'Task finished';
+      phase = 'Processing tool results...';
+    } else {
+      newStatus = 'idle';
+      phase = 'Ready';
     }
 
-    this.lastState = {
-      status: newStatus,
+    return {
       provider: 'Google Antigravity',
-      task: cmd || phase || 'Active Task',
-      phase: phase || 'Running step',
+      project: projectName || 'Antigravity',
+      status: newStatus,
+      phase,
       tool: toolName,
       file: fileName,
       command: cmd,
       progress: null,
-      conversationId: this.activeConversationId || '',
+      conversationId: conversationId || '',
       updatedAt: Date.now()
     };
+  }
 
-    if (prevState !== 'done' && newStatus === 'done') {
-      this.emit('task-completed', this.getState());
+  processStep(step) {
+    const parsed = this.parseStepToState(step, this.activeConversationId || 'default', 'Antigravity');
+    if (!parsed) return;
+
+    const prevState = this.lastState.status;
+    if (parsed.phase === 'Processing tool results...' && this.lastState.phase && this.lastState.phase !== 'Ready') {
+      parsed.phase = this.lastState.phase;
+      parsed.tool = this.lastState.tool;
+      parsed.command = this.lastState.command;
+      parsed.file = this.lastState.file;
     }
 
+    this.lastState = { ...parsed };
+    this.projects.set(parsed.conversationId, { ...parsed });
+
+    if (prevState !== 'done' && parsed.status === 'done') {
+      this.emit('task-completed', this.getState());
+    }
     this.emit('change', this.getState());
   }
 
   focusAntigravityWindow() {
-    const { execFile } = require('child_process');
     const ps = [
       "$ws = New-Object -ComObject WScript.Shell",
       "$activated = $ws.AppActivate('Antigravity')",
@@ -298,12 +339,6 @@ class AntigravityMonitor extends EventEmitter {
         this.lastState.status = 'not_running';
         this.lastState.phase = 'Antigravity is not running';
         this.emit('change', this.getState());
-      } else if (output.includes('ACTIVATED')) {
-        if (this.lastState.status === 'not_running') {
-          this.lastState.status = 'idle';
-          this.lastState.phase = 'Ready';
-          this.emit('change', this.getState());
-        }
       }
     });
   }
