@@ -34,6 +34,24 @@ test('DropZone: safe calls with undefined arguments', () => {
   assert.doesNotThrow(() => {
     dz.clearAll();
   });
+
+  const testTempDir = path.join(__dirname, 'test-temp-folder');
+  const fs = require('fs');
+  if (!fs.existsSync(testTempDir)) fs.mkdirSync(testTempDir);
+  const testSubFile = path.join(testTempDir, 'nested.txt');
+  fs.writeFileSync(testSubFile, 'nested data');
+
+  assert.doesNotThrow(() => {
+    const ok = dz.addFile(testTempDir);
+    assert.strictEqual(ok, true);
+    dz.openFile(path.basename(testTempDir));
+    dz.revealInExplorer(path.basename(testTempDir));
+    dz.deleteFile(path.basename(testTempDir));
+  });
+
+  try {
+    fs.rmSync(testTempDir, { recursive: true, force: true });
+  } catch (e) {}
 });
 
 test('ConfigManager: get and set settings including displayMode', () => {

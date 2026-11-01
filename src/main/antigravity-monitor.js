@@ -115,10 +115,23 @@ class AntigravityMonitor extends EventEmitter {
     try {
       const stat = fs.statSync(this.transcriptPath);
       if (stat.size === this.lastFileSize) {
-        // No new bytes; if it was done > 45s ago, reset to idle
-        if (this.lastState.status === 'done' && Date.now() - this.lastState.updatedAt > 45000) {
+        const timeSinceUpdate = Date.now() - this.lastState.updatedAt;
+        // If task finished > 8s ago, transition cleanly to idle Ready
+        if (this.lastState.status === 'done' && timeSinceUpdate > 8000) {
           this.lastState.status = 'idle';
           this.lastState.phase = 'Ready';
+          this.lastState.tool = '';
+          this.lastState.command = '';
+          this.emit('change', this.getState());
+        }
+        // If left on thinking or running with no file activity for > 15s and no active MCP, reset to idle
+        else if ((this.lastState.status === 'thinking' || this.lastState.status === 'running') &&
+                 timeSinceUpdate > 15000 &&
+                 Date.now() - this.lastMcpTime > 15000) {
+          this.lastState.status = 'idle';
+          this.lastState.phase = 'Ready';
+          this.lastState.tool = '';
+          this.lastState.command = '';
           this.emit('change', this.getState());
         }
         return;
@@ -216,12 +229,16 @@ class AntigravityMonitor extends EventEmitter {
       } else {
         phase = `Tool: ${fn}`;
       }
-    } else if (step.thinking) {
-      newStatus = 'thinking';
-      phase = 'Thinking & analyzing solution...';
     } else if (step.type === 'USER_INPUT') {
       newStatus = 'running';
       phase = 'Processing request...';
+    } else if (step.type === 'PLANNER_RESPONSE' && step.status === 'DONE' && (!step.tool_calls || step.tool_calls.length === 0)) {
+      // Final response produced with no additional tool calls needed
+      newStatus = 'done';
+      phase = 'Task finished';
+    } else if (step.thinking) {
+      newStatus = 'thinking';
+      phase = 'Thinking & analyzing solution...';
     } else if (step.type === 'GENERIC' || step.type === 'TOOL_RESPONSE') {
       // Intermediate tool execution completed - agent is still active, not done!
       newStatus = 'running';
@@ -231,10 +248,6 @@ class AntigravityMonitor extends EventEmitter {
       toolName = this.lastState.tool || '';
       cmd = this.lastState.command || '';
       fileName = this.lastState.file || '';
-    } else if (step.type === 'PLANNER_RESPONSE' && step.status === 'DONE' && (!step.tool_calls || step.tool_calls.length === 0)) {
-      // Final response produced with no additional tool calls needed
-      newStatus = 'done';
-      phase = 'Task finished';
     } else if (step.status === 'ERROR') {
       newStatus = 'error';
       phase = 'Error occurred';

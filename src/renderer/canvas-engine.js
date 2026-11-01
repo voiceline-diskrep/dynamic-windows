@@ -116,11 +116,26 @@ window.addEventListener('drop', (e) => {
   e.preventDefault();
   e.stopPropagation();
   isDraggingOver = false;
-  if (e.dataTransfer && e.dataTransfer.files) {
-    for (const file of e.dataTransfer.files) {
-      const filePath = (webUtils && typeof webUtils.getPathForFile === 'function')
-        ? webUtils.getPathForFile(file)
-        : file.path;
+  if (e.dataTransfer) {
+    const fileList = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+    if (fileList.length === 0 && e.dataTransfer.items) {
+      for (const item of e.dataTransfer.items) {
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) fileList.push(f);
+        }
+      }
+    }
+    for (const file of fileList) {
+      let filePath = null;
+      try {
+        if (webUtils && typeof webUtils.getPathForFile === 'function') {
+          filePath = webUtils.getPathForFile(file);
+        }
+      } catch (err) {}
+      if (!filePath && file && file.path) {
+        filePath = file.path;
+      }
       if (filePath) {
         ipcRenderer.send('dropzone-add-file', filePath);
       }
@@ -236,9 +251,9 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('dropzone-clear-all');
   } else if (id === 'dropzone_browse') {
     ipcRenderer.send('dropzone-browse-file');
-  } else if (id === 'dropzone_open_file') {
+  } else if (id && (id === 'dropzone_open_file' || id.startsWith('dropzone_open_file_') || id.startsWith('dropzone_row_'))) {
     ipcRenderer.send('dropzone-open-file', data);
-  } else if (id === 'dropzone_delete_file') {
+  } else if (id && (id === 'dropzone_delete_file' || id.startsWith('dropzone_delete_file_'))) {
     ipcRenderer.send('dropzone-delete-file', data);
   } else if (id === 'jump_antigravity') {
     ipcRenderer.send('focus-antigravity');
@@ -932,7 +947,10 @@ function renderDropZoneView(x, y, w, h) {
     for (let i = 0; i < maxRows; i++) {
       const file = dropZoneFiles[i];
       const ry = listY + i * (rowH + rowGap);
-      const isRowHov = hoveredButtonId === `row_${i}` || hoveredButtonId === `file_open_${i}`;
+      const isRowHov = hoveredButtonId === `dropzone_row_${i}`;
+
+      // Row clickable target (opens file when row is clicked)
+      interactiveButtons.push({ id: `dropzone_row_${i}`, data: file.name, x: contentX, y: ry, w: contentW - 95, h: rowH });
 
       // Row background
       ctx.beginPath();
@@ -969,7 +987,7 @@ function renderDropZoneView(x, y, w, h) {
       const openBtnX = contentX + contentW - 90;
       const openBtnY = ry + (rowH - openBtnH) / 2;
       const isOpenHov = hoveredButtonId === `dropzone_open_file_${i}`;
-      interactiveButtons.push({ id: 'dropzone_open_file', data: file.name, x: openBtnX, y: openBtnY, w: openBtnW, h: openBtnH });
+      interactiveButtons.push({ id: `dropzone_open_file_${i}`, data: file.name, x: openBtnX, y: openBtnY, w: openBtnW, h: openBtnH });
 
       ctx.beginPath();
       ctx.roundRect(openBtnX, openBtnY, openBtnW, openBtnH, 6);
@@ -990,7 +1008,7 @@ function renderDropZoneView(x, y, w, h) {
       const delY = ry + (rowH - 20) / 2;
       const delSize = 20;
       const isDelHov = hoveredButtonId === `dropzone_delete_file_${i}`;
-      interactiveButtons.push({ id: 'dropzone_delete_file', data: file.name, x: delX, y: delY, w: delSize, h: delSize });
+      interactiveButtons.push({ id: `dropzone_delete_file_${i}`, data: file.name, x: delX, y: delY, w: delSize, h: delSize });
 
       ctx.beginPath();
       ctx.roundRect(delX, delY, delSize, delSize, 5);

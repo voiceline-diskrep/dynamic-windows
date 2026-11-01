@@ -360,7 +360,7 @@ function setupTray() {
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows + One-Shot (v1.1.1)');
+    tray.setToolTip('Dynamic Windows + One-Shot (v1.1.2)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);

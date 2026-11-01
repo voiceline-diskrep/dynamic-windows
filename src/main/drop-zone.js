@@ -50,46 +50,76 @@ class DropZone {
   addFile(srcPath) {
     this.ensureDir();
     try {
-      if (!fs.existsSync(srcPath)) return false;
+      if (!srcPath || typeof srcPath !== 'string' || !fs.existsSync(srcPath)) return false;
       const baseName = path.basename(srcPath);
       const destPath = path.join(this.dir, baseName);
-      fs.copyFileSync(srcPath, destPath);
+      if (path.resolve(srcPath).toLowerCase() === path.resolve(destPath).toLowerCase()) {
+        return true;
+      }
+      const stat = fs.statSync(srcPath);
+      if (stat.isDirectory()) {
+        fs.cpSync(srcPath, destPath, { recursive: true });
+      } else {
+        fs.copyFileSync(srcPath, destPath);
+      }
       return true;
     } catch (e) {
+      console.error('DropZone addFile error:', e);
       return false;
     }
   }
 
-  openFile(name) {
-    if (!name || typeof name !== 'string' || !electronShell) return;
-    const fullPath = path.join(this.dir, name);
-    if (fs.existsSync(fullPath)) {
-      electronShell.openPath(fullPath);
+  openFile(target) {
+    if (!target || typeof target !== 'string' || !electronShell) return;
+    try {
+      const fullPath = path.isAbsolute(target) ? target : path.join(this.dir, target);
+      if (fs.existsSync(fullPath)) {
+        electronShell.openPath(fullPath).then(errMsg => {
+          if (errMsg) {
+            electronShell.showItemInFolder(fullPath);
+          }
+        }).catch(() => {
+          electronShell.showItemInFolder(fullPath);
+        });
+      }
+    } catch (e) {
+      console.error('DropZone openFile error:', e);
     }
   }
 
-  revealInExplorer(name) {
+  revealInExplorer(target) {
     this.ensureDir();
     if (!electronShell) return;
-    if (name && typeof name === 'string') {
-      const fullPath = path.join(this.dir, name);
-      if (fs.existsSync(fullPath)) {
-        electronShell.showItemInFolder(fullPath);
-        return;
+    try {
+      if (target && typeof target === 'string') {
+        const fullPath = path.isAbsolute(target) ? target : path.join(this.dir, target);
+        if (fs.existsSync(fullPath)) {
+          electronShell.showItemInFolder(fullPath);
+          return;
+        }
       }
+      electronShell.openPath(this.dir);
+    } catch (e) {
+      console.error('DropZone revealInExplorer error:', e);
     }
-    electronShell.openPath(this.dir);
   }
 
-  deleteFile(name) {
-    if (!name || typeof name !== 'string') return false;
-    const fullPath = path.join(this.dir, name);
+  deleteFile(target) {
+    if (!target || typeof target !== 'string') return false;
     try {
+      const fullPath = path.isAbsolute(target) ? target : path.join(this.dir, target);
       if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(fullPath);
+        }
         return true;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('DropZone deleteFile error:', e);
+    }
     return false;
   }
 

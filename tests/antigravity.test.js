@@ -78,6 +78,20 @@ test('AntigravityMonitor: processStep with task completion', () => {
   assert.strictEqual(completedFired, true);
 });
 
+test('AntigravityMonitor: processStep with PLANNER_RESPONSE DONE and thinking marks task as done', () => {
+  const mon = new AntigravityMonitor();
+  mon.processStep({
+    type: 'PLANNER_RESPONSE',
+    status: 'DONE',
+    thinking: 'Final thoughts before user answer',
+    tool_calls: []
+  });
+
+  const state = mon.getState();
+  assert.strictEqual(state.status, 'done');
+  assert.strictEqual(state.phase, 'Task finished');
+});
+
 test('AntigravityMonitor: processStep with Antigravity transcript format (name and args)', () => {
   const mon = new AntigravityMonitor();
   mon.processStep({
