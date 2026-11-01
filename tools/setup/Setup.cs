@@ -10,11 +10,11 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Dynamic Windows Setup")]
 [assembly: AssemblyProduct("Dynamic Windows")]
 [assembly: AssemblyCompany("voiceline-diskrep")]
-[assembly: AssemblyVersion("1.1.2.0")]
-[assembly: AssemblyFileVersion("1.1.2.0")]
+[assembly: AssemblyVersion("1.1.3.0")]
+[assembly: AssemblyFileVersion("1.1.3.0")]
 
 static class Setup {
-    public const string VERSION = "1.1.2";
+    public const string VERSION = "1.1.3";
     public static string Home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "DynamicWindows");
     public static bool NoStart, Quiet;
 
@@ -55,7 +55,7 @@ class SetupForm : Form {
     Button installButton;
 
     public SetupForm() {
-        this.Text = "Dynamic Windows + One-Shot Setup (v1.1.2)";
+        this.Text = "Dynamic Windows Setup (v1.1.3)";
         this.Size = new Size(480, 240);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.FormBorderStyle = FormBorderStyle.FixedDialog;

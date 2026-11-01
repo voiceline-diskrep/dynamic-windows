@@ -70,18 +70,23 @@ class DropZone {
   }
 
   openFile(target) {
-    if (!target || typeof target !== 'string' || !electronShell) return;
+    this.ensureDir();
+    if (!electronShell) return;
     try {
-      const fullPath = path.isAbsolute(target) ? target : path.join(this.dir, target);
-      if (fs.existsSync(fullPath)) {
-        electronShell.openPath(fullPath).then(errMsg => {
-          if (errMsg) {
+      if (target && typeof target === 'string') {
+        const fullPath = path.isAbsolute(target) ? target : path.join(this.dir, target);
+        if (fs.existsSync(fullPath)) {
+          electronShell.openPath(fullPath).then(errMsg => {
+            if (errMsg) {
+              electronShell.showItemInFolder(fullPath);
+            }
+          }).catch(() => {
             electronShell.showItemInFolder(fullPath);
-          }
-        }).catch(() => {
-          electronShell.showItemInFolder(fullPath);
-        });
+          });
+          return;
+        }
       }
+      electronShell.openPath(this.dir);
     } catch (e) {
       console.error('DropZone openFile error:', e);
     }

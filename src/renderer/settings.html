@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Settings & Preferences — Dynamic Windows + One-Shot</title>
+  <title>Settings & Preferences — Dynamic Windows</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -310,8 +310,8 @@
     <div class="nav-item" data-page="antigravity">
       <span class="nav-icon">🤖</span> Google Antigravity
     </div>
-    <div class="nav-item" data-page="presets">
-      <span class="nav-icon">⚡</span> One-Shot Presets
+    <div class="nav-item" data-page="media">
+      <span class="nav-icon">🎵</span> Media & Lyrics
     </div>
     <div class="nav-item" data-page="dropzone">
       <span class="nav-icon">📁</span> Drop Zone
@@ -359,16 +359,7 @@
           </label>
         </div>
 
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-label">Startup Takeover Mode</span>
-            <span class="setting-desc">Display full-screen preset launcher at startup with the prominent 'Just Enter' button.</span>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="setting-startupTakeover">
-            <span class="slider"></span>
-          </label>
-        </div>
+
       </div>
 
       <div class="card">
@@ -439,26 +430,37 @@
       </div>
     </div>
 
-    <!-- 3. One-Shot Presets Page -->
-    <div class="page" id="page-presets">
-      <h1 class="page-title">One-Shot Presets</h1>
-      <p class="page-subtitle">Quick multi-app launcher presets accessible via shortcuts and the Island.</p>
+    <!-- 3. Media & Lyrics Page -->
+    <div class="page" id="page-media">
+      <h1 class="page-title">Media & Synced Lyrics</h1>
+      <p class="page-subtitle">Real-time music detection and synced lyrics streaming for Liner and Windows Media.</p>
 
       <div class="card">
-        <div class="card-header">Configured Presets</div>
-        <div id="presets-list-container" style="padding: 14px 18px;">
-          <p style="color: #71717a; font-size: 13px;">Loading presets...</p>
+        <div class="card-header">Liner Player Integration</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Open-Source Liner Player Support</span>
+            <span class="setting-desc">Auto-detects active playback and extracts syllable/line-synced lyrics from Liner desktop client.</span>
+          </div>
+          <span class="badge" style="background-color: rgba(34, 197, 94, 0.15); color: #22c55e;">Enabled</span>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Windows Media Session Fallback</span>
+            <span class="setting-desc">Automatically connects to Spotify, Chrome, Edge, and Windows GSMTC media players.</span>
+          </div>
+          <span class="badge" style="background-color: rgba(56, 189, 248, 0.15); color: #38bdf8;">Active</span>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-header">Startup Screen</div>
+        <div class="card-header">Dynamic Island Display</div>
         <div class="setting-row">
           <div class="setting-info">
-            <span class="setting-label">Preview Full-Screen Takeover</span>
-            <span class="setting-desc">Test the startup takeover interface with the 'Just Enter' escape button.</span>
+            <span class="setting-label">Live Lyrics Output</span>
+            <span class="setting-desc">Displays rotating and synced lyrics lines inside the Island Media view with vibrant green highlighting.</span>
           </div>
-          <button class="btn btn-primary" id="btn-preview-takeover">Launch Screen</button>
+          <span class="badge" style="background-color: rgba(34, 197, 94, 0.15); color: #22c55e;">Active</span>
         </div>
       </div>
     </div>
@@ -497,9 +499,9 @@
         <div class="setting-row">
           <div class="setting-info">
             <span class="setting-label">Currently Installed Version</span>
-            <span class="setting-desc">Dynamic Windows + One-Shot Standalone Edition</span>
+            <span class="setting-desc">Dynamic Windows Standalone Edition</span>
           </div>
-          <span class="badge" id="current-version-badge">v1.1.2</span>
+          <span class="badge" id="current-version-badge">v1.1.3</span>
         </div>
 
         <div class="setting-row">
@@ -530,12 +532,12 @@
     <!-- 6. About Page -->
     <div class="page" id="page-about">
       <h1 class="page-title">About Dynamic Windows</h1>
-      <p class="page-subtitle">Desktop Dynamic Island & One-Shot Application Launcher.</p>
+      <p class="page-subtitle">Desktop Dynamic Island & Dynamic Notch with Antigravity & Liner Integration.</p>
 
       <div class="card" style="padding: 24px; text-align: center;">
         <img src="../../app_icon.png" alt="Dynamic Windows" style="width: 64px; height: 64px; border-radius: 14px; margin-bottom: 12px;">
-        <h2 style="font-size: 18px; font-weight: 700; color: #ffffff;">Dynamic Windows + One-Shot</h2>
-        <p style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.1.2 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
+        <h2 style="font-size: 18px; font-weight: 700; color: #ffffff;">Dynamic Windows</h2>
+        <p style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.1.3 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
 
         <p style="font-size: 12.5px; color: #71717a; max-width: 480px; margin: 0 auto 20px auto; line-height: 1.5;">
           Featuring Apple-inspired 144Hz physics, Start Menu application discovery, one-click preset launching, and deep integration with Google Antigravity.
@@ -598,40 +600,8 @@
       document.getElementById('current-version-badge').textContent = `v${data.version || '1.0.7'}`;
       document.getElementById('setting-autoCheckUpdates').checked = !!cfg.autoCheckUpdates;
 
-      // Render presets
-      renderPresets(data.presets || []);
+      // Update status
     }
-
-    function renderPresets(presets) {
-      const container = document.getElementById('presets-list-container');
-      if (!presets || presets.length === 0) {
-        container.innerHTML = '<p style="color: #71717a; font-size: 13px;">No presets configured yet. Use the Island apps menu to add presets.</p>';
-        return;
-      }
-
-      let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
-      presets.forEach((p, idx) => {
-        const appsCount = (p.apps || []).length;
-        html += `
-          <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <span style="font-size: 16px;">${p.icon || '🚀'}</span>
-              <div>
-                <div style="font-size: 13px; font-weight: 600; color: #f4f4f5;">${p.name}</div>
-                <div style="font-size: 11.5px; color: #71717a;">${appsCount} application${appsCount === 1 ? '' : 's'} &bull; Shortcut: Ctrl+Alt+${idx + 1}</div>
-              </div>
-            </div>
-            <button class="btn" onclick="launchPreset('${p.id}')">Launch</button>
-          </div>
-        `;
-      });
-      html += '</div>';
-      container.innerHTML = html;
-    }
-
-    window.launchPreset = function(id) {
-      ipcRenderer.send('launch-preset', id);
-    };
 
     function updateDisplayModeButtons(mode) {
       const btnIsland = document.getElementById('btn-mode-island');

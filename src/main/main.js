@@ -27,8 +27,6 @@ process.on('unhandledRejection', (reason) => {
 
 const AntigravityMonitor = require('./antigravity-monitor');
 const AgentHooksServer = require('./agent-hooks-server');
-const OneShotEngine = require('./oneshot-engine');
-const { createStartupTakeover } = require('./startup-takeover');
 const MediaController = require('./media-spotify');
 const DropZone = require('./drop-zone');
 const configManager = require('./config-manager');
@@ -38,7 +36,6 @@ let mainWindow = null;
 let tray = null;
 let antigravityMonitor = null;
 let agentHooksServer = null;
-let oneShotEngine = null;
 let mediaController = null;
 let dropZone = null;
 let isQuitting = false;
@@ -166,12 +163,7 @@ function createIslandWindow() {
 
   ipcMain.on('island-hover-end', () => {});
 
-  // Presets IPC
-  ipcMain.on('launch-preset', async (event, presetId) => {
-    if (oneShotEngine) {
-      await oneShotEngine.launchPreset(presetId);
-    }
-  });
+
 
   // Antigravity Focus
   ipcMain.on('focus-antigravity', () => {
@@ -271,18 +263,12 @@ function createIslandWindow() {
 
   // Settings Window
   ipcMain.on('open-settings', () => {
-    createSettingsWindow(dropZone, oneShotEngine);
-  });
-
-  // Startup Takeover Trigger
-  ipcMain.on('trigger-startup-takeover', () => {
-    createStartupTakeover(oneShotEngine);
+    createSettingsWindow(dropZone);
   });
 
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
-    sendPresetsList();
     sendMediaState();
     sendDropZoneFiles();
     sendDisplayMode();
@@ -292,12 +278,6 @@ function createIslandWindow() {
 function sendAntigravityState() {
   if (mainWindow && !mainWindow.isDestroyed() && antigravityMonitor) {
     mainWindow.webContents.send('antigravity-state', antigravityMonitor.getState());
-  }
-}
-
-function sendPresetsList() {
-  if (mainWindow && !mainWindow.isDestroyed() && oneShotEngine) {
-    mainWindow.webContents.send('presets-list', oneShotEngine.getPresets());
   }
 }
 
@@ -340,7 +320,7 @@ function setupTray() {
       {
         label: '⚙️ Settings & Preferences...',
         click: () => {
-          createSettingsWindow(dropZone, oneShotEngine);
+          createSettingsWindow(dropZone);
         }
       },
       { type: 'separator' },
@@ -360,7 +340,7 @@ function setupTray() {
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows + One-Shot (v1.1.2)');
+    tray.setToolTip('Dynamic Windows (v1.1.3)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);
@@ -374,18 +354,6 @@ function setupGlobalShortcuts() {
       mainWindow.focus();
     }
   });
-
-  // Ctrl+Alt+1..3: Launch Preset 1..3
-  [1, 2, 3].forEach(num => {
-    globalShortcut.register(`CommandOrControl+Alt+${num}`, async () => {
-      if (oneShotEngine) {
-        const presets = oneShotEngine.getPresets();
-        if (presets[num - 1]) {
-          await oneShotEngine.launchPreset(presets[num - 1].id);
-        }
-      }
-    });
-  });
 }
 
 // -------------------------------------------------------------
@@ -393,10 +361,9 @@ function setupGlobalShortcuts() {
 // -------------------------------------------------------------
 app.whenReady().then(() => {
   // 1. Initialize Subsystems
-  oneShotEngine = new OneShotEngine();
   mediaController = new MediaController();
   dropZone = new DropZone();
-  registerSettingsIPC(dropZone, oneShotEngine);
+  registerSettingsIPC(dropZone);
 
   // 2. Google Antigravity Real-Time Monitor
   antigravityMonitor = new AntigravityMonitor();
@@ -439,26 +406,20 @@ app.whenReady().then(() => {
     return {
       status: antigravityMonitor ? antigravityMonitor.getState().status : 'idle',
       displayMode: configManager.get('displayMode'),
-      shelfFiles: dropZone ? dropZone.getFiles() : [],
-      presets: oneShotEngine ? oneShotEngine.getPresets() : []
+      shelfFiles: dropZone ? dropZone.getFiles() : []
     };
   };
 
   agentHooksServer.start();
 
-  // 4. Check for startup takeover argument
-  const args = process.argv;
-  if (args.includes('--startup-mode') || args.includes('--takeover')) {
-    createStartupTakeover(oneShotEngine, () => {
-      createIslandWindow();
-      setupTray();
-      setupGlobalShortcuts();
-    });
-  } else {
-    createIslandWindow();
-    setupTray();
-    setupGlobalShortcuts();
-  }
+  createIslandWindow();
+  setupTray();
+  setupGlobalShortcuts();
+
+  // Periodically stream media & lyrics updates to Island
+  setInterval(() => {
+    sendMediaState();
+  }, 1500);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

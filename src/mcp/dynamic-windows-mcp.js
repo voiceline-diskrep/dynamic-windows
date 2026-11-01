@@ -191,7 +191,7 @@ process.stdin.on('data', async (chunk) => {
         sendResponse(id, {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'dynamic-windows', version: '1.1.2' }
+          serverInfo: { name: 'dynamic-windows', version: '1.1.3' }
         });
       } else if (method === 'notifications/initialized') {
         // Notification, no reply needed

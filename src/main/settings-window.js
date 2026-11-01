@@ -10,7 +10,7 @@ const configManager = require('./config-manager');
 
 let settingsWindow = null;
 
-function createSettingsWindow(dropZoneInstance, oneShotEngineInstance) {
+function createSettingsWindow(dropZoneInstance) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindow.isMinimized()) settingsWindow.restore();
     settingsWindow.focus();
@@ -24,7 +24,7 @@ function createSettingsWindow(dropZoneInstance, oneShotEngineInstance) {
     height: 580,
     minWidth: 680,
     minHeight: 500,
-    title: 'Settings & Preferences — Dynamic Windows + One-Shot',
+    title: 'Settings & Preferences — Dynamic Windows',
     backgroundColor: '#0f0f12',
     icon: iconPath,
     autoHideMenuBar: true,
@@ -52,14 +52,13 @@ function createSettingsWindow(dropZoneInstance, oneShotEngineInstance) {
 // -------------------------------------------------------------
 // Settings IPC Handlers
 // -------------------------------------------------------------
-function registerSettingsIPC(dropZoneInstance, oneShotEngineInstance) {
+function registerSettingsIPC(dropZoneInstance) {
   ipcMain.handle('get-app-settings', async () => {
     return {
       config: configManager.get(),
-      version: app.getVersion() || '1.0.7',
+      version: app.getVersion() || '1.1.3',
       dropZonePath: dropZoneInstance ? dropZoneInstance.dir : '',
-      dropZoneCount: dropZoneInstance ? dropZoneInstance.getFiles().length : 0,
-      presets: oneShotEngineInstance ? oneShotEngineInstance.getPresets() : []
+      dropZoneCount: dropZoneInstance ? dropZoneInstance.getFiles().length : 0
     };
   });
 
