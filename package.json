@@ -1,6 +1,6 @@
 {
   "name": "dynamic-windows",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Dynamic Windows + One-Shot: Apple Dynamic Island & One-Shot Application Launcher with Google Antigravity Integration",
   "main": "src/main/main.js",
   "type": "commonjs",

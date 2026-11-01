@@ -19,10 +19,11 @@ class AntigravityMonitor extends EventEmitter {
     this.activeConversationId = null;
     this.transcriptPath = null;
     this.lastFileSize = 0;
+    this.lastMcpTime = 0;
     this.pollInterval = options.pollInterval || 350;
     this.timer = null;
     this.lastState = {
-      status: 'idle', // 'idle' | 'running' | 'thinking' | 'done' | 'error'
+      status: 'idle', // 'idle' | 'running' | 'thinking' | 'waiting' | 'done' | 'error'
       provider: 'Google Antigravity',
       task: '',
       phase: '',
@@ -49,6 +50,26 @@ class AntigravityMonitor extends EventEmitter {
 
   getState() {
     return { ...this.lastState };
+  }
+
+  updateFromMcp(data) {
+    if (!data) return;
+    this.lastMcpTime = Date.now();
+    const prevState = this.lastState.status;
+    const newStatus = data.status || 'running';
+    this.lastState.status = newStatus;
+    this.lastState.phase = data.phase || 'Agent Active';
+    if (data.task) this.lastState.task = data.task;
+    if (data.tool) this.lastState.tool = data.tool;
+    if (data.file) this.lastState.file = data.file;
+    if (data.command) this.lastState.command = data.command;
+    if (typeof data.progress === 'number') this.lastState.progress = data.progress;
+    this.lastState.updatedAt = Date.now();
+
+    if (prevState !== 'done' && newStatus === 'done') {
+      this.emit('task-completed', this.getState());
+    }
+    this.emit('change', this.getState());
   }
 
   findLatestConversation() {
@@ -81,6 +102,11 @@ class AntigravityMonitor extends EventEmitter {
   }
 
   poll() {
+    // If an explicit MCP notification arrived recently (within 5 seconds), let MCP take priority!
+    if (Date.now() - this.lastMcpTime < 5000) {
+      return;
+    }
+
     this.findLatestConversation();
     if (!this.transcriptPath || !fs.existsSync(this.transcriptPath)) {
       return;
@@ -133,6 +159,18 @@ class AntigravityMonitor extends EventEmitter {
   }
 
   processStep(step) {
+    if (!step) return;
+
+    // Helper to unwrap stringified arguments (e.g. "\"foo\"")
+    const cleanArg = (val) => {
+      if (typeof val !== 'string') return val;
+      val = val.trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        return val.slice(1, -1);
+      }
+      return val;
+    };
+
     const prevState = this.lastState.status;
     let newStatus = 'running';
     let phase = '';
@@ -142,9 +180,13 @@ class AntigravityMonitor extends EventEmitter {
 
     if (step.tool_calls && Array.isArray(step.tool_calls) && step.tool_calls.length > 0) {
       const tc = step.tool_calls[0];
-      const fn = tc.ToolName || (tc.function && tc.function.name) || 'tool';
+      const fn = tc.name || tc.ToolName || (tc.function && tc.function.name) || 'tool';
       toolName = fn;
-      const args = tc.Arguments || {};
+      const rawArgs = tc.args || tc.Arguments || {};
+      const args = {};
+      for (const [k, v] of Object.entries(rawArgs)) {
+        args[k] = cleanArg(v);
+      }
 
       if (fn === 'run_command') {
         cmd = args.toolSummary || args.CommandLine || 'Executing shell command';
@@ -160,6 +202,17 @@ class AntigravityMonitor extends EventEmitter {
       } else if (fn === 'ask_question') {
         newStatus = 'waiting';
         phase = 'Waiting for your answer';
+      } else if (fn === 'call_mcp_tool') {
+        const server = args.ServerName || 'MCP';
+        const mcpTool = args.ToolName || 'tool';
+        phase = `${server}: ${mcpTool}`;
+        toolName = `${server}.${mcpTool}`;
+      } else if (fn === 'search_web') {
+        phase = `Searching: ${args.query ? args.query.slice(0, 30) : 'web'}`;
+      } else if (fn === 'search_marketplace') {
+        phase = 'Searching marketplace';
+      } else if (fn === 'invoke_subagent') {
+        phase = `Subagent: ${args.Role || args.TypeName || 'agent'}`;
       } else {
         phase = `Tool: ${fn}`;
       }
@@ -169,12 +222,25 @@ class AntigravityMonitor extends EventEmitter {
     } else if (step.type === 'USER_INPUT') {
       newStatus = 'running';
       phase = 'Processing request...';
-    } else if (step.status === 'DONE') {
+    } else if (step.type === 'GENERIC' || step.type === 'TOOL_RESPONSE') {
+      // Intermediate tool execution completed - agent is still active, not done!
+      newStatus = 'running';
+      phase = this.lastState.phase && this.lastState.phase !== 'Ready' && this.lastState.phase !== 'Task finished'
+        ? this.lastState.phase
+        : 'Processing tool results...';
+      toolName = this.lastState.tool || '';
+      cmd = this.lastState.command || '';
+      fileName = this.lastState.file || '';
+    } else if (step.type === 'PLANNER_RESPONSE' && step.status === 'DONE' && (!step.tool_calls || step.tool_calls.length === 0)) {
+      // Final response produced with no additional tool calls needed
       newStatus = 'done';
       phase = 'Task finished';
     } else if (step.status === 'ERROR') {
       newStatus = 'error';
       phase = 'Error occurred';
+    } else if (step.status === 'DONE') {
+      newStatus = 'done';
+      phase = 'Task finished';
     }
 
     this.lastState = {

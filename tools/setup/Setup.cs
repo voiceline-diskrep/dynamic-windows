@@ -10,11 +10,11 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Dynamic Windows Setup")]
 [assembly: AssemblyProduct("Dynamic Windows")]
 [assembly: AssemblyCompany("voiceline-diskrep")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.1.1.0")]
+[assembly: AssemblyFileVersion("1.1.1.0")]
 
 static class Setup {
-    public const string VERSION = "1.1.0";
+    public const string VERSION = "1.1.1";
     public static string Home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "DynamicWindows");
     public static bool NoStart, Quiet;
 
@@ -55,7 +55,7 @@ class SetupForm : Form {
     Button installButton;
 
     public SetupForm() {
-        this.Text = "Dynamic Windows + One-Shot Setup (v1.1.0)";
+        this.Text = "Dynamic Windows + One-Shot Setup (v1.1.1)";
         this.Size = new Size(480, 240);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -150,6 +150,14 @@ static class Installer {
                     p.WaitForExit(5000);
                 } catch { }
             }
+        } catch { }
+
+        // Clean up any legacy root package.json or src/ next to executable
+        try {
+            string rootPkg = Path.Combine(targetDir, "package.json");
+            if (File.Exists(rootPkg)) File.Delete(rootPkg);
+            string rootSrc = Path.Combine(targetDir, "src");
+            if (Directory.Exists(rootSrc)) Directory.Delete(rootSrc, true);
         } catch { }
 
         Stream zipStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("DynamicWindows.zip");

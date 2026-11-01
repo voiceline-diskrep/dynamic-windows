@@ -593,11 +593,18 @@ function renderHomeView(x, y, w, h) {
 
   renderTrafficLightDot(cardX + cardW - 16, cardY + 22, antigravityState.status);
 
-  // Phase text
+  // Phase text & active tool badge
   ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = '#e2e8f0';
   const phaseText = antigravityState.phase || 'Agent Ready';
-  ctx.fillText(phaseText.length > 32 ? phaseText.slice(0, 32) + '...' : phaseText, cardX + 12, cardY + 50);
+  ctx.fillText(phaseText.length > 34 ? phaseText.slice(0, 34) + '...' : phaseText, cardX + 12, cardY + 48);
+
+  if (antigravityState.tool) {
+    ctx.font = '500 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#38bdf8';
+    const toolText = `⚙ ${antigravityState.tool}`;
+    ctx.fillText(toolText.length > 20 ? toolText.slice(0, 20) + '...' : toolText, cardX + 12, cardY + 68);
+  }
 
   // Jump Button (Open Antigravity)
   const isRunning = antigravityState.status !== 'not_running';

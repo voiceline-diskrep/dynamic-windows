@@ -6,6 +6,8 @@
  */
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { EventEmitter } = require('events');
 
 const PORT = 47823;
@@ -31,9 +33,19 @@ class AgentHooksServer extends EventEmitter {
     this.server = http.createServer((req, res) => this.handleRequest(req, res));
     this.server.on('error', (err) => {
       console.warn('[AgentHooksServer] HTTP error:', err.message);
+      try {
+        const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+        fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] Server error: ${err.stack || err}\n`);
+      } catch (e) {}
     });
     this.server.listen(this.port, '127.0.0.1', () => {
       console.log(`[AgentHooksServer] Listening for agent hooks on 127.0.0.1:${this.port}`);
+      try {
+        const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+        fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] Listening on 127.0.0.1:${this.port}\n`);
+      } catch (e) {}
     });
   }
 

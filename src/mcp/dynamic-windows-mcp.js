@@ -27,6 +27,22 @@ const TOOLS = [
         task: {
           type: 'string',
           description: 'Optional overall task title.'
+        },
+        tool: {
+          type: 'string',
+          description: 'Optional specific tool or action being executed (e.g. "run_command", "edit_file").'
+        },
+        command: {
+          type: 'string',
+          description: 'Optional shell command string or sub-task summary.'
+        },
+        file: {
+          type: 'string',
+          description: 'Optional file path or target filename being operated on.'
+        },
+        progress: {
+          type: 'number',
+          description: 'Optional integer percentage progress (0 to 100).'
         }
       },
       required: ['status', 'phase']
@@ -175,7 +191,7 @@ process.stdin.on('data', async (chunk) => {
         sendResponse(id, {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'dynamic-windows', version: '1.1.0' }
+          serverInfo: { name: 'dynamic-windows', version: '1.1.1' }
         });
       } else if (method === 'notifications/initialized') {
         // Notification, no reply needed

@@ -45,6 +45,12 @@ let isQuitting = false;
 
 // Enforce single instance
 const gotTheLock = app.requestSingleInstanceLock();
+try {
+  const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+  fs.appendFileSync(path.join(logDir, 'startup.log'), `[${new Date().toISOString()}] PID ${process.pid}: gotTheLock=${gotTheLock}\n`);
+} catch (e) {}
+
 if (!gotTheLock) {
   app.quit();
 } else {
@@ -88,6 +94,28 @@ function createIslandWindow() {
 
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'island.html'));
+
+  mainWindow.webContents.on('did-fail-load', (e, code, desc) => {
+    try {
+      const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+      fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] did-fail-load: code=${code}, desc=${desc}\n`);
+    } catch (err) {}
+  });
+
+  mainWindow.webContents.on('render-process-gone', (e, details) => {
+    try {
+      const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+      fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] render-process-gone: ${JSON.stringify(details)}\n`);
+    } catch (err) {}
+  });
+
+  mainWindow.on('closed', () => {
+    try {
+      const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+      fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] mainWindow closed\n`);
+    } catch (err) {}
+    mainWindow = null;
+  });
 
   // Prevent accidental close via Ctrl+W / Alt+F4 unless quitting
   mainWindow.on('close', (e) => {
@@ -332,7 +360,7 @@ function setupTray() {
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows + One-Shot (v1.1.0)');
+    tray.setToolTip('Dynamic Windows + One-Shot (v1.1.1)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);
@@ -388,9 +416,7 @@ app.whenReady().then(() => {
 
   agentHooksServer.on('mcp-notify', (data) => {
     if (antigravityMonitor) {
-      antigravityMonitor.lastState.status = data.status || 'running';
-      antigravityMonitor.lastState.phase = data.phase || 'Agent Active';
-      if (data.task) antigravityMonitor.lastState.task = data.task;
+      antigravityMonitor.updateFromMcp(data);
       sendAntigravityState();
     }
   });
@@ -441,17 +467,29 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (e) => {
+  try {
+    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] app.before-quit fired\n`);
+  } catch (err) {}
   isQuitting = true;
 });
 
 app.on('will-quit', () => {
+  try {
+    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] app.will-quit fired\n`);
+  } catch (err) {}
   globalShortcut.unregisterAll();
   if (antigravityMonitor) antigravityMonitor.stop();
   if (agentHooksServer) agentHooksServer.stop();
 });
 
 app.on('window-all-closed', () => {
+  try {
+    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] app.window-all-closed fired\n`);
+  } catch (err) {}
   if (process.platform !== 'darwin') {
     app.quit();
   }

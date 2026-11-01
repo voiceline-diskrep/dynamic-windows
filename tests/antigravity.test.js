@@ -68,10 +68,81 @@ test('AntigravityMonitor: processStep with task completion', () => {
   });
 
   mon.processStep({
-    status: 'DONE'
+    type: 'PLANNER_RESPONSE',
+    status: 'DONE',
+    tool_calls: []
   });
 
   const state = mon.getState();
   assert.strictEqual(state.status, 'done');
   assert.strictEqual(completedFired, true);
+});
+
+test('AntigravityMonitor: processStep with Antigravity transcript format (name and args)', () => {
+  const mon = new AntigravityMonitor();
+  mon.processStep({
+    type: 'PLANNER_RESPONSE',
+    status: 'DONE',
+    tool_calls: [
+      {
+        name: 'read_file',
+        args: {
+          Path: '"c:\\\\Users\\\\russell\\\\Documents\\\\test.js"',
+          StartLine: '1'
+        }
+      }
+    ]
+  });
+
+  const state = mon.getState();
+  assert.strictEqual(state.status, 'running');
+  assert.strictEqual(state.tool, 'read_file');
+  assert.strictEqual(state.file, 'test.js');
+  assert.strictEqual(state.phase, 'Reading test.js');
+});
+
+test('AntigravityMonitor: intermediate tool response (type: GENERIC, status: DONE) does not trigger task completion', () => {
+  const mon = new AntigravityMonitor();
+  let completedFired = false;
+  mon.on('task-completed', () => {
+    completedFired = true;
+  });
+
+  // 1. Initial tool call running
+  mon.processStep({
+    type: 'PLANNER_RESPONSE',
+    tool_calls: [{ name: 'run_command', args: { CommandLine: 'npm test', toolSummary: 'Run tests' } }]
+  });
+  assert.strictEqual(mon.getState().status, 'running');
+
+  // 2. Tool result returned
+  mon.processStep({
+    type: 'GENERIC',
+    status: 'DONE',
+    content: 'All tests passed'
+  });
+
+  const state = mon.getState();
+  // Status should remain running and NOT fire task-completed!
+  assert.strictEqual(state.status, 'running');
+  assert.strictEqual(completedFired, false);
+});
+
+test('AntigravityMonitor: updateFromMcp sets detailed progress and overrides polling', () => {
+  const mon = new AntigravityMonitor();
+  mon.updateFromMcp({
+    status: 'running',
+    phase: 'Compiling executable binary',
+    task: 'Build System',
+    tool: 'run_command',
+    progress: 75
+  });
+
+  const state = mon.getState();
+  assert.strictEqual(state.status, 'running');
+  assert.strictEqual(state.phase, 'Compiling executable binary');
+  assert.strictEqual(state.task, 'Build System');
+  assert.strictEqual(state.tool, 'run_command');
+  assert.strictEqual(state.progress, 75);
+  assert.ok(Date.now() - mon.lastMcpTime < 100);
 });
