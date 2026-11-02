@@ -71,6 +71,13 @@ function registerSettingsIPC(dropZoneInstance) {
         }
       });
     }
+    if (newSettings && 'gameMode' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('game-mode-toggled', { enabled: Boolean(newSettings.gameMode) });
+        }
+      });
+    }
     return updated;
   });
 

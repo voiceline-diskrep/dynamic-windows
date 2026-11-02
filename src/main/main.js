@@ -4,7 +4,7 @@
  * Main Process (Electron + Node.js)
  */
 
-const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -39,6 +39,79 @@ let agentHooksServer = null;
 let mediaController = null;
 let dropZone = null;
 let isQuitting = false;
+
+let gameModeEnabled = configManager.get('gameMode') !== false;
+let isFullscreenGame = false;
+
+function applyGameModeVisibility() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (gameModeEnabled && isFullscreenGame) {
+    if (mainWindow.isVisible()) {
+      mainWindow.hide();
+    }
+  } else {
+    if (!mainWindow.isVisible()) {
+      mainWindow.showInactive();
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    }
+  }
+}
+
+function setGameMode(enabled, source = 'ui') {
+  gameModeEnabled = Boolean(enabled);
+  configManager.set('gameMode', gameModeEnabled);
+  applyGameModeVisibility();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('game-mode-toggled', {
+      enabled: gameModeEnabled,
+      isFullscreen: isFullscreenGame,
+      source
+    });
+  }
+  setupTray();
+}
+
+function toggleGameMode(source = 'shortcut') {
+  setGameMode(!gameModeEnabled, source);
+}
+
+let clipboardHistory = [];
+let lastClipText = '';
+
+function startClipboardMonitor() {
+  setInterval(() => {
+    try {
+      const text = clipboard.readText();
+      if (typeof text !== 'string' || !text || text === lastClipText) return;
+      lastClipText = text;
+      const clean = text.trim();
+      if (!clean || clean.length > 50000) return;
+
+      const existingIdx = clipboardHistory.findIndex(c => c.text === clean);
+      const isPinned = existingIdx >= 0 ? clipboardHistory[existingIdx].pinned : false;
+
+      const filtered = clipboardHistory.filter(c => c.text !== clean);
+      const newItem = {
+        id: 'clip_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        text: clean,
+        time: Date.now(),
+        pinned: isPinned
+      };
+
+      const pinned = filtered.filter(c => c.pinned);
+      const unpinned = filtered.filter(c => !c.pinned);
+      if (isPinned) {
+        clipboardHistory = [newItem, ...pinned.filter(c => c.id !== newItem.id), ...unpinned].slice(0, 25);
+      } else {
+        clipboardHistory = [...pinned, newItem, ...unpinned].slice(0, 25);
+      }
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('clipboard-update', clipboardHistory);
+      }
+    } catch (err) {}
+  }, 1000).unref?.();
+}
 
 // Enforce single instance
 const gotTheLock = app.requestSingleInstanceLock();
@@ -199,6 +272,36 @@ function createIslandWindow() {
     }
   });
 
+  ipcMain.on('media-seek', (event, ms) => {
+    if (mediaController) {
+      mediaController.seek(ms);
+    }
+  });
+
+  ipcMain.on('get-game-mode', (event) => {
+    event.returnValue = { enabled: gameModeEnabled, isFullscreen: isFullscreenGame };
+  });
+
+  ipcMain.on('set-game-mode', (event, enabled) => {
+    setGameMode(enabled, 'ui');
+  });
+
+  ipcMain.on('toggle-game-mode', (event) => {
+    toggleGameMode('ui');
+  });
+
+  ipcMain.on('game-mode-hide', (event, hide) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (hide && gameModeEnabled) {
+      if (mainWindow.isVisible()) mainWindow.hide();
+    } else {
+      if (!mainWindow.isVisible()) {
+        mainWindow.showInactive();
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      }
+    }
+  });
+
   // Drop Zone Window & Shelf Actions
   ipcMain.on('open-dropzone', () => {
     if (dropZone) {
@@ -261,6 +364,72 @@ function createIslandWindow() {
     }
   });
 
+  // Native Drag Out for Drop Shelf files
+  ipcMain.on('shelf-drag-start', (event, filePath) => {
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        const icon = nativeImage.createEmpty();
+        event.sender.startDrag({ file: filePath, icon });
+      } catch (err) {}
+    }
+  });
+
+  // Media Playback Speed & Lyric Sync Offset
+  ipcMain.on('media-set-speed', (event, rate) => {
+    if (mediaController) {
+      mediaController.setPlaybackSpeed(rate);
+      sendMediaState();
+    }
+  });
+
+  ipcMain.on('media-set-offset', (event, offsetMs) => {
+    if (mediaController) {
+      mediaController.setLyricOffset(offsetMs);
+      sendMediaState();
+    }
+  });
+
+  // Clipboard History Manager (last 25 items in memory)
+  ipcMain.on('clipboard-get', (event) => {
+    event.reply('clipboard-update', clipboardHistory);
+  });
+
+  ipcMain.on('clipboard-copy', (event, clipId) => {
+    const item = clipboardHistory.find(c => c.id === clipId);
+    if (item && item.text) {
+      clipboard.writeText(item.text);
+      lastClipText = item.text;
+      item.time = Date.now();
+      // Re-sort: pinned on top, then newest
+      const pinned = clipboardHistory.filter(c => c.pinned);
+      const unpinned = clipboardHistory.filter(c => !c.pinned);
+      clipboardHistory = [...pinned, ...unpinned];
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('clipboard-update', clipboardHistory);
+      }
+    }
+  });
+
+  ipcMain.on('clipboard-pin', (event, clipId) => {
+    const item = clipboardHistory.find(c => c.id === clipId);
+    if (item) {
+      item.pinned = !item.pinned;
+      const pinned = clipboardHistory.filter(c => c.pinned);
+      const unpinned = clipboardHistory.filter(c => !c.pinned);
+      clipboardHistory = [...pinned, ...unpinned];
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('clipboard-update', clipboardHistory);
+      }
+    }
+  });
+
+  ipcMain.on('clipboard-clear', () => {
+    clipboardHistory = clipboardHistory.filter(c => c.pinned);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('clipboard-update', clipboardHistory);
+    }
+  });
+
   // Settings Window
   ipcMain.on('open-settings', () => {
     createSettingsWindow(dropZone);
@@ -303,8 +472,20 @@ function sendDisplayMode() {
 function setupTray() {
   try {
     const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');
-    tray = new Tray(iconPath);
+    if (!tray) {
+      tray = new Tray(iconPath);
+      tray.setToolTip('Dynamic Windows (v1.2.1)');
+    }
     const contextMenu = Menu.buildFromTemplate([
+      {
+        label: `🎮 Game Mode (Auto-hide in games)`,
+        type: 'checkbox',
+        checked: gameModeEnabled,
+        click: () => {
+          toggleGameMode('tray');
+        }
+      },
+      { type: 'separator' },
       {
         label: '⚡ One-Shot Takeover Screen',
         click: () => {
@@ -340,7 +521,6 @@ function setupTray() {
       }
     ]);
 
-    tray.setToolTip('Dynamic Windows (v1.1.4)');
     tray.setContextMenu(contextMenu);
   } catch (err) {
     console.error('Tray setup warning:', err);
@@ -348,10 +528,27 @@ function setupTray() {
 }
 
 function setupGlobalShortcuts() {
-  // Ctrl+Alt+T: Toggle Island focus
+  // Ctrl+Shift+G: Toggle Game Mode on/off
+  globalShortcut.register('CommandOrControl+Shift+G', () => {
+    toggleGameMode('shortcut');
+  });
+
+  // Ctrl+Alt+T: Toggle Island focus & untuck
   globalShortcut.register('CommandOrControl+Alt+T', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.isVisible()) {
+        mainWindow.showInactive();
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      }
       mainWindow.focus();
+      mainWindow.webContents.send('untuck-island');
+    }
+  });
+
+  // Ctrl+Alt+H: Tuck / Untuck the Island away (TwoCode shortcut)
+  globalShortcut.register('CommandOrControl+Alt+H', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('toggle-tuck');
     }
   });
 }
@@ -362,8 +559,20 @@ function setupGlobalShortcuts() {
 app.whenReady().then(() => {
   // 1. Initialize Subsystems
   mediaController = new MediaController();
+  mediaController.on('changed', () => sendMediaState());
+  mediaController.on('fullscreen', (isFull) => {
+    isFullscreenGame = Boolean(isFull);
+    applyGameModeVisibility();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('game-mode-changed', {
+        fullscreen: isFullscreenGame,
+        enabled: gameModeEnabled
+      });
+    }
+  });
   dropZone = new DropZone();
   registerSettingsIPC(dropZone);
+  startClipboardMonitor();
 
   // 2. Google Antigravity Real-Time Monitor
   antigravityMonitor = new AntigravityMonitor();
@@ -442,6 +651,7 @@ app.on('will-quit', () => {
     fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] app.will-quit fired\n`);
   } catch (err) {}
   globalShortcut.unregisterAll();
+  if (mediaController) mediaController.destroy();
   if (antigravityMonitor) antigravityMonitor.stop();
   if (agentHooksServer) agentHooksServer.stop();
 });

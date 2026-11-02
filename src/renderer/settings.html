@@ -363,6 +363,20 @@
       </div>
 
       <div class="card">
+        <div class="card-header">Game Mode</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Game Mode (Auto-hide during games)</span>
+            <span class="setting-desc">Automatically hide the Island when full-screen games are running. Disable to keep the Island visible over games. Quick toggle: <code>Ctrl+Shift+G</code>.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-gameMode">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-header">Dynamic Island Clock</div>
         <div class="setting-row">
           <div class="setting-info">
@@ -582,6 +596,7 @@
       // General
       document.getElementById('setting-startup').checked = !!cfg.startup;
       document.getElementById('setting-startupTakeover').checked = !!cfg.startupTakeover;
+      document.getElementById('setting-gameMode').checked = cfg.gameMode !== false;
       document.getElementById('setting-clock24h').checked = !!cfg.clock24h;
       document.getElementById('setting-showSeconds').checked = !!cfg.showSeconds;
 
@@ -637,6 +652,7 @@
 
     bindSettingChange('setting-startup', 'startup');
     bindSettingChange('setting-startupTakeover', 'startupTakeover');
+    bindSettingChange('setting-gameMode', 'gameMode');
     bindSettingChange('setting-clock24h', 'clock24h');
     bindSettingChange('setting-showSeconds', 'showSeconds');
     bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');

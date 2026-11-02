@@ -116,24 +116,80 @@ class AntigravityMonitor extends EventEmitter {
 
   extractProjectName(transcriptPath, fallback) {
     try {
-      const headBuf = Buffer.alloc(8192);
-      const fd = fs.openSync(transcriptPath, 'r');
-      fs.readSync(fd, headBuf, 0, 8192, 0);
-      fs.closeSync(fd);
-      const str = headBuf.toString('utf8');
+      if (!fs.existsSync(transcriptPath)) return fallback || 'Antigravity';
+      const content = fs.readFileSync(transcriptPath, 'utf8');
+      const lines = content.split('\n');
 
-      // 1. Try finding Active Workspaces: - C:\...\ProjectName
-      const m = str.match(/Active Workspaces:\s*[\r\n]+-\s*(?:[a-zA-Z]:)?[\\/].*?[\\/]([^\\r\\n\\/]+)/i);
-      if (m && m[1] && m[1].trim() && m[1].trim() !== 'Documents' && m[1].trim() !== 'antigravity') {
-        return m[1].trim();
+      // 1. Scan lines from head for tool_calls or content with project paths
+      for (let i = 0; i < Math.min(lines.length, 35); i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        try {
+          const step = JSON.parse(line);
+          if (step.tool_calls && Array.isArray(step.tool_calls)) {
+            for (const tc of step.tool_calls) {
+              if (!tc.args) continue;
+              for (const key of Object.keys(tc.args)) {
+                const val = String(tc.args[key]);
+                const m = val.match(/(?:Documents[\\\/]antigravity|scratch|projects|repos|workspace)[\\\/]([^\\\/\"\'\s\r\n]+)/i);
+                if (m && m[1]) {
+                  const name = m[1].replace(/\\/g, '').trim();
+                  if (name && name !== 'Documents' && name !== 'antigravity') return name;
+                }
+              }
+            }
+          }
+          if (typeof step.content === 'string') {
+            const m = step.content.match(/(?:Active Workspaces|Command Working Directory):[\s\r\n-]+(?:[a-zA-Z]:)?[\\/][^"'\r\n]+[\\/]([^"'\r\n\\\/]+)/i);
+            if (m && m[1]) {
+              const name = m[1].trim();
+              if (name && name !== 'Documents' && name !== 'antigravity') return name;
+            }
+          }
+        } catch (e) {}
       }
 
-      // 2. Try extracting from first user request
-      const reqMatch = str.match(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/i);
-      if (reqMatch && reqMatch[1]) {
-        const clean = reqMatch[1].replace(/\r?\n/g, ' ').trim();
-        if (clean.length > 0 && clean.length <= 24) return clean;
-        if (clean.length > 24) return clean.slice(0, 22) + '...';
+      // 2. Scan backwards from tail (latest commands/tools often operate in the workspace)
+      for (let i = lines.length - 1; i >= Math.max(0, lines.length - 25); i--) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        try {
+          const step = JSON.parse(line);
+          if (step.tool_calls && Array.isArray(step.tool_calls)) {
+            for (const tc of step.tool_calls) {
+              if (!tc.args) continue;
+              for (const key of Object.keys(tc.args)) {
+                const val = String(tc.args[key]);
+                const m = val.match(/(?:Documents[\\\/]antigravity|scratch|projects|repos|workspace)[\\\/]([^\\\/\"\'\s\r\n]+)/i);
+                if (m && m[1]) {
+                  const name = m[1].replace(/\\/g, '').trim();
+                  if (name && name !== 'Documents' && name !== 'antigravity') return name;
+                }
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 3. Fallback to cleaned first request without escaped characters
+      if (lines[0]) {
+        try {
+          const step0 = JSON.parse(lines[0]);
+          if (typeof step0.content === 'string') {
+            const reqMatch = step0.content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
+            if (reqMatch && reqMatch[1]) {
+              let clean = reqMatch[1]
+                .replace(/\\n/g, ' ')
+                .replace(/[\r\n\t]+/g, ' ')
+                .replace(/^(?:you are connected to (?:my )?github\.?\s*|please\s+|can you\s+|make me a\s+|create a\s+|fix\s+)/i, '')
+                .trim();
+              if (clean.length > 0) {
+                clean = clean.charAt(0).toUpperCase() + clean.slice(1);
+                return clean.length <= 16 ? clean : clean.slice(0, 15) + '…';
+              }
+            }
+          }
+        } catch (e) {}
       }
     } catch (e) {}
 

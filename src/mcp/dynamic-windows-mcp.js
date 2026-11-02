@@ -24,6 +24,10 @@ const TOOLS = [
           type: 'string',
           description: 'Short human-readable summary of the current step or action (e.g. "Executing tests", "Analyzing codebase").'
         },
+        project: {
+          type: 'string',
+          description: 'Optional project or workspace name.'
+        },
         task: {
           type: 'string',
           description: 'Optional overall task title.'

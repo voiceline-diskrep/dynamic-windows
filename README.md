@@ -1,59 +1,109 @@
-# 🏝️ Dynamic Windows (v1.0.5)
+# 🏝️ Dynamic Windows (v1.2.5)
 
-A polished Windows desktop application inspired by Apple's Dynamic Island and TwoCode, combining:
-1. **Windows Dynamic Island (Electron + HTML5 Canvas):** A 144Hz hardware-accelerated liquid glass desktop interface with deep Google Antigravity integration, live agent statusline, Spotify media controls, and Drop Zone shelf.
+A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment built for Windows, powered by high-performance hardware-accelerated Canvas rendering with deep **Google Antigravity & AI Agent** tracking, real-time **Liner Synced Lyrics**, **Connected Song Change Announcements**, a **Clipboard History Manager**, **Game Mode**, and a **Drag-and-Drop Desktop Shelf**.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.5.exe)
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.2.5.exe)
 
 ---
 
 ## 📥 Download & Install
 
-👉 **[Download DynamicWindows-Setup-v1.0.5.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.5.exe)**
+👉 **[Download DynamicWindows-Setup-v1.2.5.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.2.5.exe)**
 
-- Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` with **zero admin rights / UAC prompts required**.
-- Automatically creates Desktop and Start Menu shortcuts.
-
----
-
-## ✨ What's New in v1.0.5
-
-### 🚀 Electron + HTML5 Canvas 2D Engine (TwoCode-Inspired)
-- Migrated to an ultra-fluid **Electron + HTML5 `<canvas>` 2D rendering pipeline** syncing with 144Hz monitors for zero-lag, tear-free animations.
-- **Pure Minimalist Identity (No Mascot)**: Removed the cartoon companion in favor of clean Inter / Segoe UI typography, the official Google Antigravity logo, and a geometric traffic light status indicator.
-
-### ✦ Real-Time Google Antigravity Integration
-- **Live Transcript Watcher**: Automatically monitors active Antigravity conversations at `~/.gemini/antigravity/brain/*/transcript.jsonl`.
-- **Live Tool Execution**: Displays running commands (`run_command`), file modifications (`write_file`, `edit_file`), and thinking phases.
-- **Traffic Light Status**:
-  - 🟢 Green: Ready / Done
-  - 🟠 Orange Pulse: Working (Executing tool / shell command)
-  - 🟠 Orange Solid: Awaiting user input
-  - 🔴 Red: Error
-- **1-Click Window Focus**: Focus the Antigravity IDE window directly from the island.
-
-### 🛡️ Agent Hooks Server (`127.0.0.1:47823`)
-- Built-in local hook server compatible with Claude Code and Codex hook events.
-- **1-Click In-Island Permissions**: Suspends tool requests so users can click `[ Allow ]` or `[ Deny ]` right in the island.
-- **Rate Limit Tracking**: Tracks 5-hour and 7-day quota usage directly from Claude Code status line reports.
-
-### ⚡ Integrated One-Shot & Startup Takeover
-- **In-Island Presets**: Launch preset application groups directly from the expanded island (`apps` view).
-- **Startup Takeover Mode**: Full-screen workspace picker on sign-in with a prominent **`Just Enter ➔`** desktop bypass button (`Ctrl+Alt+T` or `--startup-mode`).
+- **Single-File Standalone Setup**: Self-contained installer compiled with native C# (`.NET`).
+- **Zero Admin Rights Required**: Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` without UAC prompts.
+- **Instant Shortcuts**: Creates Desktop and Start Menu shortcuts automatically.
 
 ---
 
-## 🛠️ Developer Setup
+## ✨ Features & Highlights
+
+### 🏝️ Dual Display Modes: Island & Notch
+- **Dynamic Island**: A floating, detached liquid glass OLED capsule that glides smoothly across your screen.
+- **Dynamic Notch**: A flush-to-top bezel notch inspired by modern MacBooks.
+- **1-Click Switching**: Toggle seamlessly between Island and Notch modes anytime using the header switcher button or the system tray.
+
+### 🎵 Real-Time Synced Lyrics & Dynamic Capsule Sizing
+- **Universal Media Detection**: Native integration with Liner (`com.hkamori.liner`), Spotify, Apple Music, and Windows GSMTC media sessions.
+- **Dynamic Per-Line Lyric Sizing**: The resting pill automatically springs between **200px and 420px** to perfectly hug each line of lyrics in real time—eliminating blank voids and text clipping.
+- **Slowed + Reverb Audio Sync Engine**: Automatically detects native `PlaybackRate` from Windows GSMTC playback info. Features manual speed chips (`Auto`, `0.8x`, `0.85x`, `0.9x`, `1.0x`) and sync nudge controls (`[-0.5s]`, `[+0.5s]`, `↺ Reset`) so lyrics stay locked in sync even on modified audio.
+- **6-Bar Fluid Equalizer**: Animated real-time audio visualization tinted with your album's accent colors.
+
+### 💿 Connected Downward Song Change Announcement
+- Whenever a new track begins playing, the Dynamic Island smoothly extends downward as **one single connected liquid glass container**.
+- **Square Profile Art**: Features rounded album artwork with an ambient color backlight radiating into the dark OLED glass.
+- **Typographic Hierarchy**:
+  - **Song Title** in bold white text.
+  - **Artist** in clean, reduced-opacity text.
+  - **Album** in subtle opacity text.
+  - **Live Duration Track**: Elapsed time, total song length, and a glowing gradient progress bar.
+- **Auto-Retract & Hover Pause**: Stays extended for 6 seconds before smoothly springing back up to the resting pill. Hovering pauses the countdown; clicking the banner expands directly to the full Media tab.
+
+### 🤖 Google Antigravity & AI Agent Monitor
+- **Multi-Project Stacking**: Real-time monitoring of concurrent agent sessions. Background projects stack neatly beneath each other or display side-by-side in the dedicated **Ai** tab.
+- **4-Segment Progress Bar**: Visual step indicator tracking task progress (`Analyze`, `Execute`, `Verify`, `Complete`) with green milestone fills and cyan activity pulses.
+- **1-Click Window Focus**: Focus the active AI IDE window directly from the island.
+
+### 📋 In-Memory Clipboard Manager
+- **Clipboard Tab**: Tracks your last 25 copied snippets in memory.
+- **Live Search Filter**: Rapidly filter clips by typing in the search bar.
+- **Pin to Top**: Keep important code snippets and notes pinned at the top.
+- **1-Click Copy**: Instant click-to-copy with visual `✓ Copied` feedback.
+
+### 📁 Bi-Directional Drop Shelf
+- **Desktop Drop Zone**: Drop files directly into the Island or Notch to keep them shelved on your desktop.
+- **Native Drag-Out**: Drag files **out** of the shelf directly into File Explorer, the desktop, code editors, or chat applications.
+- **MCP Shelf Integration**: AI agents can shelve deliverables and compiled installers straight into your desktop shelf using the `dynamic_island_shelf_file` tool.
+
+### 🎮 Smart Game Mode
+- **Auto-Hide during Games (Default ON)**: Detects full-screen games and Direct3D apps via `SHQueryUserNotificationState` and automatically hides the Island so it never obstructs gameplay.
+- **Keep Visible In-Game (Toggle OFF)**: Want to see your lyrics, clock, and agent progress while gaming? Disable Game Mode to keep the Island floating on top of your games.
+- **Global Hotkey**: Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd> anytime to toggle Game Mode on the fly with an instant visual notification.
+
+### 🔌 Model Context Protocol (MCP) Server
+Dynamic Windows includes a built-in MCP server (`src/mcp/dynamic-windows-mcp.js`) exposing tools for AI coding assistants:
+- `dynamic_island_notify`: Send live progress, phases, and status to the desktop island.
+- `dynamic_island_shelf_file`: Place generated deliverables and installers directly onto the user's shelf.
+- `dynamic_island_set_mode`: Switch between `"island"` and `"notch"`.
+- `dynamic_island_get_state`: Query live desktop state.
+
+---
+
+## ⌨️ Global Shortcuts
+
+| Shortcut | Action |
+| :--- | :--- |
+| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd> | Toggle Game Mode (Auto-hide vs Visible in games) |
+| <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>T</kbd> | Focus Dynamic Island & Untuck |
+| <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>H</kbd> | Tuck away to minimalist edge indicator |
+
+---
+
+## 🛠️ Developer Setup & Build
 
 ```bash
+# Clone repository
 git clone https://github.com/voiceline-diskrep/dynamic-windows.git
 cd dynamic-windows
+
+# Install dependencies
 npm install
+
+# Run automated tests
 npm test
+
+# Launch desktop app
 npm start
 ```
 
-To compile the single-file installer:
+### Building the Standalone Installer
+To stage the full distribution and compile the C# setup executable:
 ```bash
 npm run build:setup
 ```
+The compiled installer will be output to `installer_output/DynamicWindows-Setup-v1.2.5.exe`.
+
+---
+
+## 📄 License
+ISC License © 2026 voiceline-diskrep

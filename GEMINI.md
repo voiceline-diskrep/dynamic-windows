@@ -14,3 +14,4 @@ Whenever working on tasks in this workspace:
 3. **User Questions**: When waiting for answers via `ask_question`, call `dynamic_island_notify` with `status: "waiting"`, `phase: "Waiting for user input"`.
 4. **Task Completion**: Upon finishing your response, call `dynamic_island_notify` with `status: "done"`, `phase: "Task completed"`.
 5. **Drop Shelf**: When generating artifacts, installers, or files the user needs quick access to, call `dynamic_island_shelf_file` with the absolute path.
+6. **Continuous GitHub Sync**: Push all updates, fixes, and features directly to GitHub (`git push origin main`) every time changes are made, even for minor updates. In user-facing documentation and README, never describe the project as being based on TwoCode.
