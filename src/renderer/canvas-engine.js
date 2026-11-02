@@ -526,6 +526,26 @@ canvas.addEventListener('mousemove', (e) => {
     }
     if (!isHovered) {
       isHovered = true;
+      if (curP < 0.25 && hasActiveAgent()) {
+        const projs = getActiveProjects();
+        const active = projs.find(pr => ['running', 'thinking', 'waiting'].includes(pr.status)) || projs[0];
+        const cleanLabel = ((active && active.project) ? String(active.project) : 'Island').replace(/[\r\n\t\\]+/g, ' ').trim() || 'Island';
+        ctx.save();
+        ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+        const labelW = ctx.measureText(cleanLabel).width;
+        ctx.restore();
+        const aiW = Math.max(88, Math.min(130, Math.round(58 + labelW)));
+        if (mouseX <= curX + aiW + 8) {
+          currentView = 'agent';
+        } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
+          currentView = 'media';
+        } else {
+          currentView = 'home';
+        }
+      } else if (curP < 0.25) {
+        if (mediaState.isPlaying) currentView = 'media';
+        else currentView = 'home';
+      }
       targetProgress = 1.0;
       ipcRenderer.send('set-ignore-mouse-events', false);
       ipcRenderer.send('island-hover-start');
@@ -636,8 +656,28 @@ canvas.addEventListener('click', (e) => {
 
   // Click on resting badge or main body
   if (animProgress < 0.3) {
-    if (mediaState.isPlaying) currentView = 'media';
-    else if (hasActiveAgent()) currentView = 'agent';
+    if (hasActiveAgent()) {
+      const projs = getActiveProjects();
+      const active = projs.find(pr => ['running', 'thinking', 'waiting'].includes(pr.status)) || projs[0];
+      const cleanLabel = ((active && active.project) ? String(active.project) : 'Island').replace(/[\r\n\t\\]+/g, ' ').trim() || 'Island';
+      ctx.save();
+      ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+      const labelW = ctx.measureText(cleanLabel).width;
+      ctx.restore();
+      const aiW = Math.max(88, Math.min(130, Math.round(58 + labelW)));
+      const curX = (window.innerWidth - getTargetWidth(animProgress)) / 2;
+      if (cx <= curX + aiW + 8) {
+        currentView = 'agent';
+      } else if (mediaState.isPlaying) {
+        currentView = 'media';
+      } else {
+        currentView = 'home';
+      }
+    } else if (mediaState.isPlaying) {
+      currentView = 'media';
+    } else {
+      currentView = 'home';
+    }
     targetProgress = 1.0;
   }
 });
@@ -909,22 +949,10 @@ function getTargetRestingWidth() {
     return 180;
   }
 
-  if (hasActiveAgent()) {
-    const projs = getActiveProjects();
-    const active = projs.find(p => ['running', 'thinking', 'waiting'].includes(p.status)) || projs[0];
-    const rawLabel = (active && active.project) ? String(active.project) : 'Island';
-    const cleanLabel = rawLabel.replace(/[\r\n\t\\]+/g, ' ').trim() || 'Island';
+  const hasMedia = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
+  let mainPillW = UI.REST_W;
 
-    ctx.save();
-    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-    const labelW = ctx.measureText(cleanLabel).width;
-    ctx.restore();
-
-    const needed = 185 + labelW;
-    return Math.max(226, Math.min(340, Math.round(needed)));
-  }
-
-  if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
+  if (hasMedia) {
     const roll = getPillRollingLyric();
     let textToMeasure = '';
     if (roll && roll.text) {
@@ -936,22 +964,44 @@ function getTargetRestingWidth() {
         const w2 = ctx.measureText(roll.previous).width;
         ctx.restore();
         const maxW = Math.max(w1, w2);
-        return Math.max(200, Math.min(420, Math.round(144 + maxW)));
+        mainPillW = Math.max(220, Math.min(420, Math.round(144 + maxW)));
+      } else {
+        ctx.save();
+        ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+        const textW = ctx.measureText(textToMeasure).width;
+        ctx.restore();
+        mainPillW = Math.max(220, Math.min(420, Math.round(144 + textW)));
       }
     } else {
-      textToMeasure = mediaState.track.title.trim();
+      textToMeasure = (mediaState.track.title || '').trim();
+      ctx.save();
+      ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+      const textW = ctx.measureText(textToMeasure).width;
+      ctx.restore();
+      mainPillW = Math.max(220, Math.min(420, Math.round(144 + textW)));
     }
-
-    ctx.save();
-    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-    const textW = ctx.measureText(textToMeasure).width;
-    ctx.restore();
-
-    const needed = 144 + textW;
-    return Math.max(200, Math.min(420, Math.round(needed)));
+  } else {
+    mainPillW = UI.REST_W;
   }
 
-  return UI.REST_W;
+  if (hasActiveAgent()) {
+    const projs = getActiveProjects();
+    const active = projs.find(p => ['running', 'thinking', 'waiting'].includes(p.status)) || projs[0];
+    const rawLabel = (active && active.project) ? String(active.project) : 'Island';
+    const cleanLabel = rawLabel.replace(/[\r\n\t\\]+/g, ' ').trim() || 'Island';
+
+    ctx.save();
+    ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+    const labelW = ctx.measureText(cleanLabel).width;
+    ctx.restore();
+
+    const aiPillW = Math.max(88, Math.min(130, Math.round(58 + labelW)));
+    const gap = 8;
+    const totalW = aiPillW + gap + mainPillW;
+    return Math.max(280, Math.min(580, totalW));
+  }
+
+  return mainPillW;
 }
 
 function getRestingWidth() {
@@ -1065,49 +1115,56 @@ function render() {
   const radius = UI.COMPACT_RADIUS + (UI.EXPANDED_RADIUS - UI.COMPACT_RADIUS) * p;
   const radii = isNotch ? [0, 0, radius, radius] : radius;
 
-  // 1. Ambient Drop Shadow
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-  ctx.shadowBlur = 18 + 14 * p;
-  ctx.shadowOffsetY = 6 + 6 * p;
+  // Split resting pill check: when AI is active at rest, draw separate left/right capsules
+  const isSplitResting = (p < 0.28 && hasActiveAgent() && songPopupProgress <= 0.05);
+  const unifiedAlpha = isSplitResting ? (p / 0.28) : 1.0;
 
-  // 2. Liquid Glass OLED Black Surface
-  const grad = ctx.createLinearGradient(x, y, x, y + h);
-  grad.addColorStop(0.0, '#101014');
-  grad.addColorStop(0.5, '#08080a');
-  grad.addColorStop(1.0, '#020204');
-
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radii);
-  ctx.fillStyle = grad;
-  ctx.fill();
-  ctx.restore();
-
-  // 2b. TwoCode Album Cover Ambient Tint Glow when on Media page
-  const wantTint = (p > 0.35 && currentView === 'media' && mediaState.track && mediaState.track.title !== 'No media playing') ? 1 : 0;
-  tintK += (wantTint - tintK) * 0.14;
-  if (tintK > 0.01) {
+  if (unifiedAlpha > 0.02) {
     ctx.save();
+    ctx.globalAlpha = unifiedAlpha;
+
+    // 1. Ambient Drop Shadow
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    ctx.shadowBlur = 18 + 14 * p;
+    ctx.shadowOffsetY = 6 + 6 * p;
+
+    // 2. Liquid Glass OLED Black Surface
+    const grad = ctx.createLinearGradient(x, y, x, y + h);
+    grad.addColorStop(0.0, '#101014');
+    grad.addColorStop(0.5, '#08080a');
+    grad.addColorStop(1.0, '#020204');
+
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, radii);
-    ctx.clip();
-    const tintGrad = ctx.createLinearGradient(x, y + h, x, y);
-    tintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.42 * tintK));
-    tintGrad.addColorStop(0.55, colorWithAlpha(albumAccentColor, 0.15 * tintK));
-    tintGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = tintGrad;
-    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // 2b. Album Cover Ambient Tint Glow when on Media page
+    const wantTint = (p > 0.35 && currentView === 'media' && mediaState.track && mediaState.track.title !== 'No media playing') ? 1 : 0;
+    tintK += (wantTint - tintK) * 0.14;
+    if (tintK > 0.01) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, radii);
+      ctx.clip();
+      const tintGrad = ctx.createLinearGradient(x, y + h, x, y);
+      tintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.42 * tintK));
+      tintGrad.addColorStop(0.55, colorWithAlpha(albumAccentColor, 0.15 * tintK));
+      tintGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = tintGrad;
+      ctx.fillRect(x, y, w, h);
+      ctx.restore();
+    }
+
+    // 3. Specular Border Rim (1px Glass Edge)
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, radii);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
+    ctx.stroke();
+
     ctx.restore();
   }
-
-  // 3. Specular Border Rim (1px Glass Edge)
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radii);
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
-  ctx.stroke();
-  ctx.restore();
 
   // 4. Render Views
   if (p < 0.28) {
@@ -1354,106 +1411,190 @@ function renderRestingPill(x, y, w, h, alpha) {
   const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
   if (hasActiveAgent()) {
+    // Dual Split Resting Pill (Apple-style AI Activity Capsule + Main Activity Pill)
     const projs = getActiveProjects();
-    const activeProjs = projs.filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
-    const listToRender = activeProjs.length > 0 ? activeProjs : [projs[0]];
-    const maxStack = Math.min(4, listToRender.length);
+    const active = projs.find(p => ['running', 'thinking', 'waiting'].includes(p.status)) || projs[0];
+    const rawLabel = (active && active.project) ? String(active.project) : 'Island';
+    const cleanLabel = rawLabel.replace(/[\r\n\t\\]+/g, ' ').trim() || 'Island';
 
-    for (let row = 0; row < maxStack; row++) {
-      const proj = listToRender[row];
-      const rowH = row === 0 ? UI.ACTIVE_BAR_H : 32;
-      const rowGap = 5;
-      const rowY = row === 0 ? y : (y + UI.ACTIVE_BAR_H + (row - 1) * (32 + rowGap) + rowGap);
-      const rowX = x;
-      const rowW = w;
-      const rowRadius = UI.COMPACT_RADIUS;
+    ctx.save();
+    ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+    const labelW = ctx.measureText(cleanLabel).width;
+    ctx.restore();
 
-      // Draw secondary stacked pill background and rim if row > 0
-      if (row > 0) {
+    const aiPillW = Math.max(88, Math.min(130, Math.round(58 + labelW)));
+    const gap = 8;
+    const mainPillW = Math.max(120, w - (aiPillW + gap));
+
+    const leftPillX = x;
+    const mainPillX = x + aiPillW + gap;
+    const pillH = h;
+    const pillRadius = UI.COMPACT_RADIUS;
+
+    // --- 1. LEFT AI CAPSULE [ (A) Island 🟢 ] ---
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 4;
+    ctx.beginPath();
+    ctx.roundRect(leftPillX, y, aiPillW, pillH, pillRadius);
+    const aiGrad = ctx.createLinearGradient(leftPillX, y, leftPillX, y + pillH);
+    aiGrad.addColorStop(0.0, '#101014');
+    aiGrad.addColorStop(0.5, '#08080a');
+    aiGrad.addColorStop(1.0, '#020204');
+    ctx.fillStyle = aiGrad;
+    ctx.fill();
+    ctx.restore();
+
+    // Specular glass rim
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(leftPillX, y, aiPillW, pillH, pillRadius);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.stroke();
+    ctx.restore();
+
+    // Antigravity Logo with rounded icon style
+    const logoSize = 18;
+    const logoX = leftPillX + 8;
+    const logoY = y + (pillH - logoSize) / 2;
+    if (antigravityLogo.complete && antigravityLogo.naturalWidth > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(logoX, logoY, logoSize, logoSize, 4.5);
+      ctx.clip();
+      ctx.drawImage(antigravityLogo, logoX, logoY, logoSize, logoSize);
+      ctx.restore();
+    }
+
+    // Project Name Label
+    const textX = logoX + logoSize + 6;
+    ctx.save();
+    ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#f4f4f5';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const maxLabelW = (leftPillX + aiPillW - 22) - textX;
+    ctx.fillText(truncateToWidth(cleanLabel, Math.max(20, maxLabelW), ctx.font), textX, y + pillH / 2);
+    ctx.restore();
+
+    // Traffic light indicator dot
+    const dotX = leftPillX + aiPillW - 12;
+    const dotY = y + pillH / 2;
+    renderTrafficLightDot(dotX, dotY, active ? active.status : 'running');
+
+    // Interactive button target for AI capsule
+    interactiveButtons.push({ id: 'nav_agent', x: leftPillX, y: y, w: aiPillW, h: pillH });
+
+    // --- 2. RIGHT MAIN CAPSULE [ Clock | Media or Status ] ---
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 4;
+    ctx.beginPath();
+    ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
+    const mainGrad = ctx.createLinearGradient(mainPillX, y, mainPillX, y + pillH);
+    mainGrad.addColorStop(0.0, '#101014');
+    mainGrad.addColorStop(0.5, '#08080a');
+    mainGrad.addColorStop(1.0, '#020204');
+    ctx.fillStyle = mainGrad;
+    ctx.fill();
+    ctx.restore();
+
+    // Specular glass rim
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.stroke();
+    ctx.restore();
+
+    // Digital clock on the left of main pill
+    ctx.save();
+    ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#e4e4e7';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(timeStr, mainPillX + 12, y + pillH / 2);
+    const clockW = ctx.measureText(timeStr).width;
+    ctx.restore();
+
+    const hasMedia = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
+    if (hasMedia) {
+      // Album Art thumbnail
+      const artSize = 20;
+      const artX = mainPillX + 12 + clockW + 8;
+      const artY = y + (pillH - artSize) / 2;
+      if (albumImage && albumImage.complete && albumImage.naturalWidth > 0) {
         ctx.save();
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-        ctx.shadowBlur = 12;
-        ctx.shadowOffsetY = 4;
-
-        const rowGrad = ctx.createLinearGradient(rowX, rowY, rowX, rowY + rowH);
-        rowGrad.addColorStop(0.0, '#101014');
-        rowGrad.addColorStop(0.5, '#08080a');
-        rowGrad.addColorStop(1.0, '#020204');
-
         ctx.beginPath();
-        ctx.roundRect(rowX, rowY, rowW, rowH, rowRadius);
-        ctx.fillStyle = rowGrad;
-        ctx.fill();
+        ctx.roundRect(artX, artY, artSize, artSize, 4.5);
+        ctx.clip();
+        ctx.drawImage(albumImage, artX, artY, artSize, artSize);
         ctx.restore();
-
-        // 1px Glass edge
+      } else {
         ctx.save();
-        ctx.beginPath();
-        ctx.roundRect(rowX, rowY, rowW, rowH, rowRadius);
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-        ctx.stroke();
+        ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = albumAccentColor || '#38bdf8';
+        ctx.fillText('♪', artX + 4, y + pillH / 2);
         ctx.restore();
       }
 
-      // 1. Digital clock (only on top row 0)
-      if (row === 0) {
-        ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
-        ctx.fillStyle = '#e4e4e7';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(timeStr, rowX + 12, rowY + rowH / 2);
-      }
+      // 6-Bar Animated Equalizer on far right
+      const eqW = 22;
+      const eqX = mainPillX + mainPillW - eqW - 12;
+      drawEqualizer('pill', eqX, y + pillH / 2, eqW, 13, albumAccentColor || '#ec4899', 6);
 
-      // 2. Antigravity official logo
-      const logoX = row === 0 ? (rowX + 64) : (rowX + 16);
-      if (antigravityLogo.complete && antigravityLogo.naturalWidth > 0) {
-        ctx.drawImage(antigravityLogo, logoX, rowY + (rowH - 16) / 2, 16, 16);
-      }
+      // Rolling Lyric or Song Title
+      const textStartX = artX + artSize + 8;
+      const maxTextW = Math.max(30, eqX - 10 - textStartX);
+      const roll = getPillRollingLyric();
 
-      // 3. Project label
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(textStartX, y + 2, maxTextW, pillH - 4);
+      ctx.clip();
       ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = '#38bdf8';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      const rawLabel = (proj && proj.project) ? String(proj.project) : 'Island';
-      const cleanLabel = rawLabel.replace(/[\r\n\t\\]+/g, ' ').trim() || 'Island';
-      const maxLabelW = Math.max(30, (rowX + rowW - 82) - (logoX + 20));
-      const truncLabel = truncateToWidth(cleanLabel, maxLabelW, ctx.font);
-      ctx.fillText(truncLabel, logoX + 20, rowY + rowH / 2);
 
-      // 4. Mini 4-Segment Progress Bar in this row
-      const prog = getAntigravityProgress(proj);
-      const miniSegW = 10;
-      const miniSegH = 3;
-      const miniGap = 3;
-      const miniStartX = rowX + rowW - 76;
-      const miniY = rowY + (rowH - miniSegH) / 2;
-
-      for (let i = 0; i < 4; i++) {
-        const sx = miniStartX + i * (miniSegW + miniGap);
-        ctx.beginPath();
-        ctx.roundRect(sx, miniY, miniSegW, miniSegH, 1.5);
-        if (prog.segments[i]) {
-          ctx.fillStyle = '#22c55e'; // Finished segment filled with vibrant green
-        } else if (prog.activeSegment === i) {
-          ctx.fillStyle = '#38bdf8'; // Active segment pulsing cyan
-        } else {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+      if (roll) {
+        const cy = y + pillH / 2;
+        const dist = 13;
+        const prevText = roll.previous || roll.prev;
+        if (prevText && roll.k < 1) {
+          ctx.globalAlpha = alpha * (1 - roll.k);
+          ctx.fillStyle = '#a1a1aa';
+          ctx.fillText(truncateToWidth(prevText, maxTextW, ctx.font), textStartX, cy - roll.k * dist);
         }
-        ctx.fill();
+        ctx.globalAlpha = alpha * roll.k;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(truncateToWidth(roll.text, maxTextW, ctx.font), textStartX, cy + (1 - roll.k) * dist);
+      } else {
+        const fallbackText = (mediaState.track.title || '').trim();
+        ctx.fillStyle = '#f4f4f5';
+        ctx.fillText(truncateToWidth(fallbackText, maxTextW, ctx.font), textStartX, y + pillH / 2);
       }
+      ctx.restore();
 
-      // 5. Traffic light indicator dot for this row
-      const dotX = rowX + rowW - 14;
-      const dotY = rowY + rowH / 2;
-      renderTrafficLightDot(dotX, dotY, proj ? proj.status : 'running');
-
-      // Clickable target to open Antigravity view
-      interactiveButtons.push({ id: 'nav_agent', x: rowX, y: rowY, w: rowW, h: rowH });
+      interactiveButtons.push({ id: 'nav_media', x: mainPillX, y: y, w: mainPillW, h: pillH });
+    } else {
+      if (mainPillW >= 150) {
+        const dateStr = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+        ctx.save();
+        ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = '#a1a1aa';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(dateStr, mainPillX + mainPillW - 12, y + pillH / 2);
+        ctx.restore();
+      }
+      interactiveButtons.push({ id: 'nav_home', x: mainPillX, y: y, w: mainPillW, h: pillH });
     }
   } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
-    // TwoCode Media Pill Layout: Clock + Rounded Album Art + Rolling Lyric / Song Title + 6-Bar Equalizer
+    // Single Media Pill Layout: Clock + Rounded Album Art + Rolling Lyric / Song Title + 6-Bar Equalizer
     ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#e4e4e7';
     ctx.textAlign = 'left';
@@ -1468,20 +1609,20 @@ function renderRestingPill(x, y, w, h, alpha) {
     if (albumImage && albumImage.complete && albumImage.naturalWidth > 0) {
       ctx.save();
       ctx.beginPath();
-      ctx.roundRect(artX, artY, artSize, artSize, 5);
+      ctx.roundRect(artX, artY, artSize, artSize, 4.5);
       ctx.clip();
       ctx.drawImage(albumImage, artX, artY, artSize, artSize);
       ctx.restore();
     } else {
       ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = albumAccentColor;
-      ctx.fillText('🎵', artX + 2, y + h / 2);
+      ctx.fillStyle = albumAccentColor || '#38bdf8';
+      ctx.fillText('♪', artX + 4, y + h / 2);
     }
 
     // 6-Bar Animated Equalizer on far right
     const eqW = 24;
     const eqX = x + w - eqW - 12;
-    drawEqualizer('pill', eqX, y + h / 2, eqW, 13, albumAccentColor, 6);
+    drawEqualizer('pill', eqX, y + h / 2, eqW, 13, albumAccentColor || '#ec4899', 6);
 
     // Center Rolling Lyric or Song Title
     const textStartX = artX + artSize + 8;
@@ -1509,7 +1650,7 @@ function renderRestingPill(x, y, w, h, alpha) {
       ctx.fillStyle = '#ffffff';
       ctx.fillText(truncateToWidth(roll.text, maxTextW, ctx.font), textStartX, cy + (1 - roll.k) * dist);
     } else {
-      const fallbackText = mediaState.track.title.trim();
+      const fallbackText = (mediaState.track.title || '').trim();
       ctx.fillStyle = '#f4f4f5';
       ctx.fillText(truncateToWidth(fallbackText, maxTextW, ctx.font), textStartX, y + h / 2);
     }
