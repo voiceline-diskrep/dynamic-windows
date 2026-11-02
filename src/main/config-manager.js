@@ -15,7 +15,7 @@ const CONFIG_DIR = path.join(
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.2.7',
+  version: '1.2.8',
   animationSpeed: 1.0,
   displayMode: 'island', // 'island' | 'notch'
   gameMode: true, // Auto-hide in full-screen games (default on)

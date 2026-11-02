@@ -12,7 +12,7 @@ const UI = {
   ACTIVE_REST_W: 226,
   ACTIVE_BAR_H: 36,
 
-  EXPANDED_W: 520,
+  EXPANDED_W: 550,
   HOME_H: 154,
   AGENT_H: 196,
   MEDIA_H: 220,
@@ -1811,27 +1811,98 @@ function renderTopNav(x, y, w) {
   interactiveButtons.push({ id: 'toggle_display_mode', x: modeX, y: topY, w: modeW, h: modeH });
 }
 
+function renderCalendarWidget(calX, calY, calW, calH) {
+  const now = new Date();
+  const curYear = now.getFullYear();
+  const curMonth = now.getMonth();
+  const todayDate = now.getDate();
+  const monthName = now.toLocaleDateString([], { month: 'short' }).toUpperCase();
+
+  // 1. Card Container & Subtle Glass Rim
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(calX, calY, calW, calH, 12);
+  ctx.fillStyle = 'rgba(24, 24, 32, 0.7)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  // 2. Month Header (e.g. "NOV")
+  ctx.font = '700 12px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(monthName, calX + 13, calY + 11);
+
+  // 3. Days Grid Calculation
+  const daysInMonth = new Date(curYear, curMonth + 1, 0).getDate();
+  const firstDayIndex = new Date(curYear, curMonth, 1).getDay(); // 0 = Sunday
+
+  const gridStartX = calX + 13;
+  const gridStartY = calY + 31;
+  const colStep = (calW - 26) / 7;
+  const rowStep = (calH - 35) / 5.2;
+
+  ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const cellIdx = (d - 1) + firstDayIndex;
+    const col = cellIdx % 7;
+    const row = Math.floor(cellIdx / 7);
+
+    const cx = gridStartX + col * colStep + colStep / 2;
+    const cy = gridStartY + row * rowStep + rowStep / 2;
+
+    if (d <= todayDate) {
+      // Blue circle highlight for elapsed days and today (matching reference image)
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
+      ctx.fillStyle = (d === todayDate) ? '#2563eb' : '#1d4ed8';
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(d), cx, cy);
+    } else {
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText(String(d), cx, cy);
+    }
+  }
+
+  ctx.restore();
+}
+
 function renderHomeView(x, y, w, h) {
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
   const dateStr = now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
-  // Digital Clock on Left (Clean typography, 14px below top tabs)
-  ctx.font = '700 30px "Segoe UI Variable Display", Inter, sans-serif';
+  // 1. Digital Clock on Left (Clean typography, aligned horizontally with cards)
+  const clockX = x + 20;
+  ctx.font = '700 29px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(timeStr, x + 24, y + 48);
+  ctx.fillText(timeStr, clockX, y + 46);
 
   ctx.font = '500 12px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = '#94a3b8';
-  ctx.fillText(dateStr, x + 24, y + 86);
+  ctx.fillText(dateStr, clockX, y + 84);
 
-  // Antigravity Live Activity Card on Right
-  const cardX = x + w - 280;
-  const cardY = y + 42;
-  const cardW = 256;
-  const cardH = 96;
+  // 2. Middle Mini Calendar Widget Card
+  const calX = x + 162;
+  const calY = y + 40;
+  const calW = 146;
+  const calH = 98;
+  renderCalendarWidget(calX, calY, calW, calH);
+
+  // 3. Antigravity Live Activity Card on Right
+  const cardX = calX + calW + 12;
+  const cardY = y + 40;
+  const cardW = (x + w - 20) - cardX;
+  const cardH = 98;
 
   ctx.beginPath();
   ctx.roundRect(cardX, cardY, cardW, cardH, 12);
@@ -1843,27 +1914,27 @@ function renderHomeView(x, y, w, h) {
 
   // Logo + Status
   if (antigravityLogo.complete && antigravityLogo.naturalWidth > 0) {
-    ctx.drawImage(antigravityLogo, cardX + 12, cardY + 12, 18, 18);
+    ctx.drawImage(antigravityLogo, cardX + 10, cardY + 11, 18, 18);
   }
 
-  ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#38bdf8';
   ctx.textAlign = 'left';
-  ctx.fillText('Google Antigravity', cardX + 36, cardY + 22);
+  ctx.fillText('Google Antigravity', cardX + 32, cardY + 20);
 
-  renderTrafficLightDot(cardX + cardW - 16, cardY + 22, antigravityState.status);
+  renderTrafficLightDot(cardX + cardW - 14, cardY + 20, antigravityState.status);
 
   // 4-Segment Progress Bar inside Home Card
   const prog = getAntigravityProgress(antigravityState);
-  const barW = cardW - 24;
+  const barW = cardW - 20;
   const segW = (barW - 3 * 4) / 4;
-  const segH = 4;
-  const segY = cardY + 38;
+  const segH = 3.5;
+  const segY = cardY + 36;
 
   for (let i = 0; i < 4; i++) {
-    const sx = cardX + 12 + i * (segW + 4);
+    const sx = cardX + 10 + i * (segW + 4);
     ctx.beginPath();
-    ctx.roundRect(sx, segY, segW, segH, 2);
+    ctx.roundRect(sx, segY, segW, segH, 1.75);
     if (prog.segments[i]) {
       ctx.fillStyle = '#22c55e'; // Finished segment filled with green
     } else if (prog.activeSegment === i) {
@@ -1875,25 +1946,25 @@ function renderHomeView(x, y, w, h) {
   }
 
   // Phase text
-  ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.font = '400 10px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = '#e2e8f0';
   const phaseText = antigravityState.phase || 'Agent Ready';
-  ctx.fillText(phaseText.length > 28 ? phaseText.slice(0, 28) + '...' : phaseText, cardX + 12, cardY + 58);
+  ctx.fillText(phaseText.length > 24 ? phaseText.slice(0, 24) + '...' : phaseText, cardX + 10, cardY + 54);
 
   // Active tool badge
   if (antigravityState.tool) {
-    ctx.font = '500 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.font = '500 9px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#38bdf8';
     const toolText = `⚙ ${antigravityState.tool}`;
-    ctx.fillText(toolText.length > 18 ? toolText.slice(0, 18) + '...' : toolText, cardX + 12, cardY + 76);
+    ctx.fillText(toolText.length > 18 ? toolText.slice(0, 18) + '...' : toolText, cardX + 10, cardY + 70);
   }
 
   // Jump Button (Open Antigravity)
   const isRunning = antigravityState.status !== 'not_running';
-  const btnJumpW = 68;
+  const btnJumpW = 62;
   const btnJumpH = 20;
   const btnJumpX = cardX + cardW - btnJumpW - 10;
-  const btnJumpY = cardY + cardH - btnJumpH - 10;
+  const btnJumpY = cardY + cardH - btnJumpH - 9;
 
   ctx.beginPath();
   ctx.roundRect(btnJumpX, btnJumpY, btnJumpW, btnJumpH, 6);
@@ -1908,6 +1979,7 @@ function renderHomeView(x, y, w, h) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(isRunning ? 'Open ➔' : 'Ready', btnJumpX + btnJumpW / 2, btnJumpY + btnJumpH / 2);
+
   if (isRunning) {
     interactiveButtons.push({ id: 'jump_antigravity', x: btnJumpX, y: btnJumpY, w: btnJumpW, h: btnJumpH });
   }
