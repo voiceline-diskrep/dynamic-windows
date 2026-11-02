@@ -2,7 +2,6 @@
 
 A polished Windows desktop application inspired by Apple's Dynamic Island and TwoCode, combining:
 1. **Windows Dynamic Island (Electron + HTML5 Canvas):** A 144Hz hardware-accelerated liquid glass desktop interface with deep Google Antigravity integration, live agent statusline, Spotify media controls, and Drop Zone shelf.
-2. **One-Shot:** A smart application launcher with presets, Start Menu discovery, and Startup Takeover mode.
 
 [![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.5.exe)
 
@@ -12,7 +11,6 @@ A polished Windows desktop application inspired by Apple's Dynamic Island and Tw
 
 👉 **[Download DynamicWindows-Setup-v1.0.5.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.0.5.exe)**
 
-- **TwoCode-Style Single-File Setup**: Embedded installer package compiled with native C# (`.NET`).
 - Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` with **zero admin rights / UAC prompts required**.
 - Automatically creates Desktop and Start Menu shortcuts.
 
