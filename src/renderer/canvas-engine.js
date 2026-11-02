@@ -1,3 +1,24 @@
+// Global unhandled error logging
+window.addEventListener('error', (e) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'renderer_error.log'), `[${new Date().toISOString()}] ${e.message} at ${e.filename}:${e.lineno}:\n${e.error ? e.error.stack : ''}\n`);
+  } catch (err) {}
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'renderer_error.log'), `[${new Date().toISOString()}] unhandled rejection: ${e.reason}\n`);
+  } catch (err) {}
+});
+
 'use strict';
 
 const { ipcRenderer, webUtils } = require('electron');
@@ -856,7 +877,6 @@ try {
     }
   }).catch(() => {});
 } catch (e) {}
-});
 
 ipcRenderer.on('permission-prompt', (event, prompt) => {
   pendingPrompt = prompt;

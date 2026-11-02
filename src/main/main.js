@@ -122,12 +122,20 @@ try {
 } catch (e) {}
 
 if (!gotTheLock) {
-  app.quit();
+  try {
+    app.quit();
+  } catch (e) {}
+  process.exit(0);
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
       mainWindow.focus();
+      mainWindow.webContents.send('untuck-island');
+    } else {
+      createIslandWindow();
     }
   });
 }
@@ -185,6 +193,7 @@ function createIslandWindow() {
       fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] mainWindow closed\n`);
     } catch (err) {}
     mainWindow = null;
+    app.exit(0);
   });
 
   // Prevent accidental close via Ctrl+W / Alt+F4 unless quitting
@@ -638,7 +647,7 @@ app.whenReady().then(() => {
   // Periodically stream media & lyrics updates to Island
   setInterval(() => {
     sendMediaState();
-  }, 1500);
+  }, 1500).unref?.();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
