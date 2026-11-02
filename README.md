@@ -1,4 +1,4 @@
-# 🏝️ Dynamic Windows + One-Shot (v1.0.5)
+# 🏝️ Dynamic Windows (v1.0.5)
 
 A polished Windows desktop application inspired by Apple's Dynamic Island and TwoCode, combining:
 1. **Windows Dynamic Island (Electron + HTML5 Canvas):** A 144Hz hardware-accelerated liquid glass desktop interface with deep Google Antigravity integration, live agent statusline, Spotify media controls, and Drop Zone shelf.
