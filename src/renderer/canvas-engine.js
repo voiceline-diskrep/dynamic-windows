@@ -29,6 +29,7 @@ const UI = {
 // State
 let displayMode = 'island'; // 'island' | 'notch'
 let animProgress = 0.0; // 0.0 = resting, 1.0 = expanded
+let animSpeedMultiplier = 1.0; // User-controlled opening/closing speed multiplier
 let targetProgress = 0.0;
 let isHovered = false;
 let currentView = 'home'; // 'home' | 'agent' | 'media' | 'dropzone' | 'clipboard' | 'prompt'
@@ -801,6 +802,21 @@ ipcRenderer.on('clipboard-update', (event, list) => {
 ipcRenderer.on('display-mode', (event, mode) => {
   displayMode = mode || 'island';
 });
+ipcRenderer.on('animation-speed', (event, speed) => {
+  const val = parseFloat(speed);
+  if (!isNaN(val) && val >= 0.2 && val <= 5.0) {
+    animSpeedMultiplier = val;
+  }
+});
+try {
+  ipcRenderer.invoke('get-app-settings').then(res => {
+    if (res && res.config && res.config.animationSpeed) {
+      const val = parseFloat(res.config.animationSpeed);
+      if (!isNaN(val) && val >= 0.2 && val <= 5.0) animSpeedMultiplier = val;
+    }
+  }).catch(() => {});
+} catch (e) {}
+});
 
 ipcRenderer.on('permission-prompt', (event, prompt) => {
   pendingPrompt = prompt;
@@ -823,12 +839,12 @@ function animate(now) {
   lastTime = now;
 
   // Fluid Spring / Lerp towards targetProgress
-  const speed = targetProgress > animProgress ? 8.5 : 9.5;
+  const speed = (targetProgress > animProgress ? 8.5 : 9.5) * animSpeedMultiplier;
   animProgress += (targetProgress - animProgress) * Math.min(1.0, dt * speed);
 
   // Smooth Dynamic Spring transition for resting pill width
   const targetRestW = getTargetRestingWidth();
-  const restSpeed = targetRestW > currentRestingWidth ? 8.5 : 7.0;
+  const restSpeed = (targetRestW > currentRestingWidth ? 8.5 : 7.0) * animSpeedMultiplier;
   currentRestingWidth += (targetRestW - currentRestingWidth) * Math.min(1.0, dt * restSpeed);
 
   // Song Announcement Downward Popup Spring & Hover Pause
@@ -838,7 +854,7 @@ function animate(now) {
   }
   const isSongPopupActive = songPopupActiveUntil > now && animProgress < 0.2;
   const targetSongPopupProgress = isSongPopupActive ? 1.0 : 0.0;
-  const songSpringSpeed = targetSongPopupProgress > songPopupProgress ? 9.5 : 7.0;
+  const songSpringSpeed = (targetSongPopupProgress > songPopupProgress ? 9.5 : 7.0) * animSpeedMultiplier;
   songPopupProgress += (targetSongPopupProgress - songPopupProgress) * Math.min(1.0, dt * songSpringSpeed);
 
   // Send window size updates to Electron Main

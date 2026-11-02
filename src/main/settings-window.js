@@ -71,6 +71,13 @@ function registerSettingsIPC(dropZoneInstance) {
         }
       });
     }
+    if (newSettings && 'animationSpeed' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('animation-speed', newSettings.animationSpeed);
+        }
+      });
+    }
     if (newSettings && 'gameMode' in newSettings) {
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {

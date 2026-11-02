@@ -361,6 +361,7 @@ function createIslandWindow() {
     if (['island', 'notch'].includes(mode)) {
       configManager.set('displayMode', mode);
       sendDisplayMode();
+    sendAnimationSpeed();
     }
   });
 
@@ -441,6 +442,7 @@ function createIslandWindow() {
     sendMediaState();
     sendDropZoneFiles();
     sendDisplayMode();
+    sendAnimationSpeed();
   });
 }
 
@@ -459,6 +461,13 @@ function sendMediaState() {
 function sendDropZoneFiles() {
   if (mainWindow && !mainWindow.isDestroyed() && dropZone) {
     mainWindow.webContents.send('dropzone-files', dropZone.getFiles());
+  }
+}
+
+function sendAnimationSpeed() {
+  const speed = configManager.get('animationSpeed') || 1.0;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('animation-speed', speed);
   }
 }
 
@@ -608,6 +617,7 @@ app.whenReady().then(() => {
     if (data.mode && ['island', 'notch'].includes(data.mode)) {
       configManager.set('displayMode', data.mode);
       sendDisplayMode();
+    sendAnimationSpeed();
     }
   });
 

@@ -73,9 +73,59 @@
     }
 
     .nav-icon {
-      font-size: 15px;
       width: 18px;
-      text-align: center;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .nav-icon svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: stroke 0.15s ease;
+    }
+
+    .brand-logo-badge {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      background: #18181b;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .btn-speed {
+      padding: 6px 12px;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: #d4d4d8;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-speed:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-speed.active {
+      background: #2563eb;
+      color: #ffffff;
+      border-color: #3b82f6;
+      font-weight: 600;
     }
 
     /* Main Content Area */
@@ -300,27 +350,50 @@
   <!-- Sidebar -->
   <div class="sidebar">
     <div class="brand-header">
-      <img src="../../app_icon.png" alt="Icon">
+      <div class="brand-logo-badge">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="#ffffff" stroke-width="2.2" fill="none">
+          <rect x="2" y="6" width="20" height="12" rx="6"></rect>
+          <circle cx="8" cy="12" r="2.2" fill="#ffffff"></circle>
+        </svg>
+      </div>
       <div class="brand-title">Dynamic Windows</div>
     </div>
 
     <div class="nav-item active" data-page="general">
-      <span class="nav-icon">⚙️</span> General
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      </span>
+      <span>General</span>
     </div>
     <div class="nav-item" data-page="antigravity">
-      <span class="nav-icon">🤖</span> Google Antigravity
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2L14.4 8.6L21 11L14.4 13.4L12 20L9.6 13.4L3 11L9.6 8.6L12 2Z"></path><path d="M19 19L20 22L21 19L24 18L21 17L20 14L19 17L16 18L19 19Z" stroke-width="1.5"></path></svg>
+      </span>
+      <span>AI & Antigravity</span>
     </div>
     <div class="nav-item" data-page="media">
-      <span class="nav-icon">🎵</span> Media & Lyrics
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+      </span>
+      <span>Media & Lyrics</span>
     </div>
     <div class="nav-item" data-page="dropzone">
-      <span class="nav-icon">📁</span> Drop Zone
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+      </span>
+      <span>Drop Shelf</span>
     </div>
     <div class="nav-item" data-page="updates">
-      <span class="nav-icon">🔄</span> Updates
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+      </span>
+      <span>Updates</span>
     </div>
     <div class="nav-item" data-page="about">
-      <span class="nav-icon">ℹ️</span> About
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+      </span>
+      <span>About</span>
     </div>
   </div>
 
@@ -340,8 +413,38 @@
             <span class="setting-desc">Switch between floating Dynamic Island (detached pill) and flush-to-top Dynamic Notch (MacBook style).</span>
           </div>
           <div style="display: flex; gap: 8px;">
-            <button class="btn" id="btn-mode-island">🏝️ Dynamic Island</button>
-            <button class="btn" id="btn-mode-notch">💻 Dynamic Notch</button>
+            <button class="btn" id="btn-mode-island">
+              <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" style="vertical-align: middle; margin-right: 5px;"><rect x="3" y="8" width="18" height="8" rx="4"></rect></svg>Dynamic Island
+            </button>
+            <button class="btn" id="btn-mode-notch">
+              <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" style="vertical-align: middle; margin-right: 5px;"><path d="M4 4h16v16H4z" stroke-width="1.5"></path><path d="M8 4v3h8V4"></path></svg>Dynamic Notch
+            </button>
+          </div>
+        </div>
+      </div>
+
+            <div class="card">
+        <div class="card-header">Animation & Transition Speed</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Opening & Closing Speed</span>
+            <span class="setting-desc">Control how fast the Island expands, contracts, and morphs. Adjust slider or click a preset below.</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <input type="range" id="setting-animationSpeed" min="0.4" max="2.5" step="0.1" value="1.0" style="width: 140px; accent-color: #2563eb; cursor: pointer;">
+            <span id="speed-value-badge" style="font-size: 13px; font-weight: 700; color: #ffffff; background: rgba(37,99,235,0.25); border: 1px solid rgba(37,99,235,0.5); padding: 3px 8px; border-radius: 6px; width: 44px; text-align: center;">1.0x</span>
+          </div>
+        </div>
+        <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
+          <div class="setting-info">
+            <span class="setting-label">Speed Presets</span>
+            <span class="setting-desc">Quickly apply spring & lerp velocity dynamics.</span>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button class="btn-speed" data-speed="0.6">Cinematic (0.6x)</button>
+            <button class="btn-speed" data-speed="1.0">Default (1.0x)</button>
+            <button class="btn-speed" data-speed="1.5">Snappy (1.5x)</button>
+            <button class="btn-speed" data-speed="2.2">Instant (2.2x)</button>
           </div>
         </div>
       </div>
@@ -593,6 +696,14 @@
       // Display Mode
       updateDisplayModeButtons(cfg.displayMode || 'island');
 
+      // Animation Speed
+      const curSpeed = typeof cfg.animationSpeed === 'number' ? cfg.animationSpeed : 1.0;
+      const speedSlider = document.getElementById('setting-animationSpeed');
+      const speedBadge = document.getElementById('speed-value-badge');
+      if (speedSlider) speedSlider.value = curSpeed.toFixed(1);
+      if (speedBadge) speedBadge.textContent = curSpeed.toFixed(1) + 'x';
+      updateSpeedPresetButtons(curSpeed);
+
       // General
       document.getElementById('setting-startup').checked = !!cfg.startup;
       document.getElementById('setting-startupTakeover').checked = !!cfg.startupTakeover;
@@ -719,6 +830,43 @@
       if (latestDownloadUrl) {
         ipcRenderer.send('open-external-url', latestDownloadUrl);
       }
+    });
+
+    // Animation Speed Controls
+    function updateSpeedPresetButtons(val) {
+      const rounded = parseFloat(val).toFixed(1);
+      document.querySelectorAll('.btn-speed').forEach(btn => {
+        const btnVal = parseFloat(btn.dataset.speed).toFixed(1);
+        if (btnVal === rounded) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
+
+    const animSlider = document.getElementById('setting-animationSpeed');
+    const animBadge = document.getElementById('speed-value-badge');
+    if (animSlider) {
+      animSlider.addEventListener('input', () => {
+        const val = parseFloat(animSlider.value) || 1.0;
+        animBadge.textContent = val.toFixed(1) + 'x';
+        updateSpeedPresetButtons(val);
+      });
+      animSlider.addEventListener('change', async () => {
+        const val = parseFloat(animSlider.value) || 1.0;
+        await ipcRenderer.invoke('save-app-settings', { animationSpeed: val });
+      });
+    }
+
+    document.querySelectorAll('.btn-speed').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const val = parseFloat(btn.dataset.speed) || 1.0;
+        if (animSlider) animSlider.value = val.toFixed(1);
+        if (animBadge) animBadge.textContent = val.toFixed(1) + 'x';
+        updateSpeedPresetButtons(val);
+        await ipcRenderer.invoke('save-app-settings', { animationSpeed: val });
+      });
     });
 
     // Initialize
