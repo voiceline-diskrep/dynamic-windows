@@ -66,6 +66,9 @@ let shelfDragCandidate = null;
 let currentRestingWidth = UI.REST_W;
 let dynamicLyricsEnabled = true;
 let wasShelfDragging = false;
+let currentVolume = 0.66;
+let isVolumeMuted = false;
+let isDraggingVolume = false;
 
 let antigravityState = {
   status: 'idle', // 'idle' | 'running' | 'thinking' | 'waiting' | 'done' | 'error'
@@ -434,6 +437,57 @@ function drawEqualizer(key, x, cy, w, h, colour, n = 6) {
   ctx.restore();
 }
 
+function drawVectorSpeakerIcon(x, y, s, color, isMuted, vol) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.3;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Speaker body (small rectangle + trapezoid)
+  ctx.beginPath();
+  const bodyW = s * 0.28;
+  const bodyH = s * 0.42;
+  ctx.rect(x - s * 0.45, y - bodyH / 2, bodyW, bodyH);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(x - s * 0.45 + bodyW, y - bodyH / 2);
+  ctx.lineTo(x + s * 0.05, y - s * 0.45);
+  ctx.lineTo(x + s * 0.05, y + s * 0.45);
+  ctx.lineTo(x - s * 0.45 + bodyW, y + bodyH / 2);
+  ctx.closePath();
+  ctx.fill();
+
+  if (isMuted || vol <= 0.01) {
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.2, y - s * 0.25);
+    ctx.lineTo(x + s * 0.55, y + s * 0.25);
+    ctx.moveTo(x + s * 0.55, y - s * 0.25);
+    ctx.lineTo(x + s * 0.2, y + s * 0.25);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.arc(x - s * 0.05, y, s * 0.28, -Math.PI / 3.5, Math.PI / 3.5);
+    ctx.stroke();
+    if (vol >= 0.4) {
+      ctx.beginPath();
+      ctx.arc(x - s * 0.05, y, s * 0.5, -Math.PI / 3.5, Math.PI / 3.5);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function updateVolumeFromMouse(clientX, sliderData) {
+  if (!sliderData || !sliderData.w) return;
+  const ratio = Math.max(0, Math.min(1, (clientX - sliderData.x) / sliderData.w));
+  currentVolume = ratio;
+  isVolumeMuted = false;
+  ipcRenderer.send('set-system-volume', currentVolume);
+}
+
 function drawVectorMediaIcon(kind, x, y, s, colour) {
   ctx.save();
   ctx.fillStyle = colour;
@@ -728,6 +782,15 @@ canvas.addEventListener('mousemove', (e) => {
     }
   }
 
+  if (isDraggingVolume) {
+    for (const btn of interactiveButtons) {
+      if (btn.id === 'media_volume_slider' && btn.data) {
+        updateVolumeFromMouse(mouseX, btn.data);
+        break;
+      }
+    }
+  }
+
   // Shelf drag-out trigger
   if (shelfDragCandidate && Math.hypot(mouseX - shelfDragCandidate.x, mouseY - shelfDragCandidate.y) > 6) {
     const p = shelfDragCandidate.path;
@@ -776,6 +839,15 @@ canvas.addEventListener('mousedown', (e) => {
   const cx = e.clientX;
   const cy = e.clientY;
   wasShelfDragging = false;
+  if (currentView === 'media') {
+    for (const btn of interactiveButtons) {
+      if (btn.id === 'media_volume_slider' && pointInRect(cx, cy, btn.x, btn.y, btn.w, btn.h)) {
+        isDraggingVolume = true;
+        updateVolumeFromMouse(cx, btn.data);
+        break;
+      }
+    }
+  }
   if (currentView === 'dropzone') {
     for (const btn of interactiveButtons) {
       if (btn.id && (btn.id.startsWith('dropzone_row_') || btn.id.startsWith('dropzone_open_file_')) && pointInRect(cx, cy, btn.x, btn.y, btn.w, btn.h)) {
@@ -805,6 +877,7 @@ canvas.addEventListener('dragend', () => {
 canvas.addEventListener('mouseup', () => {
   canvas.draggable = false;
   shelfDragCandidate = null;
+  isDraggingVolume = false;
 });
 
 window.addEventListener('keydown', (e) => {
@@ -926,6 +999,8 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('dropzone-delete-file', data);
   } else if (id === 'jump_antigravity' || (id && id.startsWith('focus_proj_'))) {
     ipcRenderer.send('focus-antigravity');
+  } else if (id === 'media_volume_mute') {
+    ipcRenderer.send('toggle-system-mute');
   } else if (id === 'media_play_pause') {
     ipcRenderer.send('media-play-pause');
   } else if (id === 'media_next') {
@@ -1036,6 +1111,20 @@ ipcRenderer.on('animation-speed', (event, speed) => {
     animSpeedMultiplier = val;
   }
 });
+ipcRenderer.on('volume-update', (event, data) => {
+  if (data && typeof data.volume === 'number') {
+    currentVolume = Math.max(0, Math.min(1, data.volume));
+  }
+  if (data && typeof data.muted === 'boolean') {
+    isVolumeMuted = data.muted;
+  }
+});
+try {
+  ipcRenderer.invoke('get-system-volume').then(res => {
+    if (res && typeof res.volume === 'number') currentVolume = Math.max(0, Math.min(1, res.volume));
+    if (res && typeof res.muted === 'boolean') isVolumeMuted = res.muted;
+  }).catch(() => {});
+} catch (e) {}
 ipcRenderer.on('dynamic-lyrics-toggled', (event, data) => {
   if (data && typeof data.enabled === 'boolean') {
     dynamicLyricsEnabled = data.enabled;
@@ -1107,7 +1196,18 @@ function animate(now) {
   } catch (err) {
     console.error('Render error:', err);
   }
-  requestAnimationFrame(animate);
+  window.addEventListener('wheel', (e) => {
+  if (currentView === 'media') {
+    if (hoveredButtonId === 'media_volume_slider' || hoveredButtonId === 'media_volume_mute') {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.03 : -0.03;
+      currentVolume = Math.max(0, Math.min(1, currentVolume + delta));
+      ipcRenderer.send('set-system-volume', currentVolume);
+    }
+  }
+}, { passive: false });
+
+requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
 
@@ -2705,6 +2805,69 @@ function renderMediaView(x, y, w, h) {
 
     drawVectorMediaIcon(c.kind, cx + cW / 2, cY + cH / 2, isMain ? 12 : 11, '#ffffff');
     interactiveButtons.push({ id: c.id, x: cx, y: cY, w: cW, h: cH });
+  });
+
+  // 4b. Right-Aligned System Volume Slider with Vector Speaker Icon
+  const volTrackW = 74;
+  const volTotalW = 18 + 8 + volTrackW;
+  const volX = contentX + contentW - volTotalW;
+  const volCenterY = cY + cH / 2;
+  const isVolHovered = hoveredButtonId === 'media_volume_slider' || isDraggingVolume;
+  const isMuteHovered = hoveredButtonId === 'media_volume_mute';
+
+  // Speaker Icon Button
+  drawVectorSpeakerIcon(volX + 8, volCenterY, 13, isVolumeMuted ? '#f87171' : (isMuteHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.7)'), isVolumeMuted, currentVolume);
+  interactiveButtons.push({ id: 'media_volume_mute', x: volX, y: volCenterY - 10, w: 18, h: 20 });
+
+  // Volume Track & Fill
+  const trackX = volX + 26;
+  const trackH = isVolHovered ? 6 : 4;
+  const trackY = volCenterY - trackH / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(trackX, trackY, volTrackW, trackH, trackH / 2);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+  ctx.fill();
+
+  const effectiveVol = isVolumeMuted ? 0 : currentVolume;
+  const volFillW = Math.max(0, Math.min(volTrackW, volTrackW * effectiveVol));
+  if (volFillW > 0) {
+    ctx.beginPath();
+    ctx.roundRect(trackX, trackY, volFillW, trackH, trackH / 2);
+    ctx.fillStyle = isVolHovered ? (albumAccentColor || '#38bdf8') : '#ffffff';
+    ctx.fill();
+  }
+
+  // Thumb knob
+  if (isVolHovered) {
+    ctx.beginPath();
+    ctx.arc(trackX + volFillW, volCenterY, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowBlur = 4;
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Percentage badge on hover/drag
+  if (isVolHovered) {
+    ctx.save();
+    ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`${Math.round(effectiveVol * 100)}%`, trackX + volTrackW / 2, trackY - 4);
+    ctx.restore();
+  }
+
+  interactiveButtons.push({
+    id: 'media_volume_slider',
+    data: { x: trackX, w: volTrackW },
+    x: trackX - 4,
+    y: volCenterY - 10,
+    w: volTrackW + 8,
+    h: 20
   });
 
   // 5. Slowed + Reverb Playback Speed Chips & Lyric Sync Offset Row

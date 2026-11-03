@@ -92,6 +92,20 @@ function registerSettingsIPC(dropZoneInstance) {
         }
       });
     }
+    if (newSettings && 'reserveTopBezel' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('reserve-top-bezel-toggled', { enabled: Boolean(newSettings.reserveTopBezel) });
+        }
+      });
+    }
+    if (newSettings && 'reserveTopBezel' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('reserve-top-bezel-toggled', { enabled: Boolean(newSettings.reserveTopBezel) });
+        }
+      });
+    }
     return updated;
   });
 
