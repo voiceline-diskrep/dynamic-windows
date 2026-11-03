@@ -175,7 +175,83 @@ function formatTimeMs(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+function getProgressiveLyricState(timed, index) {
+  if (lyricGap || index < 0 || !timed || !timed[index]) return null;
+  const lineObj = timed[index];
+  const fullText = (lineObj.text || '').trim();
+  if (!fullText) return null;
+
+  const pos = getLiveMediaPositionMs() + LYRIC_LEAD_MS;
+  const startMs = lineObj.t;
+  const elapsed = Math.max(0, pos - startMs);
+  const nextLineMs = timed[index + 1]?.t;
+
+  // 1. Explicit per-word timestamps (from RichSync or TTML word spans)
+  if (Array.isArray(lineObj.words) && lineObj.words.length > 0) {
+    const revealedWords = [];
+    const remainingWords = [];
+    for (let i = 0; i < lineObj.words.length; i++) {
+      if (lineObj.words[i].t <= pos || i === 0) {
+        revealedWords.push(lineObj.words[i].text);
+      } else {
+        remainingWords.push(lineObj.words[i].text);
+      }
+    }
+    const revealed = revealedWords.join(' ');
+    const remaining = remainingWords.length > 0 ? (' ' + remainingWords.join(' ')) : '';
+    return {
+      revealed,
+      remaining,
+      fullText,
+      isComplete: remainingWords.length === 0
+    };
+  }
+
+  // 2. Intelligent Word Interpolation fallback
+  const words = fullText.split(/\s+/).filter(Boolean);
+  if (words.length <= 1) {
+    return {
+      revealed: fullText,
+      remaining: '',
+      fullText,
+      isComplete: true
+    };
+  }
+
+  const rawDur = nextLineMs ? (nextLineMs - startMs) : 4000;
+  const lineDur = Math.max(1200, Math.min(8000, rawDur - 250));
+  const ratio = Math.min(1.0, elapsed / lineDur);
+
+  const totalChars = words.reduce((acc, w) => acc + w.length, 0);
+  let accChars = 0;
+  const revealedWords = [];
+  const remainingWords = [];
+  for (let i = 0; i < words.length; i++) {
+    const threshold = (accChars + words[i].length * 0.35) / totalChars;
+    accChars += words[i].length;
+    if (ratio >= threshold || i === 0) {
+      revealedWords.push(words[i]);
+    } else {
+      remainingWords.push(words[i]);
+    }
+  }
+
+  const revealed = revealedWords.join(' ');
+  const remaining = remainingWords.length > 0 ? (' ' + remainingWords.join(' ')) : '';
+  return {
+    revealed,
+    remaining,
+    fullText,
+    isComplete: remainingWords.length === 0
+  };
+}
+
 function getCurrentActiveLyricText(timed) {
+  const state = getProgressiveLyricState(timed, lyricIndex);
+  return state ? state.revealed : null;
+}
+
+function getCurrentFullLyricText(timed) {
   if (lyricGap || lyricIndex < 0 || !timed || !timed[lyricIndex]) return null;
   return timed[lyricIndex].text || null;
 }
@@ -221,7 +297,7 @@ function tickLyrics() {
   }
 
   if (idx !== lyricIndex || g !== lyricGap) {
-    lyricPreviousText = getCurrentActiveLyricText(timed);
+    lyricPreviousText = getCurrentFullLyricText(timed);
     lyricIndex = idx;
     lyricGap = g;
     lyricChangedAt = performance.now();
@@ -234,13 +310,15 @@ function getPillRollingLyric() {
   const k = 1 - Math.pow(1 - rawK, 4);
   if (!timed.length) {
     if (mediaState.track && mediaState.track.currentLyric) {
-      return { text: mediaState.track.currentLyric, previous: null, k: 1 };
+      return { text: mediaState.track.currentLyric, fullText: mediaState.track.currentLyric, previous: null, k: 1 };
     }
     return null;
   }
-  const cur = getCurrentActiveLyricText(timed);
+  const curState = getProgressiveLyricState(timed, lyricIndex);
+  if (!curState) return null;
   return {
-    text: cur,
+    text: curState.revealed,
+    fullText: curState.fullText,
     previous: k < 1 ? lyricPreviousText : null,
     k
   };
@@ -254,18 +332,18 @@ function getExpandedAroundLyrics() {
   const textAt = (i) => (timed[i] && timed[i].text) || '';
   if (lyricIndex < 0) {
     const first = timed.find(l => l.text)?.text || '';
-    return { before: '', now: '♪', next: first, k: 1 };
+    return { before: '', now: '♪', next: first, k: 1, progressive: null };
   }
-  const cur = getCurrentActiveLyricText(timed) || '♪';
+  const state = getProgressiveLyricState(timed, lyricIndex);
+  const cur = state ? state.revealed : (getCurrentFullLyricText(timed) || '♪');
   return {
     before: textAt(lyricIndex - 1),
     now: cur,
     next: textAt(lyricIndex + 1),
-    k
+    k,
+    progressive: state
   };
 }
-
-// -------------------------------------------------------------
 // TwoCode 6-Bar Equalizer & Vector Media Icons
 // -------------------------------------------------------------
 const vizState = {};
@@ -1876,17 +1954,17 @@ function renderCalendarWidget(calX, calY, calW, calH) {
     const cx = gridStartX + col * colStep + colStep / 2;
     const cy = gridStartY + row * rowStep + rowStep / 2;
 
-    if (d <= todayDate) {
-      // Blue circle highlight for elapsed days and today (matching reference image)
+    if (d === todayDate) {
+      // Prominent blue circular badge exclusively for today's date
       ctx.beginPath();
       ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
-      ctx.fillStyle = (d === todayDate) ? '#2563eb' : '#1d4ed8';
+      ctx.fillStyle = '#2563eb';
       ctx.fill();
 
       ctx.fillStyle = '#ffffff';
       ctx.fillText(String(d), cx, cy);
     } else {
-      ctx.fillStyle = '#e2e8f0';
+      ctx.fillStyle = d < todayDate ? '#94a3b8' : '#e2e8f0';
       ctx.fillText(String(d), cx, cy);
     }
   }
@@ -2319,7 +2397,26 @@ function renderMediaView(x, y, w, h) {
     ctx.globalAlpha = 0.4 + 0.6 * around.k;
     ctx.font = '700 12.5px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(truncateToWidth(around.now, contentW - 24, ctx.font), centerX, midY + push);
+    if (around.progressive && around.progressive.remaining) {
+      const fullText = around.progressive.fullText;
+      const fullW = ctx.measureText(fullText).width;
+      if (fullW <= contentW - 24) {
+        const startX = centerX - fullW / 2;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(around.progressive.revealed, startX, midY + push);
+        const revealedW = ctx.measureText(around.progressive.revealed).width;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.fillText(around.progressive.remaining, startX + revealedW, midY + push);
+        ctx.textAlign = 'center';
+      } else {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(truncateToWidth(around.now, contentW - 24, ctx.font), centerX, midY + push);
+      }
+    } else {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(truncateToWidth(around.now, contentW - 24, ctx.font), centerX, midY + push);
+    }
 
     if (around.next) {
       ctx.globalAlpha = 0.38 * around.k;

@@ -28,7 +28,7 @@ function parseTimecode(s) {
 /** "[01:02.50] words" -> [{ t: ms, text }], sorted ascending by timestamp in ms. */
 function parseLrc(lrc) {
   const lines = [];
-  for (const raw of String(lrc || '').split(/\r?\n/)) {
+  for (const raw of String(lrc || '').replace(/\\n/g, '\n').split(/\r?\n/)) {
     const stamps = [...raw.matchAll(/\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]/g)];
     if (!stamps.length) continue;
     const text = raw.replace(/\[[^\]]*\]/g, '').replace(/<[^>]+>/g, '').trim();
@@ -363,19 +363,46 @@ class MediaController extends EventEmitter {
     return null;
   }
 
-  parseLinerCacheLyrics(cacheContent) {
-    const providerMatches = cacheContent.match(/data:\s*(\{"type":"provider"[^\n\r]+)/g);
-    if (!providerMatches) return [];
+  parseLyricsFromCache(cacheContent) {
+    const timed = this.parseLinerCacheLyrics(cacheContent) || [];
+    const plain = timed.map(l => l.text);
+    plain.timed = timed.map(l => ({
+      time: l.t / 1000,
+      text: l.text,
+      words: l.words
+    }));
+    return plain;
+  }
 
-    for (const pm of providerMatches) {
+  parseLinerCacheLyrics(cacheContent) {
+    const rawMatches = String(cacheContent || '').split(/\r?\nevent:\s*/);
+    const providers = [];
+    for (const chunk of rawMatches) {
+      const idx = chunk.indexOf('data:');
+      if (idx === -1) continue;
+      const jsonStr = chunk.slice(idx + 5).trim();
       try {
-        const p = JSON.parse(pm.replace(/^data:\s*/, ''));
+        const p = JSON.parse(jsonStr);
+        if (p?.type === 'provider') providers.push(p);
+      } catch {
+        const lineMatch = jsonStr.match(/(\{"type":"provider"[^\n\r]+)/);
+        if (lineMatch) {
+          try {
+            const p = JSON.parse(lineMatch[1]);
+            if (p?.type === 'provider') providers.push(p);
+          } catch {}
+        }
+      }
+    }
+
+    for (const p of providers) {
+      try {
         if (p?.candidate?.lyrics?.content) {
           const content = p.candidate.lyrics.content;
           const format = String(p.candidate.lyrics.format || '').toLowerCase();
 
           // 1. Richsync JSON format
-          if (format === 'richsync' || (typeof content === 'string' && content.trim().startsWith('['))) {
+          if (format === 'richsync' || (format !== 'lrc' && format !== 'qrc' && typeof content === 'string' && content.trim().startsWith('[{'))) {
             const items = typeof content === 'string' ? JSON.parse(content) : content;
             if (Array.isArray(items)) {
               const timed = items
@@ -383,7 +410,18 @@ class MediaController extends EventEmitter {
                   let text = (it.x || (it.l ? it.l.map((w) => w.c || '').join('') : '')).trim();
                   text = text.replace(/<[^>]+>/g, '').trim();
                   const tMs = typeof it.ts === 'number' ? Math.round(it.ts * 1000) : 0;
-                  return { t: tMs, text };
+                  const lineObj = { t: tMs, text };
+                  if (Array.isArray(it.l) && it.l.length > 0) {
+                    const words = it.l
+                      .map((w) => {
+                        const wordText = String(w.c || '').trim();
+                        const offsetSec = typeof w.o === 'number' ? w.o : 0;
+                        return { t: Math.round(tMs + offsetSec * 1000), text: wordText };
+                      })
+                      .filter((w) => Boolean(w.text));
+                    if (words.length > 0) lineObj.words = words;
+                  }
+                  return lineObj;
                 })
                 .filter((l) => l.text);
               if (timed.length > 0) return timed.sort((a, b) => a.t - b.t);
@@ -397,7 +435,8 @@ class MediaController extends EventEmitter {
             let match;
             while ((match = pRegex.exec(content)) !== null) {
               const tMs = Math.round(parseTimecode(match[1]));
-              const cleaned = match[3]
+              const rawPContent = match[3];
+              const cleaned = rawPContent
                 .replace(/<[^>]+>/g, '')
                 .replace(/&quot;/g, '"')
                 .replace(/&apos;/g, "'")
@@ -405,12 +444,21 @@ class MediaController extends EventEmitter {
                 .replace(/\s+/g, ' ')
                 .trim();
               if (cleaned && !cleaned.toLowerCase().includes('source:')) {
-                timed.push({ t: tMs, text: cleaned });
+                const lineObj = { t: tMs, text: cleaned };
+                const spanRegex = /<span\b[^>]*\bbegin="([^"]+)"[^>]*>(.*?)<\/span>/gi;
+                let sMatch;
+                const words = [];
+                while ((sMatch = spanRegex.exec(rawPContent)) !== null) {
+                  const wMs = Math.round(parseTimecode(sMatch[1]));
+                  const wText = sMatch[2].replace(/<[^>]+>/g, '').trim();
+                  if (wText) words.push({ t: wMs, text: wText });
+                }
+                if (words.length > 0) lineObj.words = words;
+                timed.push(lineObj);
               }
             }
             if (timed.length > 0) return timed.sort((a, b) => a.t - b.t);
           }
-
           // 3. LRC / QRC format
           if (format === 'lrc' || format === 'qrc' || (typeof content === 'string' && /\[\d{1,2}:\d{2}/.test(content))) {
             const timed = parseLrc(content);
