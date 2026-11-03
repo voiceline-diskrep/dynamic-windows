@@ -64,6 +64,8 @@ let copiedFeedbackId = null;
 let copiedFeedbackTimer = null;
 let shelfDragCandidate = null;
 let currentRestingWidth = UI.REST_W;
+let dynamicLyricsEnabled = true;
+let wasShelfDragging = false;
 
 let antigravityState = {
   status: 'idle', // 'idle' | 'running' | 'thinking' | 'waiting' | 'done' | 'error'
@@ -729,7 +731,9 @@ canvas.addEventListener('mousemove', (e) => {
   // Shelf drag-out trigger
   if (shelfDragCandidate && Math.hypot(mouseX - shelfDragCandidate.x, mouseY - shelfDragCandidate.y) > 6) {
     const p = shelfDragCandidate.path;
+    wasShelfDragging = true;
     shelfDragCandidate = null;
+    canvas.draggable = false;
     ipcRenderer.send('shelf-drag-start', p);
   }
 
@@ -771,17 +775,35 @@ canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   const cx = e.clientX;
   const cy = e.clientY;
+  wasShelfDragging = false;
   if (currentView === 'dropzone') {
     for (const btn of interactiveButtons) {
       if (btn.id && (btn.id.startsWith('dropzone_row_') || btn.id.startsWith('dropzone_open_file_')) && pointInRect(cx, cy, btn.x, btn.y, btn.w, btn.h)) {
         shelfDragCandidate = { x: cx, y: cy, path: btn.data };
+        canvas.draggable = true;
         break;
       }
     }
   }
 });
 
+canvas.addEventListener('dragstart', (e) => {
+  if (shelfDragCandidate && shelfDragCandidate.path) {
+    wasShelfDragging = true;
+    e.preventDefault();
+    ipcRenderer.send('shelf-drag-start', shelfDragCandidate.path);
+    shelfDragCandidate = null;
+    canvas.draggable = false;
+  }
+});
+
+canvas.addEventListener('dragend', () => {
+  canvas.draggable = false;
+  shelfDragCandidate = null;
+});
+
 canvas.addEventListener('mouseup', () => {
+  canvas.draggable = false;
   shelfDragCandidate = null;
 });
 
@@ -798,6 +820,10 @@ window.addEventListener('keydown', (e) => {
 });
 
 canvas.addEventListener('click', (e) => {
+  if (wasShelfDragging) {
+    wasShelfDragging = false;
+    return;
+  }
   const cx = e.clientX;
   const cy = e.clientY;
 
@@ -1010,11 +1036,21 @@ ipcRenderer.on('animation-speed', (event, speed) => {
     animSpeedMultiplier = val;
   }
 });
+ipcRenderer.on('dynamic-lyrics-toggled', (event, data) => {
+  if (data && typeof data.enabled === 'boolean') {
+    dynamicLyricsEnabled = data.enabled;
+  }
+});
 try {
   ipcRenderer.invoke('get-app-settings').then(res => {
-    if (res && res.config && res.config.animationSpeed) {
-      const val = parseFloat(res.config.animationSpeed);
-      if (!isNaN(val) && val >= 0.2 && val <= 5.0) animSpeedMultiplier = val;
+    if (res && res.config) {
+      if (typeof res.config.dynamicLyrics === 'boolean') {
+        dynamicLyricsEnabled = res.config.dynamicLyrics;
+      }
+      if (res.config.animationSpeed) {
+        const val = parseFloat(res.config.animationSpeed);
+        if (!isNaN(val) && val >= 0.2 && val <= 5.0) animSpeedMultiplier = val;
+      }
     }
   }).catch(() => {});
 } catch (e) {}

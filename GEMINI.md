@@ -13,6 +13,6 @@ Whenever working on tasks in this workspace:
    - Compiling/Packaging: `status: "running"`, `phase: "Compiling standalone setup"`, `progress: <percent>`
 3. **User Questions**: When waiting for answers via `ask_question`, call `dynamic_island_notify` with `status: "waiting"`, `phase: "Waiting for user input"`.
 4. **Task Completion**: Upon finishing your response, call `dynamic_island_notify` with `status: "done"`, `phase: "Task completed"`.
-5. **Drop Shelf**: When generating artifacts, installers, or files the user needs quick access to, call `dynamic_island_shelf_file` with the absolute path.
+5. **Drop Shelf**: Never place build outputs, setups, or installers into the desktop drop zone. Only shelf files when explicitly requested by the user.
 6. **Continuous GitHub Sync**: Push all updates, fixes, and features directly to GitHub (`git push origin main`) every time changes are made, even for minor updates. In user-facing documentation and README, never describe the project as being based on TwoCode.
 7. **Automatic GitHub Releases**: Whenever a new version is created or the version is bumped, always build the standalone setup (`npm run build:setup`) and publish an official GitHub Release using `gh release create v<version> "installer_output/DynamicWindows-Setup-v<version>.exe" --title "Dynamic Windows v<version>" --notes "<notes>"`.

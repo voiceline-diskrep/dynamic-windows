@@ -32,6 +32,9 @@ const DropZone = require('./drop-zone');
 const configManager = require('./config-manager');
 const { createSettingsWindow, registerSettingsIPC } = require('./settings-window');
 
+const BLANK_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+const fileIconsCache = new Map();
+
 let mainWindow = null;
 let tray = null;
 let antigravityMonitor = null;
@@ -128,13 +131,21 @@ if (!gotTheLock) {
   process.exit(0);
 } else {
   app.on('second-instance', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isCrashed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
       mainWindow.focus();
-      mainWindow.webContents.send('untuck-island');
+      try {
+        mainWindow.webContents.send('untuck-island');
+      } catch (err) {}
     } else {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.destroy();
+        }
+      } catch (e) {}
+      mainWindow = null;
       createIslandWindow();
     }
   });
@@ -185,6 +196,17 @@ function createIslandWindow() {
       const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
       fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] render-process-gone: ${JSON.stringify(details)}\n`);
     } catch (err) {}
+    if (!isQuitting) {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.destroy();
+        }
+      } catch (err) {}
+      mainWindow = null;
+      setTimeout(() => {
+        if (!isQuitting) createIslandWindow();
+      }, 500);
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -376,12 +398,24 @@ function createIslandWindow() {
   });
 
   // Native Drag Out for Drop Shelf files
-  ipcMain.on('shelf-drag-start', (event, filePath) => {
-    if (filePath && fs.existsSync(filePath)) {
-      try {
-        const icon = nativeImage.createEmpty();
-        event.sender.startDrag({ file: filePath, icon });
-      } catch (err) {}
+  ipcMain.on('shelf-drag-start', async (event, filePath) => {
+    if (!filePath || typeof filePath !== 'string' || !fs.existsSync(filePath)) return;
+    try {
+      let icon = fileIconsCache.get(filePath);
+      if (!icon) {
+        try {
+          icon = await app.getFileIcon(filePath, { size: 'normal' });
+          if (icon && !icon.isEmpty()) {
+            fileIconsCache.set(filePath, icon);
+          }
+        } catch (e) {}
+      }
+      if (!icon || icon.isEmpty()) {
+        icon = nativeImage.createFromDataURL(BLANK_PNG);
+      }
+      event.sender.startDrag({ file: filePath, icon });
+    } catch (err) {
+      console.error('[DRAG ERROR]', err);
     }
   });
 
@@ -462,6 +496,7 @@ function createIslandWindow() {
     sendDropZoneFiles();
     sendDisplayMode();
     sendAnimationSpeed();
+    sendDynamicLyrics();
   });
 }
 
@@ -509,7 +544,7 @@ function setupTray() {
     const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');
     if (!tray) {
       tray = new Tray(iconPath);
-      tray.setToolTip('Dynamic Windows (v1.2.1)');
+      tray.setToolTip('Dynamic Windows (v1.3.3)');
     }
     const contextMenu = Menu.buildFromTemplate([
       {
