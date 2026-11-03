@@ -74,4 +74,11 @@ test('ConfigManager: get and set settings including displayMode', () => {
   // Restore
   configManager.set('showSeconds', false);
   assert.strictEqual(configManager.get('showSeconds'), false);
+
+  // Test dynamicLyrics setting
+  assert.strictEqual(typeof cur.dynamicLyrics, 'boolean');
+  configManager.set('dynamicLyrics', false);
+  assert.strictEqual(configManager.get('dynamicLyrics'), false);
+  configManager.set('dynamicLyrics', true);
+  assert.strictEqual(configManager.get('dynamicLyrics'), true);
 });

@@ -1,14 +1,14 @@
-# 🏝️ Dynamic Windows (v1.3.1)
+# 🏝️ Dynamic Windows (v1.3.2)
 
 A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment built for Windows, powered by high-performance hardware-accelerated Canvas rendering with deep **Google Antigravity & AI Agent** tracking, a **Dual Split Resting Pill (AI Activity Capsule + Main Activity Pill)**, a **Home Monthly Calendar Widget**, real-time **Liner Synced Lyrics**, **Connected Song Change Announcements**, **Customizable Animation Speed**, **Crisp Monochrome Vector Logos**, a **Clipboard History Manager**, **Game Mode**, and a **Drag-and-Drop Desktop Shelf**.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.3.1.exe)
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.3.2.exe)
 
 ---
 
 ## 📥 Download & Install
 
-👉 **[Download DynamicWindows-Setup-v1.3.1.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.3.1.exe)**
+👉 **[Download DynamicWindows-Setup-v1.3.2.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.3.2.exe)**
 
 - **Single-File Standalone Setup**: Self-contained installer compiled with native C# (`.NET`).
 - **Zero Admin Rights Required**: Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` without UAC prompts.
@@ -101,7 +101,7 @@ To stage the full distribution and compile the C# setup executable:
 ```bash
 npm run build:setup
 ```
-The compiled installer will be output to `installer_output/DynamicWindows-Setup-v1.3.1.exe`.
+The compiled installer will be output to `installer_output/DynamicWindows-Setup-v1.3.2.exe`.
 
 ---
 

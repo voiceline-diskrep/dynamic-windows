@@ -62,9 +62,10 @@ class AntigravityMonitor extends EventEmitter {
       if (p.status === 'idle' && Date.now() - p.updatedAt > 20 * 60 * 1000) return false;
       return true;
     }).sort((a, b) => {
-      const aAct = ['running', 'thinking', 'waiting'].includes(a.status) ? 1 : 0;
-      const bAct = ['running', 'thinking', 'waiting'].includes(b.status) ? 1 : 0;
-      if (aAct !== bAct) return bAct - aAct;
+      const weight = (s) => (s === 'running' ? 3 : (s === 'thinking' ? 2 : (s === 'waiting' ? 1 : 0)));
+      const aWeight = weight(a.status);
+      const bWeight = weight(b.status);
+      if (aWeight !== bWeight) return bWeight - aWeight;
       return b.updatedAt - a.updatedAt;
     });
 

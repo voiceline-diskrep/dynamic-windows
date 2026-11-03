@@ -85,6 +85,13 @@ function registerSettingsIPC(dropZoneInstance) {
         }
       });
     }
+    if (newSettings && 'dynamicLyrics' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('dynamic-lyrics-toggled', { enabled: Boolean(newSettings.dynamicLyrics) });
+        }
+      });
+    }
     return updated;
   });
 

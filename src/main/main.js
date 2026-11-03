@@ -371,6 +371,7 @@ function createIslandWindow() {
       configManager.set('displayMode', mode);
       sendDisplayMode();
     sendAnimationSpeed();
+    sendDynamicLyrics();
     }
   });
 
@@ -445,6 +446,15 @@ function createIslandWindow() {
     createSettingsWindow(dropZone);
   });
 
+  ipcMain.on('set-dynamic-lyrics', (event, enabled) => {
+    configManager.set('dynamicLyrics', Boolean(enabled));
+    BrowserWindow.getAllWindows().forEach(w => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('dynamic-lyrics-toggled', { enabled: Boolean(enabled) });
+      }
+    });
+  });
+
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
@@ -484,6 +494,13 @@ function sendDisplayMode() {
   const mode = configManager.get('displayMode') || 'island';
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('display-mode', mode);
+  }
+}
+
+function sendDynamicLyrics() {
+  const enabled = configManager.get('dynamicLyrics') !== false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('dynamic-lyrics-toggled', { enabled });
   }
 }
 

@@ -175,11 +175,27 @@ function formatTimeMs(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+function easeOutQuad(x) {
+  return 1 - (1 - x) * (1 - x);
+}
+
 function getProgressiveLyricState(timed, index) {
   if (lyricGap || index < 0 || !timed || !timed[index]) return null;
   const lineObj = timed[index];
   const fullText = (lineObj.text || '').trim();
   if (!fullText) return null;
+
+  if (!dynamicLyricsEnabled) {
+    return {
+      revealed: fullText,
+      remaining: '',
+      fullText,
+      isComplete: true,
+      activeWordIndex: 0,
+      subWordProgress: 1.0,
+      words: [{ text: fullText, isSung: true, isActive: true, isUpcoming: false, progress: 1.0 }]
+    };
+  }
 
   const pos = getLiveMediaPositionMs() + LYRIC_LEAD_MS;
   const startMs = lineObj.t;
@@ -188,33 +204,52 @@ function getProgressiveLyricState(timed, index) {
 
   // 1. Explicit per-word timestamps (from RichSync or TTML word spans)
   if (Array.isArray(lineObj.words) && lineObj.words.length > 0) {
-    const revealedWords = [];
-    const remainingWords = [];
-    for (let i = 0; i < lineObj.words.length; i++) {
-      if (lineObj.words[i].t <= pos || i === 0) {
-        revealedWords.push(lineObj.words[i].text);
+    const wordsList = lineObj.words;
+    let activeIdx = 0;
+    for (let i = 0; i < wordsList.length; i++) {
+      if (wordsList[i].t <= pos || i === 0) {
+        activeIdx = i;
       } else {
-        remainingWords.push(lineObj.words[i].text);
+        break;
       }
     }
-    const revealed = revealedWords.join(' ');
-    const remaining = remainingWords.length > 0 ? (' ' + remainingWords.join(' ')) : '';
+
+    const curWord = wordsList[activeIdx];
+    const nextWordT = wordsList[activeIdx + 1]?.t || (nextLineMs || (curWord.t + 1200));
+    const wordDur = Math.max(200, nextWordT - curWord.t);
+    const subProgress = Math.min(1.0, Math.max(0, (pos - curWord.t) / wordDur));
+
+    const revealedWords = wordsList.slice(0, activeIdx + 1).map(w => w.text);
+    const remainingWords = wordsList.slice(activeIdx + 1).map(w => w.text);
+
     return {
-      revealed,
-      remaining,
+      revealed: revealedWords.join(' '),
+      remaining: remainingWords.length > 0 ? (' ' + remainingWords.join(' ')) : '',
       fullText,
-      isComplete: remainingWords.length === 0
+      isComplete: remainingWords.length === 0,
+      activeWordIndex: activeIdx,
+      subWordProgress: subProgress,
+      words: wordsList.map((w, idx) => ({
+        text: w.text,
+        isSung: idx < activeIdx,
+        isActive: idx === activeIdx,
+        isUpcoming: idx > activeIdx,
+        progress: idx < activeIdx ? 1.0 : (idx === activeIdx ? subProgress : 0.0)
+      }))
     };
   }
 
   // 2. Intelligent Word Interpolation fallback
-  const words = fullText.split(/\s+/).filter(Boolean);
-  if (words.length <= 1) {
+  const rawWords = fullText.split(/\s+/).filter(Boolean);
+  if (rawWords.length <= 1) {
     return {
       revealed: fullText,
       remaining: '',
       fullText,
-      isComplete: true
+      isComplete: true,
+      activeWordIndex: 0,
+      subWordProgress: 1.0,
+      words: [{ text: fullText, isSung: true, isActive: true, isUpcoming: false, progress: 1.0 }]
     };
   }
 
@@ -222,27 +257,51 @@ function getProgressiveLyricState(timed, index) {
   const lineDur = Math.max(1200, Math.min(8000, rawDur - 250));
   const ratio = Math.min(1.0, elapsed / lineDur);
 
-  const totalChars = words.reduce((acc, w) => acc + w.length, 0);
+  const totalChars = rawWords.reduce((acc, w) => acc + w.length, 0);
   let accChars = 0;
-  const revealedWords = [];
-  const remainingWords = [];
-  for (let i = 0; i < words.length; i++) {
-    const threshold = (accChars + words[i].length * 0.35) / totalChars;
-    accChars += words[i].length;
-    if (ratio >= threshold || i === 0) {
-      revealedWords.push(words[i]);
+  let activeIdx = 0;
+  let wordStartRatio = 0;
+  let wordEndRatio = 1.0;
+
+  const wordRanges = [];
+  for (let i = 0; i < rawWords.length; i++) {
+    const wLen = rawWords[i].length;
+    const startR = accChars / totalChars;
+    const endR = (accChars + wLen) / totalChars;
+    wordRanges.push({ startR, endR });
+    accChars += wLen;
+  }
+
+  for (let i = 0; i < wordRanges.length; i++) {
+    if (ratio >= wordRanges[i].startR || i === 0) {
+      activeIdx = i;
+      wordStartRatio = wordRanges[i].startR;
+      wordEndRatio = wordRanges[i].endR;
     } else {
-      remainingWords.push(words[i]);
+      break;
     }
   }
 
-  const revealed = revealedWords.join(' ');
-  const remaining = remainingWords.length > 0 ? (' ' + remainingWords.join(' ')) : '';
+  const wordDurRatio = Math.max(0.001, wordEndRatio - wordStartRatio);
+  const subProgress = Math.min(1.0, Math.max(0, (ratio - wordStartRatio) / wordDurRatio));
+
+  const revealedWords = rawWords.slice(0, activeIdx + 1);
+  const remainingWords = rawWords.slice(activeIdx + 1);
+
   return {
-    revealed,
-    remaining,
+    revealed: revealedWords.join(' '),
+    remaining: remainingWords.length > 0 ? (' ' + remainingWords.join(' ')) : '',
     fullText,
-    isComplete: remainingWords.length === 0
+    isComplete: remainingWords.length === 0,
+    activeWordIndex: activeIdx,
+    subWordProgress: subProgress,
+    words: rawWords.map((text, idx) => ({
+      text,
+      isSung: idx < activeIdx,
+      isActive: idx === activeIdx,
+      isUpcoming: idx > activeIdx,
+      progress: idx < activeIdx ? 1.0 : (idx === activeIdx ? subProgress : 0.0)
+    }))
   };
 }
 
@@ -310,7 +369,7 @@ function getPillRollingLyric() {
   const k = 1 - Math.pow(1 - rawK, 4);
   if (!timed.length) {
     if (mediaState.track && mediaState.track.currentLyric) {
-      return { text: mediaState.track.currentLyric, fullText: mediaState.track.currentLyric, previous: null, k: 1 };
+      return { text: mediaState.track.currentLyric, fullText: mediaState.track.currentLyric, previous: null, k: 1, progressive: null };
     }
     return null;
   }
@@ -320,7 +379,8 @@ function getPillRollingLyric() {
     text: curState.revealed,
     fullText: curState.fullText,
     previous: k < 1 ? lyricPreviousText : null,
-    k
+    k,
+    progressive: curState
   };
 }
 
@@ -795,6 +855,9 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('clipboard-get');
   } else if (id === 'nav_settings') {
     ipcRenderer.send('open-settings');
+  } else if (id === 'toggle_dynamic_lyrics') {
+    dynamicLyricsEnabled = !dynamicLyricsEnabled;
+    ipcRenderer.send('set-dynamic-lyrics', dynamicLyricsEnabled);
   } else if (id === 'toggle_display_mode') {
     displayMode = displayMode === 'island' ? 'notch' : 'island';
     ipcRenderer.send('set-display-mode', displayMode);
@@ -1074,8 +1137,20 @@ function getTargetRestingWidth() {
     const roll = getPillRollingLyric();
     let textToMeasure = '';
     if (roll && roll.text) {
-      textToMeasure = roll.text;
-      if (roll.previous && roll.k < 1) {
+      if (dynamicLyricsEnabled && roll.progressive && roll.progressive.words && roll.progressive.words.length > 1) {
+        const prog = roll.progressive;
+        const words = prog.words;
+        const activeIdx = prog.activeWordIndex;
+        const prevWords = words.slice(0, activeIdx).map(w => w.text).join(' ');
+        const curWords = words.slice(0, activeIdx + 1).map(w => w.text).join(' ');
+        ctx.save();
+        ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+        const wPrev = prevWords ? ctx.measureText(prevWords).width : 0;
+        const wCur = ctx.measureText(curWords).width;
+        ctx.restore();
+        const interpW = wPrev + (wCur - wPrev) * easeOutQuad(prog.subWordProgress);
+        mainPillW = Math.max(220, Math.min(420, Math.round(144 + interpW)));
+      } else if (roll.previous && roll.k < 1) {
         ctx.save();
         ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
         const w1 = ctx.measureText(roll.text).width;
@@ -1084,6 +1159,7 @@ function getTargetRestingWidth() {
         const maxW = Math.max(w1, w2);
         mainPillW = Math.max(220, Math.min(420, Math.round(144 + maxW)));
       } else {
+        textToMeasure = roll.text;
         ctx.save();
         ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
         const textW = ctx.measureText(textToMeasure).width;
@@ -2382,10 +2458,37 @@ function renderMediaView(x, y, w, h) {
 
   // Source + Lyric Status Badge
   const srcName = track.source && track.source !== 'none' ? track.source : 'Windows GSMTC';
-  const lyrStatus = track.lyricStatus === 'synced' ? ' • LRCLIB Synced' : (track.lyricStatus === 'plain' ? ' • Lyrics' : '');
+  const lyrStatus = track.lyricStatus === 'synced' ? ' • Synced' : (track.lyricStatus === 'plain' ? ' • Lyrics' : '');
   ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = albumAccentColor;
   ctx.fillText(`${srcName}${lyrStatus}`, metaX, artY + 41);
+  const badgeTextW = ctx.measureText(`${srcName}${lyrStatus}`).width;
+
+  // Clickable Dynamic Word-by-Word Lyrics Toggle Badge
+  const toggleW = 76;
+  const toggleH = 16;
+  const toggleX = metaX + badgeTextW + 8;
+  const toggleY = artY + 39;
+  const isDyn = Boolean(dynamicLyricsEnabled);
+  const isHovToggle = hoveredButtonId === 'toggle_dynamic_lyrics';
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(toggleX, toggleY, toggleW, toggleH, 4);
+  ctx.fillStyle = isDyn ? (isHovToggle ? '#2563eb' : 'rgba(37, 99, 235, 0.28)') : (isHovToggle ? '#3f3f46' : 'rgba(255, 255, 255, 0.08)');
+  ctx.strokeStyle = isDyn ? '#3b82f6' : 'rgba(255, 255, 255, 0.14)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isDyn ? '#ffffff' : '#a1a1aa';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(isDyn ? '✦ Word Sync' : 'Line Sync', toggleX + toggleW / 2, toggleY + toggleH / 2);
+  ctx.restore();
+
+  interactiveButtons.push({ id: 'toggle_dynamic_lyrics', x: toggleX, y: toggleY, w: toggleW, h: toggleH });
 
   // 2. Middle Row: Apple Music 3-Line Rolling Lyrics (before, now, next)
   const lyricsY = topY + 62;
@@ -2419,17 +2522,40 @@ function renderMediaView(x, y, w, h) {
     ctx.globalAlpha = 0.4 + 0.6 * around.k;
     ctx.font = '700 12.5px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#ffffff';
-    if (around.progressive && around.progressive.remaining) {
+    if (around.progressive && around.progressive.words && around.progressive.words.length > 0 && dynamicLyricsEnabled) {
+      const words = around.progressive.words;
       const fullText = around.progressive.fullText;
       const fullW = ctx.measureText(fullText).width;
+
       if (fullW <= contentW - 24) {
-        const startX = centerX - fullW / 2;
+        let curX = centerX - fullW / 2;
         ctx.textAlign = 'left';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(around.progressive.revealed, startX, midY + push);
-        const revealedW = ctx.measureText(around.progressive.revealed).width;
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-        ctx.fillText(around.progressive.remaining, startX + revealedW, midY + push);
+        const spaceW = ctx.measureText(' ').width;
+
+        for (let i = 0; i < words.length; i++) {
+          const w = words[i];
+          const wWidth = ctx.measureText(w.text).width;
+
+          if (w.isSung) {
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowBlur = 0;
+            ctx.fillText(w.text, curX, midY + push);
+          } else if (w.isActive) {
+            // Smoothly glowing transition from dimmed to bright
+            const alpha = 0.38 + 0.62 * w.progress;
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
+            ctx.shadowColor = `rgba(255, 255, 255, ${(0.42 * w.progress).toFixed(2)})`;
+            ctx.shadowBlur = 5 * w.progress;
+            ctx.fillText(w.text, curX, midY + push);
+            ctx.shadowBlur = 0;
+          } else {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.32)';
+            ctx.shadowBlur = 0;
+            ctx.fillText(w.text, curX, midY + push);
+          }
+
+          curX += wWidth + spaceW;
+        }
         ctx.textAlign = 'center';
       } else {
         ctx.fillStyle = '#ffffff';
