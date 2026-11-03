@@ -171,29 +171,9 @@ class AntigravityMonitor extends EventEmitter {
         } catch (e) {}
       }
 
-      // 3. Fallback to cleaned first request without escaped characters
-      if (lines[0]) {
-        try {
-          const step0 = JSON.parse(lines[0]);
-          if (typeof step0.content === 'string') {
-            const reqMatch = step0.content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
-            if (reqMatch && reqMatch[1]) {
-              let clean = reqMatch[1]
-                .replace(/\\n/g, ' ')
-                .replace(/[\r\n\t]+/g, ' ')
-                .replace(/^(?:you are connected to (?:my )?github\.?\s*|please\s+|can you\s+|make me a\s+|create a\s+|fix\s+)/i, '')
-                .trim();
-              if (clean.length > 0) {
-                clean = clean.charAt(0).toUpperCase() + clean.slice(1);
-                return clean.length <= 16 ? clean : clean.slice(0, 15) + '…';
-              }
-            }
-          }
-        } catch (e) {}
-      }
     } catch (e) {}
 
-    return fallback || 'Antigravity';
+    return fallback || 'Island';
   }
 
   poll() {

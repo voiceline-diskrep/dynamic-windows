@@ -1012,6 +1012,26 @@ function animate(now) {
 }
 requestAnimationFrame(animate);
 
+function sanitizeProjectName(raw) {
+  if (!raw) return 'Island';
+  let str = String(raw).replace(/[\r\n\t\\]+/g, ' ').trim();
+  if (/^(are\s+you|can\s+you|could\s+you|please|fix|make|add|what|how|i\s+want|why|do\s+you)\b/i.test(str) || str.endsWith('…') || str.endsWith('...') || str.length > 22) {
+    return 'Island';
+  }
+  return str || 'Island';
+}
+
+function getAiCapsuleLabel(activeProjects) {
+  const projs = activeProjects || getActiveProjects();
+  const activeProjs = projs.filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
+  if (activeProjs.length > 1) {
+    return `${activeProjs.length} Active`;
+  }
+  const active = activeProjs[0] || projs[0];
+  const raw = (active && active.project) ? String(active.project) : 'Island';
+  return sanitizeProjectName(raw);
+}
+
 function getActiveProjects() {
   if (antigravityState && antigravityState.projects && Array.isArray(antigravityState.projects) && antigravityState.projects.length > 0) {
     return antigravityState.projects;
@@ -2018,7 +2038,9 @@ function renderHomeView(x, y, w, h) {
   ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#38bdf8';
   ctx.textAlign = 'left';
-  ctx.fillText('Google Antigravity', cardX + 32, cardY + 20);
+  const homeActiveProjs = getActiveProjects().filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
+  const homeTitle = homeActiveProjs.length > 1 ? `Google Antigravity (${homeActiveProjs.length})` : 'Google Antigravity';
+  ctx.fillText(homeTitle, cardX + 32, cardY + 20);
 
   renderTrafficLightDot(cardX + cardW - 14, cardY + 20, antigravityState.status);
 
