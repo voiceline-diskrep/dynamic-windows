@@ -25,17 +25,65 @@ function parseTimecode(s) {
   return (parseFloat(s) || 0) * 1000;
 }
 
-/** "[01:02.50] words" -> [{ t: ms, text }], sorted ascending by timestamp in ms. */
+/** "[01:02.50] words" -> [{ t: ms, end?: ms, text, words?: [{ t, end, text }] }], sorted ascending by timestamp in ms. */
 function parseLrc(lrc) {
   const lines = [];
+  let globalOffsetMs = 0;
   for (const raw of String(lrc || '').replace(/\\n/g, '\n').split(/\r?\n/)) {
+    const offsetMatch = raw.match(/^\s*\[offset:\s*([+-]?\d+)\s*\]/i);
+    if (offsetMatch) {
+      globalOffsetMs = Number(offsetMatch[1]) || 0;
+      continue;
+    }
     const stamps = [...raw.matchAll(/\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]/g)];
     if (!stamps.length) continue;
-    const text = raw.replace(/\[[^\]]*\]/g, '').replace(/<[^>]+>/g, '').trim();
+    const bodyAfterLineStamps = raw.replace(/^\s*(?:\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+/, '').trim();
+    const text = raw.replace(/\[[^\]]*\]/g, '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
     if (/^(length|re|ti|ar|al|by|offset):/i.test(text)) continue;
+
+    // Parse Enhanced LRC inline word timestamps if present: <mm:ss.xx>word
+    let inlineWords = null;
+    const wordTagRegex = /<(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)>([^<]*)/g;
+    let wm;
+    const rawWordTokens = [];
+    while ((wm = wordTagRegex.exec(bodyAfterLineStamps)) !== null) {
+      const wt = Math.max(0, Math.round((Number(wm[1]) * 60 + Number(wm[2].replace(':', '.'))) * 1000) - globalOffsetMs);
+      const seg = wm[3] || '';
+      const trimmed = seg.trim();
+      if (trimmed) {
+        rawWordTokens.push({
+          t: wt,
+          text: trimmed,
+          hasLeadingSpace: /^\s/.test(seg),
+          hasTrailingSpace: /\s$/.test(seg)
+        });
+      }
+    }
+    if (rawWordTokens.length > 0) {
+      const merged = [];
+      for (let i = 0; i < rawWordTokens.length; i++) {
+        const cur = rawWordTokens[i];
+        const next = rawWordTokens[i + 1];
+        const endMs = next ? next.t : cur.t + 600;
+        if (merged.length > 0 && !merged[merged.length - 1].hasTrailingSpace && !cur.hasLeadingSpace) {
+          const prev = merged[merged.length - 1];
+          prev.text += cur.text;
+          prev.end = endMs;
+          prev.hasTrailingSpace = cur.hasTrailingSpace;
+        } else {
+          merged.push({ t: cur.t, end: endMs, text: cur.text, hasTrailingSpace: cur.hasTrailingSpace });
+        }
+      }
+      inlineWords = merged.map(({ t, end, text: wText }) => ({ t, end, text: wText }));
+    }
+
     for (const m of stamps) {
-      const t = Math.round((Number(m[1]) * 60 + Number(m[2].replace(':', '.'))) * 1000);
-      lines.push({ t, text });
+      const t = Math.max(0, Math.round((Number(m[1]) * 60 + Number(m[2].replace(':', '.'))) * 1000) - globalOffsetMs);
+      const lineObj = { t, text };
+      if (inlineWords && inlineWords.length > 0) {
+        lineObj.words = inlineWords;
+      }
+      lines.push(lineObj);
     }
   }
   return lines.sort((a, b) => a.t - b.t);
@@ -305,8 +353,9 @@ class MediaController extends EventEmitter {
   }
 
   /**
-   * Optional strict fallback for Liner's local cache: ONLY accepts a cache file if its
+   * Strict lookup in Liner's local cache: ONLY accepts a cache entry if its
    * `"type":"metadata"` JSON explicitly matches BOTH the active track title and artist.
+   * Prioritizes entries that include word-level timestamps (TTML spans / RichSync).
    */
   loadStrictLinerCacheFallback(rawTitle, rawArtist) {
     try {
@@ -320,45 +369,81 @@ class MediaController extends EventEmitter {
 
       const files = fs.readdirSync(this.linerCacheDir);
       const candidates = files
+        .filter((f) => f.startsWith('f_'))
         .map((f) => {
           try {
-            return { f, mtime: fs.statSync(path.join(this.linerCacheDir, f)).mtimeMs };
+            const st = fs.statSync(path.join(this.linerCacheDir, f));
+            if (st.size < 250 || st.size > 400000) return null;
+            return { f, mtime: st.mtimeMs };
           } catch {
             return null;
           }
         })
         .filter(Boolean)
         .sort((a, b) => b.mtime - a.mtime)
-        .slice(0, 60);
+        .slice(0, 450);
+
+      let bestLineMatch = null;
+
+      const checkStreamChunk = (data) => {
+        if (!data || !data.includes('"type":"metadata"')) return null;
+        const metaMatches = [...data.matchAll(/data:\s*(\{"type":"metadata"[^\n\r]+)/g)];
+        for (const metaMatch of metaMatches) {
+          try {
+            const meta = JSON.parse(metaMatch[1]);
+            const metaTitle = String(meta?.track?.title || meta?.track?.name || '').toLowerCase();
+            const metaArtists = Array.isArray(meta?.track?.artists)
+              ? meta.track.artists.map((a) => String(a.name || a).toLowerCase()).join(' ')
+              : String(meta?.track?.artist || '').toLowerCase();
+
+            const titleMatches =
+              metaTitle === String(rawTitle || '').toLowerCase() ||
+              metaTitle.includes(cleanTitle) ||
+              cleanTitle.includes(metaTitle);
+            const artistMatches = metaArtists.includes(cleanArtist);
+            if (!titleMatches || !artistMatches || !metaTitle) continue;
+
+            // Slice from this metadata event up to the next metadata event (important for data_1/data_2/data_3)
+            const startIdx = metaMatch.index || 0;
+            const nextMetaIdx = data.indexOf('event: metadata', startIdx + 20);
+            const streamSlice = nextMetaIdx > startIdx ? data.slice(startIdx, nextMetaIdx) : data.slice(startIdx, startIdx + 120000);
+
+            const parsed = this.parseLinerCacheLyrics(streamSlice);
+            if (parsed && parsed.length > 0) {
+              const hasWordSync = parsed.some((l) => Array.isArray(l.words) && l.words.length > 0);
+              if (hasWordSync) {
+                return { lines: parsed, hasWordSync: true };
+              }
+              if (!bestLineMatch) {
+                bestLineMatch = { lines: parsed, hasWordSync: false };
+              }
+            }
+          } catch {}
+        }
+        return null;
+      };
 
       for (const item of candidates) {
         const fullPath = path.join(this.linerCacheDir, item.f);
         try {
           const data = fs.readFileSync(fullPath, 'utf8');
-          if (!data.includes('"type":"metadata"')) continue;
-          const metaMatch = data.match(/data:\s*(\{"type":"metadata"[^\n\r]+)/);
-          if (!metaMatch) continue;
-
-          const meta = JSON.parse(metaMatch[1]);
-          const metaTitle = String(meta?.track?.title || meta?.track?.name || '').toLowerCase();
-          const metaArtists = Array.isArray(meta?.track?.artists)
-            ? meta.track.artists.map((a) => String(a.name || a).toLowerCase()).join(' ')
-            : String(meta?.track?.artist || '').toLowerCase();
-
-          // Strict verification: BOTH title and primary artist must match the metadata object!
-          const titleMatches =
-            metaTitle === String(rawTitle || '').toLowerCase() ||
-            metaTitle.includes(cleanTitle) ||
-            cleanTitle.includes(metaTitle);
-          const artistMatches = metaArtists.includes(cleanArtist);
-          if (!titleMatches || !artistMatches || !metaTitle) continue;
-
-          const parsed = this.parseLinerCacheLyrics(data);
-          if (parsed && parsed.length > 0) {
-            return { lines: parsed };
-          }
+          const hit = checkStreamChunk(data);
+          if (hit && hit.hasWordSync) return { lines: hit.lines };
         } catch {}
       }
+
+      // Also scan Chromium SimpleCache block files (data_1, data_2, data_3) where <16KB SSE streams reside
+      for (const blockFile of ['data_2', 'data_3', 'data_1']) {
+        const blockPath = path.join(this.linerCacheDir, blockFile);
+        if (!fs.existsSync(blockPath)) continue;
+        try {
+          const data = fs.readFileSync(blockPath, 'utf8');
+          const hit = checkStreamChunk(data);
+          if (hit && hit.hasWordSync) return { lines: hit.lines };
+        } catch {}
+      }
+
+      if (bestLineMatch) return { lines: bestLineMatch.lines };
     } catch {}
     return null;
   }
@@ -395,6 +480,8 @@ class MediaController extends EventEmitter {
       }
     }
 
+    let fallbackLineCandidate = null;
+
     for (const p of providers) {
       try {
         if (p?.candidate?.lyrics?.content) {
@@ -406,68 +493,183 @@ class MediaController extends EventEmitter {
             const items = typeof content === 'string' ? JSON.parse(content) : content;
             if (Array.isArray(items)) {
               const timed = items
-                .map((it) => {
+                .map((it, lineIdx) => {
                   let text = (it.x || (it.l ? it.l.map((w) => w.c || '').join('') : '')).trim();
-                  text = text.replace(/<[^>]+>/g, '').trim();
+                  text = text.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
                   const tMs = typeof it.ts === 'number' ? Math.round(it.ts * 1000) : 0;
-                  const lineObj = { t: tMs, text };
+                  const nextLineStartMs = typeof items[lineIdx + 1]?.ts === 'number' ? Math.round(items[lineIdx + 1].ts * 1000) : null;
+                  const lineEndMs = typeof it.te === 'number' ? Math.round(it.te * 1000) : (nextLineStartMs || tMs + 3000);
+                  const lineObj = { t: tMs, end: lineEndMs, text };
                   if (Array.isArray(it.l) && it.l.length > 0) {
-                    const words = it.l
+                    const rawTokens = it.l
                       .map((w) => {
-                        const wordText = String(w.c || '').trim();
+                        const rawStr = String(w.c || '');
+                        const wordText = rawStr.trim();
                         const offsetSec = typeof w.o === 'number' ? w.o : 0;
-                        return { t: Math.round(tMs + offsetSec * 1000), text: wordText };
+                        const startT = Math.round(tMs + offsetSec * 1000);
+                        const durMs = typeof w.d === 'number' ? Math.round(w.d * 1000) : null;
+                        return {
+                          t: startT,
+                          durMs,
+                          text: wordText,
+                          hasLeadingSpace: /^\s/.test(rawStr),
+                          hasTrailingSpace: /\s$/.test(rawStr)
+                        };
                       })
                       .filter((w) => Boolean(w.text));
-                    if (words.length > 0) lineObj.words = words;
+
+                    // Check if tokens represent space-delimited syllables or separate words
+                    const anyExplicitSpaces = rawTokens.some((w) => w.hasLeadingSpace || w.hasTrailingSpace);
+                    const words = [];
+                    for (let i = 0; i < rawTokens.length; i++) {
+                      const cur = rawTokens[i];
+                      const next = rawTokens[i + 1];
+                      const endT = cur.durMs ? (cur.t + cur.durMs) : (next ? next.t : lineEndMs);
+                      if (
+                        anyExplicitSpaces &&
+                        words.length > 0 &&
+                        !words[words.length - 1].hasTrailingSpace &&
+                        !cur.hasLeadingSpace
+                      ) {
+                        const prev = words[words.length - 1];
+                        prev.text += cur.text;
+                        prev.end = Math.max(prev.end, endT);
+                        prev.hasTrailingSpace = cur.hasTrailingSpace;
+                      } else {
+                        words.push({
+                          t: cur.t,
+                          end: Math.max(cur.t + 80, endT),
+                          text: cur.text,
+                          hasTrailingSpace: cur.hasTrailingSpace
+                        });
+                      }
+                    }
+                    if (words.length > 0) {
+                      lineObj.words = words.map(({ t, end, text: wText }) => ({ t, end, text: wText }));
+                    }
                   }
                   return lineObj;
                 })
                 .filter((l) => l.text);
-              if (timed.length > 0) return timed.sort((a, b) => a.t - b.t);
+              if (timed.length > 0) {
+                const sorted = timed.sort((a, b) => a.t - b.t);
+                if (sorted.some((l) => l.words && l.words.length > 0)) return sorted;
+                if (!fallbackLineCandidate) fallbackLineCandidate = sorted;
+              }
             }
           }
 
           // 2. TTML format (Polaris / Polaris Mono / Cadence)
           if (format === 'ttml' || (typeof content === 'string' && content.includes('<p'))) {
-            const pRegex = /<p\b[^>]*\bbegin="([^"]+)"(?:\b[^>]*\bend="([^"]+)")?[^>]*>(.*?)<\/p>/gi;
+            const pRegex = /<p\b([^>]*)>(.*?)<\/p>/gi;
             const timed = [];
             let match;
             while ((match = pRegex.exec(content)) !== null) {
-              const tMs = Math.round(parseTimecode(match[1]));
-              const rawPContent = match[3];
-              const cleaned = rawPContent
-                .replace(/<[^>]+>/g, '')
-                .replace(/&quot;/g, '"')
-                .replace(/&apos;/g, "'")
-                .replace(/&amp;/g, '&')
+              const pAttrs = match[1] || '';
+              const beginMatch = pAttrs.match(/\bbegin="([^"]+)"/i);
+              if (!beginMatch) continue;
+              const endMatch = pAttrs.match(/\bend="([^"]+)"/i);
+              const tMs = Math.round(parseTimecode(beginMatch[1]));
+              const pEndMs = endMatch ? Math.round(parseTimecode(endMatch[1])) : null;
+              const rawPContent = match[2];
+
+              const decodeEntities = (str) =>
+                String(str || '')
+                  .replace(/&quot;/g, '"')
+                  .replace(/&apos;/g, "'")
+                  .replace(/&#39;/g, "'")
+                  .replace(/&amp;/g, '&');
+
+              const cleaned = decodeEntities(rawPContent.replace(/<[^>]+>/g, ''))
                 .replace(/\s+/g, ' ')
                 .trim();
+
               if (cleaned && !cleaned.toLowerCase().includes('source:')) {
                 const lineObj = { t: tMs, text: cleaned };
-                const spanRegex = /<span\b[^>]*\bbegin="([^"]+)"[^>]*>(.*?)<\/span>/gi;
+                if (pEndMs && pEndMs > tMs) lineObj.end = pEndMs;
+
+                const spanRegex = /<span\b([^>]*)>(.*?)<\/span>/gi;
                 let sMatch;
-                const words = [];
+                const rawSpans = [];
                 while ((sMatch = spanRegex.exec(rawPContent)) !== null) {
-                  const wMs = Math.round(parseTimecode(sMatch[1]));
-                  const wText = sMatch[2].replace(/<[^>]+>/g, '').trim();
-                  if (wText) words.push({ t: wMs, text: wText });
+                  const sAttrs = sMatch[1] || '';
+                  const sBegin = sAttrs.match(/\bbegin="([^"]+)"/i);
+                  if (!sBegin) continue;
+                  const sEnd = sAttrs.match(/\bend="([^"]+)"/i);
+                  const wMs = Math.round(parseTimecode(sBegin[1]));
+                  const wEndMs = sEnd ? Math.round(parseTimecode(sEnd[1])) : null;
+                  const rawInner = decodeEntities(sMatch[2].replace(/<[^>]+>/g, ''));
+                  const wText = rawInner.trim();
+                  if (wText) {
+                    rawSpans.push({
+                      t: wMs,
+                      end: wEndMs,
+                      text: wText,
+                      startIndex: sMatch.index,
+                      endIndex: sMatch.index + sMatch[0].length,
+                      innerLeadingSpace: /^\s/.test(rawInner),
+                      innerTrailingSpace: /\s$/.test(rawInner)
+                    });
+                  }
                 }
-                if (words.length > 0) lineObj.words = words;
+
+                if (rawSpans.length > 0) {
+                  // Merge syllable spans into complete words when there is no space between </span> and <span...>
+                  const mergedWords = [];
+                  for (let i = 0; i < rawSpans.length; i++) {
+                    const cur = rawSpans[i];
+                    const prevSpan = i > 0 ? rawSpans[i - 1] : null;
+                    const nextSpan = rawSpans[i + 1] || null;
+                    const resolvedEnd = cur.end && cur.end > cur.t
+                      ? cur.end
+                      : (nextSpan ? nextSpan.t : (pEndMs || cur.t + 450));
+
+                    let separatedFromPrev = true;
+                    if (prevSpan) {
+                      const between = rawPContent.slice(prevSpan.endIndex, cur.startIndex);
+                      const hasBetweenSpace = /\s/.test(between);
+                      separatedFromPrev = hasBetweenSpace || prevSpan.innerTrailingSpace || cur.innerLeadingSpace;
+                    }
+
+                    if (!separatedFromPrev && mergedWords.length > 0) {
+                      const prevWord = mergedWords[mergedWords.length - 1];
+                      prevWord.text += cur.text;
+                      prevWord.end = Math.max(prevWord.end, resolvedEnd);
+                      prevWord.syllables.push({ t: cur.t, end: resolvedEnd, text: cur.text });
+                    } else {
+                      mergedWords.push({
+                        t: cur.t,
+                        end: Math.max(cur.t + 60, resolvedEnd),
+                        text: cur.text,
+                        syllables: [{ t: cur.t, end: resolvedEnd, text: cur.text }]
+                      });
+                    }
+                  }
+                  lineObj.words = mergedWords;
+                  // Reconstruct clean line text from merged words so spacing matches 100%
+                  lineObj.text = mergedWords.map((w) => w.text).join(' ');
+                }
                 timed.push(lineObj);
               }
             }
-            if (timed.length > 0) return timed.sort((a, b) => a.t - b.t);
+            if (timed.length > 0) {
+              const sorted = timed.sort((a, b) => a.t - b.t);
+              if (sorted.some((l) => l.words && l.words.length > 0)) return sorted;
+              if (!fallbackLineCandidate) fallbackLineCandidate = sorted;
+            }
           }
           // 3. LRC / QRC format
           if (format === 'lrc' || format === 'qrc' || (typeof content === 'string' && /\[\d{1,2}:\d{2}/.test(content))) {
             const timed = parseLrc(content);
-            if (timed.length > 0) return timed;
+            if (timed.length > 0) {
+              if (timed.some((l) => l.words && l.words.length > 0)) return timed;
+              if (!fallbackLineCandidate) fallbackLineCandidate = timed;
+            }
           }
         }
       } catch {}
     }
-    return [];
+    return fallbackLineCandidate || [];
   }
 
   async resolveLyricsForTrack({ title, artist, album, durationMs, source, songKey }) {
@@ -475,12 +677,25 @@ class MediaController extends EventEmitter {
     q.album = String(album || '').trim().slice(0, 200);
     if (!q.title) return;
 
+    const hasWordLevelSync = (lines) =>
+      Array.isArray(lines) && lines.some((l) => Array.isArray(l.words) && l.words.length > 0);
+
     const hashKey = crypto
       .createHash('sha1')
       .update([q.title, q.artist, Math.round(q.duration || 0)].join('|').toLowerCase())
       .digest('hex')
       .slice(0, 24);
     const cacheFile = path.join(this.getLyricsCacheFolder(), hashKey + '.json');
+
+    const saveResultToCache = (ans) => {
+      const saved = { ...ans, at: Date.now() };
+      this.lyricsMemory.set(hashKey, saved);
+      try {
+        fs.mkdirSync(this.getLyricsCacheFolder(), { recursive: true });
+        fs.writeFileSync(cacheFile, JSON.stringify(saved));
+      } catch {}
+      return saved;
+    };
 
     let result = null;
     if (this.lyricsMemory.has(hashKey)) {
@@ -499,30 +714,35 @@ class MediaController extends EventEmitter {
       } catch {}
     }
 
+    // If cached result lacks word-level timestamps, check Liner's local cache to upgrade it!
+    if (result && !hasWordLevelSync(result.lines)) {
+      const linerUpgrade = this.loadStrictLinerCacheFallback(title, artist);
+      if (linerUpgrade && hasWordLevelSync(linerUpgrade.lines)) {
+        result = saveResultToCache(linerUpgrade);
+      }
+    }
+
     if (!result || (!result.lines?.length && source === 'Liner')) {
       if (this.lyricsAsking.has(hashKey)) {
         result = await this.lyricsAsking.get(hashKey);
       } else {
         const job = (async () => {
+          // 1. Check strict Liner cache first for studio word-level TTML / RichSync
+          const linerAns = this.loadStrictLinerCacheFallback(title, artist);
+          if (linerAns && hasWordLevelSync(linerAns.lines)) {
+            return saveResultToCache(linerAns);
+          }
+
+          // 2. Otherwise query LRCLIB, falling back to line-level Liner cache if needed
           let ans = { lines: [] };
           if (q.artist) {
             ans = await this.lookupLrclib(q).catch(() => ({ lines: [], failed: true }));
           }
-          // Bonus fallback: if LRCLIB had no synced lines and Liner is playing, check strict Liner cache
-          if (!ans.lines?.length) {
-            const linerAns = this.loadStrictLinerCacheFallback(title, artist);
-            if (linerAns && linerAns.lines?.length) {
-              ans = linerAns;
-            }
+          if ((!ans.lines?.length || (!hasWordLevelSync(ans.lines) && linerAns?.lines?.length)) && linerAns?.lines?.length) {
+            ans = linerAns;
           }
           if (!ans.failed) {
-            const saved = { ...ans, at: Date.now() };
-            this.lyricsMemory.set(hashKey, saved);
-            try {
-              fs.mkdirSync(this.getLyricsCacheFolder(), { recursive: true });
-              fs.writeFileSync(cacheFile, JSON.stringify(saved));
-            } catch {}
-            return saved;
+            return saveResultToCache(ans);
           }
           return ans;
         })().finally(() => this.lyricsAsking.delete(hashKey));
@@ -540,6 +760,25 @@ class MediaController extends EventEmitter {
         : this.currentLyrics.map((l) => l.text);
       this.instrumental = Boolean(result.instrumental);
       this.emit('changed');
+
+      // If word-level sync isn't present yet (e.g., Liner is still streaming SSE to Cache_Data right after track start),
+      // re-check Liner's cache at +1.8s and +4.5s to automatically upgrade to exact word-level sync!
+      if (!hasWordLevelSync(this.currentLyrics)) {
+        for (const delayMs of [1800, 4500]) {
+          const timer = setTimeout(() => {
+            if (this.currentSongKey !== songKey) return;
+            if (hasWordLevelSync(this.currentLyrics)) return;
+            const lateLiner = this.loadStrictLinerCacheFallback(title, artist);
+            if (lateLiner && hasWordLevelSync(lateLiner.lines)) {
+              const upgraded = saveResultToCache(lateLiner);
+              this.currentLyrics = upgraded.lines;
+              this.plainLyrics = this.currentLyrics.map((l) => l.text);
+              this.emit('changed');
+            }
+          }, delayMs);
+          if (timer.unref) timer.unref();
+        }
+      }
     }
   }
 
@@ -655,6 +894,17 @@ class MediaController extends EventEmitter {
     const imageUrl = this.cover.key === this.now.key ? this.cover.url : '';
     const currentLyric = this.getCurrentLyricAt(progress);
 
+    const hasWords = Array.isArray(this.currentLyrics) && this.currentLyrics.some((l) => Array.isArray(l.words) && l.words.length > 0);
+    const lyricStatus = this.instrumental
+      ? 'instrumental'
+      : hasWords
+      ? 'word_synced'
+      : this.currentLyrics && this.currentLyrics.length > 0
+      ? 'synced'
+      : this.plainLyrics && this.plainLyrics.length > 0
+      ? 'plain'
+      : 'none';
+
     return {
       isPlaying: playing,
       progress_ms: progress,
@@ -670,8 +920,9 @@ class MediaController extends EventEmitter {
         source,
         image_url: imageUrl,
         lyrics: this.plainLyrics,
-        timedLyrics: this.currentLyrics, // [{ t: ms, text }]
+        timedLyrics: this.currentLyrics, // [{ t: ms, end?: ms, text, words?: [...] }]
         instrumental: this.instrumental,
+        lyricStatus,
         currentLyric
       }
     };

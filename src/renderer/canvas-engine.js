@@ -155,7 +155,8 @@ function colorWithAlpha(c, a) {
 // -------------------------------------------------------------
 // TwoCode Synced Lyrics Engine (250ms lead, 420ms roll, 2500ms hold)
 // -------------------------------------------------------------
-const LYRIC_LEAD_MS = 250;
+const LYRIC_LEAD_MS = 220;
+const WORD_LEAD_MS = 45;
 const LYRIC_SWAP_MS = 420;
 const LYRIC_HOLD_MS = 2500;
 const LYRIC_PILL_FONT = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
@@ -186,6 +187,29 @@ function easeOutQuad(x) {
   return 1 - (1 - x) * (1 - x);
 }
 
+const FAST_FUNCTION_WORDS = new Set([
+  'a', 'an', 'the', 'to', 'in', 'on', 'of', 'at', 'is', 'it', "it's", "i'm",
+  'for', 'and', 'or', 'as', 'by', 'be', 'my', 'so', 'if', 'we', 'me', 'you'
+]);
+
+function estimateWordVocalWeight(rawWord) {
+  const clean = String(rawWord || '').replace(/[^a-zA-Z']/g, '').toLowerCase();
+  let syllables = 1;
+  if (clean.length > 2) {
+    const stripped = clean.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '').replace(/^y/, '');
+    const matches = stripped.match(/[aeiouy]{1,2}/g);
+    syllables = matches ? Math.max(1, matches.length) : 1;
+  }
+  const isFast = FAST_FUNCTION_WORDS.has(clean);
+  const singWeight = isFast ? Math.max(0.65, syllables * 0.72) : syllables * 1.0 + (/[aeiou]{2}|[wry]$/i.test(clean) ? 0.2 : 0);
+
+  let pauseWeight = 0;
+  if (/[,;:]$/.test(rawWord)) pauseWeight = 0.95;
+  else if (/(?:\.\.\.|…|[.?!—–-])$/.test(rawWord)) pauseWeight = 1.25;
+
+  return { singWeight, pauseWeight, totalWeight: singWeight + pauseWeight };
+}
+
 function getProgressiveLyricState(timed, index) {
   if (lyricGap || index < 0 || !timed || !timed[index]) return null;
   const lineObj = timed[index];
@@ -204,12 +228,13 @@ function getProgressiveLyricState(timed, index) {
     };
   }
 
-  const pos = getLiveMediaPositionMs() + LYRIC_LEAD_MS;
+  // Tight 45ms lead for word-level tracking so words light up right as they are sung
+  const pos = getLiveMediaPositionMs() + WORD_LEAD_MS;
   const startMs = lineObj.t;
   const elapsed = Math.max(0, pos - startMs);
   const nextLineMs = timed[index + 1]?.t;
 
-  // 1. Explicit per-word timestamps (from RichSync or TTML word spans)
+  // 1. Explicit per-word / per-syllable timestamps (from RichSync, Polaris TTML, or Enhanced LRC)
   if (Array.isArray(lineObj.words) && lineObj.words.length > 0) {
     const wordsList = lineObj.words;
     let activeIdx = 0;
@@ -222,9 +247,30 @@ function getProgressiveLyricState(timed, index) {
     }
 
     const curWord = wordsList[activeIdx];
-    const nextWordT = wordsList[activeIdx + 1]?.t || (nextLineMs || (curWord.t + 1200));
-    const wordDur = Math.max(200, nextWordT - curWord.t);
-    const subProgress = Math.min(1.0, Math.max(0, (pos - curWord.t) / wordDur));
+    const fallbackEnd = wordsList[activeIdx + 1]?.t || lineObj.end || nextLineMs || (curWord.t + 650);
+    const wordEnd = (typeof curWord.end === 'number' && curWord.end > curWord.t) ? curWord.end : fallbackEnd;
+    const wordDur = Math.max(60, wordEnd - curWord.t);
+
+    let subProgress = 0;
+    if (pos >= wordEnd) {
+      subProgress = 1.0;
+    } else if (Array.isArray(curWord.syllables) && curWord.syllables.length > 1) {
+      // Multi-syllable exact interpolation
+      const syls = curWord.syllables;
+      let sylIdx = 0;
+      for (let s = 0; s < syls.length; s++) {
+        if (syls[s].t <= pos || s === 0) sylIdx = s;
+        else break;
+      }
+      const curSyl = syls[sylIdx];
+      const sylEnd = (typeof curSyl.end === 'number' && curSyl.end > curSyl.t)
+        ? curSyl.end
+        : (syls[sylIdx + 1]?.t || wordEnd);
+      const sylProg = Math.min(1.0, Math.max(0, (pos - curSyl.t) / Math.max(40, sylEnd - curSyl.t)));
+      subProgress = Math.min(1.0, (sylIdx + sylProg) / syls.length);
+    } else {
+      subProgress = Math.min(1.0, Math.max(0, (pos - curWord.t) / wordDur));
+    }
 
     const revealedWords = wordsList.slice(0, activeIdx + 1).map(w => w.text);
     const remainingWords = wordsList.slice(activeIdx + 1).map(w => w.text);
@@ -233,20 +279,24 @@ function getProgressiveLyricState(timed, index) {
       revealed: revealedWords.join(' '),
       remaining: remainingWords.length > 0 ? (' ' + remainingWords.join(' ')) : '',
       fullText,
-      isComplete: remainingWords.length === 0,
+      isComplete: remainingWords.length === 0 && subProgress >= 0.99,
       activeWordIndex: activeIdx,
       subWordProgress: subProgress,
-      words: wordsList.map((w, idx) => ({
-        text: w.text,
-        isSung: idx < activeIdx,
-        isActive: idx === activeIdx,
-        isUpcoming: idx > activeIdx,
-        progress: idx < activeIdx ? 1.0 : (idx === activeIdx ? subProgress : 0.0)
-      }))
+      words: wordsList.map((w, idx) => {
+        const wEnd = (typeof w.end === 'number' && w.end > w.t) ? w.end : (wordsList[idx + 1]?.t || wordEnd);
+        const alreadyFinished = idx < activeIdx || (idx === activeIdx && pos >= wEnd);
+        return {
+          text: w.text,
+          isSung: alreadyFinished,
+          isActive: idx === activeIdx && !alreadyFinished,
+          isUpcoming: idx > activeIdx,
+          progress: alreadyFinished ? 1.0 : (idx === activeIdx ? subProgress : 0.0)
+        };
+      })
     };
   }
 
-  // 2. Intelligent Word Interpolation fallback
+  // 2. Vocal Syllable & Punctuation Cadence Estimator (when only line-level LRC timestamps exist)
   const rawWords = fullText.split(/\s+/).filter(Boolean);
   if (rawWords.length <= 1) {
     return {
@@ -260,37 +310,46 @@ function getProgressiveLyricState(timed, index) {
     };
   }
 
-  const rawDur = nextLineMs ? (nextLineMs - startMs) : 4000;
-  const lineDur = Math.max(1200, Math.min(8000, rawDur - 250));
-  const ratio = Math.min(1.0, elapsed / lineDur);
+  const weights = rawWords.map(estimateWordVocalWeight);
+  const totalWeight = weights.reduce((acc, w) => acc + w.totalWeight, 0) || 1;
 
-  const totalChars = rawWords.reduce((acc, w) => acc + w.length, 0);
-  let accChars = 0;
+  // Natural vocal cadence (~275ms per weighted syllable unit) prevents slow-motion dragging across long instrumental gaps
+  const naturalVocalMs = Math.max(650, Math.min(4800, totalWeight * 275));
+  const availableMs = (typeof lineObj.end === 'number' && lineObj.end > startMs)
+    ? (lineObj.end - startMs)
+    : (nextLineMs ? Math.max(400, nextLineMs - startMs - 160) : naturalVocalMs);
+  const lineDur = (typeof lineObj.end === 'number' && lineObj.end > startMs)
+    ? availableMs
+    : Math.min(availableMs, naturalVocalMs);
+  const ratio = Math.min(1.0, elapsed / Math.max(350, lineDur));
+
+  let accW = 0;
   let activeIdx = 0;
   let wordStartRatio = 0;
-  let wordEndRatio = 1.0;
+  let wordSingEndRatio = 1.0;
 
   const wordRanges = [];
   for (let i = 0; i < rawWords.length; i++) {
-    const wLen = rawWords[i].length;
-    const startR = accChars / totalChars;
-    const endR = (accChars + wLen) / totalChars;
-    wordRanges.push({ startR, endR });
-    accChars += wLen;
+    const { singWeight, totalWeight: wTot } = weights[i];
+    const startR = accW / totalWeight;
+    const singEndR = (accW + singWeight) / totalWeight;
+    const endR = (accW + wTot) / totalWeight;
+    wordRanges.push({ startR, singEndR, endR });
+    accW += wTot;
   }
 
   for (let i = 0; i < wordRanges.length; i++) {
     if (ratio >= wordRanges[i].startR || i === 0) {
       activeIdx = i;
       wordStartRatio = wordRanges[i].startR;
-      wordEndRatio = wordRanges[i].endR;
+      wordSingEndRatio = wordRanges[i].singEndR;
     } else {
       break;
     }
   }
 
-  const wordDurRatio = Math.max(0.001, wordEndRatio - wordStartRatio);
-  const subProgress = Math.min(1.0, Math.max(0, (ratio - wordStartRatio) / wordDurRatio));
+  const wordSingDurRatio = Math.max(0.001, wordSingEndRatio - wordStartRatio);
+  const subProgress = Math.min(1.0, Math.max(0, (ratio - wordStartRatio) / wordSingDurRatio));
 
   const revealedWords = rawWords.slice(0, activeIdx + 1);
   const remainingWords = rawWords.slice(activeIdx + 1);
@@ -299,16 +358,19 @@ function getProgressiveLyricState(timed, index) {
     revealed: revealedWords.join(' '),
     remaining: remainingWords.length > 0 ? (' ' + remainingWords.join(' ')) : '',
     fullText,
-    isComplete: remainingWords.length === 0,
+    isComplete: remainingWords.length === 0 && subProgress >= 0.99,
     activeWordIndex: activeIdx,
     subWordProgress: subProgress,
-    words: rawWords.map((text, idx) => ({
-      text,
-      isSung: idx < activeIdx,
-      isActive: idx === activeIdx,
-      isUpcoming: idx > activeIdx,
-      progress: idx < activeIdx ? 1.0 : (idx === activeIdx ? subProgress : 0.0)
-    }))
+    words: rawWords.map((text, idx) => {
+      const alreadyFinished = idx < activeIdx || (idx === activeIdx && subProgress >= 1.0);
+      return {
+        text,
+        isSung: alreadyFinished,
+        isActive: idx === activeIdx && !alreadyFinished,
+        isUpcoming: idx > activeIdx,
+        progress: alreadyFinished ? 1.0 : (idx === activeIdx ? subProgress : 0.0)
+      };
+    })
   };
 }
 
@@ -2612,7 +2674,9 @@ function renderMediaView(x, y, w, h) {
 
   // Source + Lyric Status Badge
   const srcName = track.source && track.source !== 'none' ? track.source : 'Windows GSMTC';
-  const lyrStatus = track.lyricStatus === 'synced' ? ' • Synced' : (track.lyricStatus === 'plain' ? ' • Lyrics' : '');
+  const lyrStatus = track.lyricStatus === 'word_synced'
+    ? ' • Word Synced'
+    : (track.lyricStatus === 'synced' ? ' • Synced' : (track.lyricStatus === 'plain' ? ' • Lyrics' : ''));
   ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = albumAccentColor;
   ctx.fillText(`${srcName}${lyrStatus}`, metaX, artY + 41);

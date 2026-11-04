@@ -594,7 +594,7 @@ function setupTray() {
     const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');
     if (!tray) {
       tray = new Tray(iconPath);
-      tray.setToolTip('Dynamic Windows (v1.3.6)');
+      tray.setToolTip('Dynamic Windows (v1.3.7)');
     }
     const contextMenu = Menu.buildFromTemplate([
       {

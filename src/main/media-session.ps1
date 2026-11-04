@@ -69,7 +69,7 @@ while ($true) {
     $pending = $reader.ReadLineAsync(); $nextLook = [DateTime]::MinValue; $last = ''
   }
   if ([DateTime]::UtcNow -ge $nextLook) {
-    $nextLook = [DateTime]::UtcNow.AddMilliseconds(700)
+    $nextLook = [DateTime]::UtcNow.AddMilliseconds(450)
     try {
       $s = Pick
       if (-not $s) { $out = @{ active = $false } }
@@ -98,8 +98,10 @@ while ($true) {
       }
       $same = ($out.Clone()); $same.Remove('position'); $same.Remove('art')
       $now = ($same | ConvertTo-Json -Compress)
-      $expected = $lastPos + $(if ($lastPlaying) { ([DateTime]::UtcNow - $lastAt).TotalMilliseconds } else { 0 })
-      $jumped = $out.active -and [Math]::Abs([double]$out.position - $expected) -gt 1500
+      $elapsedSinceLast = ([DateTime]::UtcNow - $lastAt).TotalMilliseconds
+      $curRate = $(if ($out.rate) { [double]$out.rate } else { 1.0 })
+      $expected = $lastPos + $(if ($lastPlaying) { $elapsedSinceLast * $curRate } else { 0 })
+      $jumped = $out.active -and ([Math]::Abs([double]$out.position - $expected) -gt 220 -or ($out.playing -and $elapsedSinceLast -ge 2500))
       if ($now -ne $last -or $out.art -or $jumped) {
         Say $out; $last = $now
         if ($out.active) { $lastPos = [double]$out.position; $lastAt = [DateTime]::UtcNow; $lastPlaying = [bool]$out.playing }
