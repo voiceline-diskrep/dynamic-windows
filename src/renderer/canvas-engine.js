@@ -69,6 +69,8 @@ let wasShelfDragging = false;
 let currentVolume = 0.66;
 let isVolumeMuted = false;
 let isDraggingVolume = false;
+let wasVolumeDragging = false;
+let volumeSliderBounds = null;
 
 let antigravityState = {
   status: 'idle', // 'idle' | 'running' | 'thinking' | 'waiting' | 'done' | 'error'
@@ -480,9 +482,9 @@ function drawVectorSpeakerIcon(x, y, s, color, isMuted, vol) {
   ctx.restore();
 }
 
-function updateVolumeFromMouse(clientX, sliderData) {
-  if (!sliderData || !sliderData.w) return;
-  const ratio = Math.max(0, Math.min(1, (clientX - sliderData.x) / sliderData.w));
+function updateVolumeFromMouseY(clientY, bounds) {
+  if (!bounds || !bounds.trackH) return;
+  const ratio = Math.max(0, Math.min(1, (bounds.trackY + bounds.trackH - clientY) / bounds.trackH));
   currentVolume = ratio;
   isVolumeMuted = false;
   ipcRenderer.send('set-system-volume', currentVolume);
@@ -536,7 +538,7 @@ const SONG_POPUP_HEIGHT = 124;
 const SONG_POPUP_WIDTH = 480;
 
 function triggerSongAnnouncement() {
-  if (isTucked) setTucked(false);
+  if (isTucked) return;
   songPopupActiveUntil = performance.now() + SONG_POPUP_DURATION_MS;
 }
 
@@ -554,11 +556,19 @@ function setTucked(on) {
   isTucked = next;
   tuckHoverAt = 0;
   tuckChangedAt = performance.now();
+  if (leaveTimer) {
+    clearTimeout(leaveTimer);
+    leaveTimer = null;
+  }
   if (isTucked) {
     isHovered = false;
     targetProgress = 0.0;
+    animProgress = 0.0;
     currentView = 'home';
+    ipcRenderer.send('island-hover-end');
     ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+  } else {
+    ipcRenderer.send('set-ignore-mouse-events', false);
   }
 }
 
@@ -724,6 +734,20 @@ canvas.addEventListener('mousemove', (e) => {
   mouseX = e.clientX;
   mouseY = e.clientY;
 
+  if (isTucked) {
+    const tuckW = 84;
+    const tuckH = 10;
+    const overTuck = pointInRect(mouseX, mouseY, (window.innerWidth - tuckW) / 2, 0, tuckW, tuckH);
+    if (overTuck) {
+      ipcRenderer.send('set-ignore-mouse-events', false);
+      canvas.style.cursor = 'pointer';
+    } else {
+      ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+      canvas.style.cursor = 'default';
+    }
+    return;
+  }
+
   // Island pill hit detection
   const curP = Math.max(0, Math.min(1, animProgress));
   const curW = getTargetWidth(curP);
@@ -782,13 +806,9 @@ canvas.addEventListener('mousemove', (e) => {
     }
   }
 
-  if (isDraggingVolume) {
-    for (const btn of interactiveButtons) {
-      if (btn.id === 'media_volume_slider' && btn.data) {
-        updateVolumeFromMouse(mouseX, btn.data);
-        break;
-      }
-    }
+  if (isDraggingVolume && volumeSliderBounds) {
+    wasVolumeDragging = true;
+    updateVolumeFromMouseY(mouseY, volumeSliderBounds);
   }
 
   // Shelf drag-out trigger
@@ -829,9 +849,7 @@ canvas.addEventListener('mouseleave', () => {
 
 canvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  if (animProgress < 0.3 && !isTucked) {
-    setTucked(true);
-  }
+  setTucked(!isTucked);
 });
 
 canvas.addEventListener('mousedown', (e) => {
@@ -839,11 +857,13 @@ canvas.addEventListener('mousedown', (e) => {
   const cx = e.clientX;
   const cy = e.clientY;
   wasShelfDragging = false;
+  wasVolumeDragging = false;
   if (currentView === 'media') {
     for (const btn of interactiveButtons) {
       if (btn.id === 'media_volume_slider' && pointInRect(cx, cy, btn.x, btn.y, btn.w, btn.h)) {
         isDraggingVolume = true;
-        updateVolumeFromMouse(cx, btn.data);
+        volumeSliderBounds = btn.data || volumeSliderBounds;
+        updateVolumeFromMouseY(cy, volumeSliderBounds);
         break;
       }
     }
@@ -895,6 +915,10 @@ window.addEventListener('keydown', (e) => {
 canvas.addEventListener('click', (e) => {
   if (wasShelfDragging) {
     wasShelfDragging = false;
+    return;
+  }
+  if (wasVolumeDragging) {
+    wasVolumeDragging = false;
     return;
   }
   const cx = e.clientX;
@@ -1112,6 +1136,7 @@ ipcRenderer.on('animation-speed', (event, speed) => {
   }
 });
 ipcRenderer.on('volume-update', (event, data) => {
+  if (isDraggingVolume) return;
   if (data && typeof data.volume === 'number') {
     currentVolume = Math.max(0, Math.min(1, data.volume));
   }
@@ -1196,19 +1221,22 @@ function animate(now) {
   } catch (err) {
     console.error('Render error:', err);
   }
-  window.addEventListener('wheel', (e) => {
+
+  requestAnimationFrame(animate);
+}
+
+window.addEventListener('wheel', (e) => {
   if (currentView === 'media') {
     if (hoveredButtonId === 'media_volume_slider' || hoveredButtonId === 'media_volume_mute') {
       e.preventDefault();
       const delta = e.deltaY < 0 ? 0.03 : -0.03;
       currentVolume = Math.max(0, Math.min(1, currentVolume + delta));
+      isVolumeMuted = false;
       ipcRenderer.send('set-system-volume', currentVolume);
     }
   }
 }, { passive: false });
 
-requestAnimationFrame(animate);
-}
 requestAnimationFrame(animate);
 
 function sanitizeProjectName(raw) {
@@ -1421,16 +1449,6 @@ function render() {
       ctx.fillStyle = lineCol;
       ctx.fill();
       ctx.restore();
-
-      const overZone = pointInRect(mouseX, mouseY, (window.innerWidth - 160) / 2, 0, 160, 12);
-      if (overZone) {
-        if (!tuckHoverStart) tuckHoverStart = performance.now();
-        else if (performance.now() - tuckHoverStart > TUCK_HOVER_MS) {
-          setTucked(false);
-        }
-      } else {
-        tuckHoverStart = 0;
-      }
       return;
     }
   }
@@ -2535,8 +2553,8 @@ function renderAgentView(x, y, w, h) {
 // -------------------------------------------------------------
 function renderMediaView(x, y, w, h) {
   const topY = y + 40;
-  const contentW = w - 48;
-  const contentX = x + 24;
+  const contentX = x + 22;
+  const contentW = w - 68;
 
   const track = mediaState.track || { title: 'No media playing', artist: 'Open Liner, Spotify, or Media Player', source: 'none', lyrics: [], syncedLyrics: [] };
   const hasTrack = track.title && track.title !== 'No media playing';
@@ -2807,67 +2825,90 @@ function renderMediaView(x, y, w, h) {
     interactiveButtons.push({ id: c.id, x: cx, y: cY, w: cW, h: cH });
   });
 
-  // 4b. Right-Aligned System Volume Slider with Vector Speaker Icon
-  const volTrackW = 74;
-  const volTotalW = 18 + 8 + volTrackW;
-  const volX = contentX + contentW - volTotalW;
-  const volCenterY = cY + cH / 2;
+  // 4b. Vertical System Volume Slider on the Right Side of the Media Island
+  const volPillW = 24;
+  const volPillH = 190;
+  const volCenterX = x + w - 24;
+  const volPillX = volCenterX - volPillW / 2;
+  const volPillY = topY + 2;
   const isVolHovered = hoveredButtonId === 'media_volume_slider' || isDraggingVolume;
   const isMuteHovered = hoveredButtonId === 'media_volume_mute';
+  const effectiveVol = isVolumeMuted ? 0 : currentVolume;
 
-  // Speaker Icon Button
-  drawVectorSpeakerIcon(volX + 8, volCenterY, 13, isVolumeMuted ? '#f87171' : (isMuteHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.7)'), isVolumeMuted, currentVolume);
-  interactiveButtons.push({ id: 'media_volume_mute', x: volX, y: volCenterY - 10, w: 18, h: 20 });
-
-  // Volume Track & Fill
-  const trackX = volX + 26;
-  const trackH = isVolHovered ? 6 : 4;
-  const trackY = volCenterY - trackH / 2;
-
+  // Vertical capsule glass background
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(trackX, trackY, volTrackW, trackH, trackH / 2);
+  ctx.roundRect(volPillX, volPillY, volPillW, volPillH, volPillW / 2);
+  ctx.fillStyle = isVolHovered ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.045)';
+  ctx.strokeStyle = isVolHovered ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.08)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  // Top percentage badge inside capsule
+  ctx.font = '600 8px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isVolHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.65)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${Math.round(effectiveVol * 100)}%`, volCenterX, volPillY + 13);
+
+  // Vertical Volume Track & Bottom-to-Top Fill
+  const trackW = isVolHovered ? 6 : 4;
+  const trackX = volCenterX - trackW / 2;
+  const trackY = volPillY + 25;
+  const trackH = volPillH - 52;
+
+  ctx.beginPath();
+  ctx.roundRect(trackX, trackY, trackW, trackH, trackW / 2);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
   ctx.fill();
 
-  const effectiveVol = isVolumeMuted ? 0 : currentVolume;
-  const volFillW = Math.max(0, Math.min(volTrackW, volTrackW * effectiveVol));
-  if (volFillW > 0) {
+  const volFillH = Math.max(0, Math.min(trackH, trackH * effectiveVol));
+  const volFillY = trackY + trackH - volFillH;
+  if (volFillH > 0) {
     ctx.beginPath();
-    ctx.roundRect(trackX, trackY, volFillW, trackH, trackH / 2);
+    ctx.roundRect(trackX, volFillY, trackW, volFillH, trackW / 2);
     ctx.fillStyle = isVolHovered ? (albumAccentColor || '#38bdf8') : '#ffffff';
     ctx.fill();
   }
 
-  // Thumb knob
+  // Circular thumb knob
   if (isVolHovered) {
     ctx.beginPath();
-    ctx.arc(trackX + volFillW, volCenterY, 5, 0, Math.PI * 2);
+    ctx.arc(volCenterX, volFillY, 5.5, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
     ctx.shadowBlur = 4;
     ctx.fill();
   }
   ctx.restore();
 
-  // Percentage badge on hover/drag
-  if (isVolHovered) {
-    ctx.save();
-    ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`${Math.round(effectiveVol * 100)}%`, trackX + volTrackW / 2, trackY - 4);
-    ctx.restore();
-  }
+  // Speaker Mute Icon at the bottom of the vertical capsule
+  const speakerY = volPillY + volPillH - 13;
+  drawVectorSpeakerIcon(
+    volCenterX,
+    speakerY,
+    12,
+    isVolumeMuted ? '#f87171' : (isMuteHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.75)'),
+    isVolumeMuted,
+    currentVolume
+  );
+  interactiveButtons.push({
+    id: 'media_volume_mute',
+    x: volPillX,
+    y: volPillY + volPillH - 25,
+    w: volPillW,
+    h: 25
+  });
 
+  volumeSliderBounds = { trackY, trackH };
   interactiveButtons.push({
     id: 'media_volume_slider',
-    data: { x: trackX, w: volTrackW },
-    x: trackX - 4,
-    y: volCenterY - 10,
-    w: volTrackW + 8,
-    h: 20
+    data: { trackY, trackH },
+    x: volPillX - 3,
+    y: trackY - 6,
+    w: volPillW + 6,
+    h: trackH + 12
   });
 
   // 5. Slowed + Reverb Playback Speed Chips & Lyric Sync Offset Row

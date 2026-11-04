@@ -405,18 +405,39 @@ function createIslandWindow() {
 
 
 
-  // System Volume IPC
+  // System Volume IPC (coalesced to prevent child process storms while dragging)
+  ipcMain.removeHandler('get-system-volume');
+  ipcMain.removeAllListeners('set-system-volume');
+  ipcMain.removeAllListeners('toggle-system-mute');
+
   ipcMain.handle('get-system-volume', async () => {
     return await sysHelper.getVolume();
   });
+
+  let isSettingVolume = false;
+  let pendingVolumeVal = null;
   ipcMain.on('set-system-volume', async (event, val) => {
-    const res = await sysHelper.setVolume(val);
-    BrowserWindow.getAllWindows().forEach(w => {
-      if (!w.isDestroyed()) {
-        w.webContents.send('volume-update', res);
+    pendingVolumeVal = val;
+    if (isSettingVolume) return;
+    isSettingVolume = true;
+    try {
+      while (pendingVolumeVal !== null) {
+        const target = pendingVolumeVal;
+        pendingVolumeVal = null;
+        const res = await sysHelper.setVolume(target);
+        if (pendingVolumeVal === null) {
+          BrowserWindow.getAllWindows().forEach(w => {
+            if (!w.isDestroyed()) {
+              w.webContents.send('volume-update', res);
+            }
+          });
+        }
       }
-    });
+    } finally {
+      isSettingVolume = false;
+    }
   });
+
   ipcMain.on('toggle-system-mute', async () => {
     const res = await sysHelper.toggleMute();
     BrowserWindow.getAllWindows().forEach(w => {
@@ -573,7 +594,7 @@ function setupTray() {
     const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');
     if (!tray) {
       tray = new Tray(iconPath);
-      tray.setToolTip('Dynamic Windows (v1.3.5)');
+      tray.setToolTip('Dynamic Windows (v1.3.6)');
     }
     const contextMenu = Menu.buildFromTemplate([
       {
