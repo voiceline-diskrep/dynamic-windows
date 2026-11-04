@@ -28,6 +28,7 @@ process.on('unhandledRejection', (reason) => {
 const AntigravityMonitor = require('./antigravity-monitor');
 const AgentHooksServer = require('./agent-hooks-server');
 const MediaController = require('./media-spotify');
+const CallMonitor = require('./call-monitor');
 const DropZone = require('./drop-zone');
 const configManager = require('./config-manager');
 const sysHelper = require('./sys-helper');
@@ -46,6 +47,7 @@ let tray = null;
 let antigravityMonitor = null;
 let agentHooksServer = null;
 let mediaController = null;
+let callMonitor = null;
 let dropZone = null;
 let isQuitting = false;
 
@@ -161,9 +163,9 @@ function createIslandWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const screenBounds = primaryDisplay.bounds;
 
-  // Initial standby dimensions
-  const initialWidth = 560;  // Generous container width to allow fluid canvas animation
-  const initialHeight = 360; // Expanded height container for spacious shelf and multi-project stack
+  // Initial standby dimensions (880x420 transparent click-through canvas supports Left AI + 520px Lyric Pill + Right Call Capsule without shadow clipping)
+  const initialWidth = 880;
+  const initialHeight = 420;
 
   const initialX = Math.round((screenBounds.width - initialWidth) / 2);
   const initialY = 0;
@@ -539,15 +541,31 @@ function createIslandWindow() {
     });
   });
 
+  // Call Detection & Controls IPC
+  ipcMain.removeAllListeners('call-action');
+  ipcMain.on('call-action', async (event, action) => {
+    if (callMonitor) {
+      await callMonitor.handleAction(action);
+      sendCallState();
+    }
+  });
+
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
     sendMediaState();
+    sendCallState();
     sendDropZoneFiles();
     sendDisplayMode();
     sendAnimationSpeed();
     sendDynamicLyrics();
   });
+}
+
+function sendCallState() {
+  if (mainWindow && !mainWindow.isDestroyed() && callMonitor) {
+    mainWindow.webContents.send('call-state', callMonitor.getState());
+  }
 }
 
 function sendAntigravityState() {
@@ -594,7 +612,7 @@ function setupTray() {
     const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');
     if (!tray) {
       tray = new Tray(iconPath);
-      tray.setToolTip('Dynamic Windows (v1.3.7)');
+      tray.setToolTip('Dynamic Windows (v1.3.8)');
     }
     const contextMenu = Menu.buildFromTemplate([
       {
@@ -702,6 +720,10 @@ app.whenReady().then(() => {
   });
   antigravityMonitor.start();
 
+  // 2b. Universal & Discord Call Monitor
+  callMonitor = new CallMonitor();
+  callMonitor.on('changed', () => sendCallState());
+
   // 3. Agent Hooks Server & Antigravity MCP Bridge
   agentHooksServer = new AgentHooksServer();
   agentHooksServer.on('permission-requested', (prompt) => {
@@ -776,6 +798,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (mediaController) mediaController.destroy();
   if (antigravityMonitor) antigravityMonitor.stop();
+  if (callMonitor) callMonitor.stop();
   if (agentHooksServer) agentHooksServer.stop();
 });
 
