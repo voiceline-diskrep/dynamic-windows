@@ -918,6 +918,7 @@ class MediaController extends EventEmitter {
         artist: String(this.now.artist || this.now.album || source),
         album: String(this.now.album || ''),
         source,
+        rawApp: String(this.now.app || ''),
         image_url: imageUrl,
         lyrics: this.plainLyrics,
         timedLyrics: this.currentLyrics, // [{ t: ms, end?: ms, text, words?: [...] }]

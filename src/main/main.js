@@ -449,6 +449,53 @@ function createIslandWindow() {
     });
   });
 
+  // Music Player Specific Volume IPC (only adjusts volume of the active music player, not system)
+  ipcMain.removeHandler('get-media-volume');
+  ipcMain.removeAllListeners('set-media-volume');
+  ipcMain.removeAllListeners('toggle-media-mute');
+
+  ipcMain.handle('get-media-volume', async (event, appHint) => {
+    const hint = appHint || (mediaController && mediaController.now && mediaController.now.app) || '';
+    return await sysHelper.getMediaVolume(hint);
+  });
+
+  let isSettingMediaVolume = false;
+  let pendingMediaVolume = null;
+  ipcMain.on('set-media-volume', async (event, payload) => {
+    const val = typeof payload === 'object' && payload !== null ? payload.val : payload;
+    const appHint = typeof payload === 'object' && payload !== null ? payload.app : '';
+    const hint = appHint || (mediaController && mediaController.now && mediaController.now.app) || '';
+    pendingMediaVolume = { val, hint };
+    if (isSettingMediaVolume) return;
+    isSettingMediaVolume = true;
+    try {
+      while (pendingMediaVolume !== null) {
+        const target = pendingMediaVolume;
+        pendingMediaVolume = null;
+        const res = await sysHelper.setMediaVolume(target.val, target.hint);
+        if (pendingMediaVolume === null) {
+          BrowserWindow.getAllWindows().forEach(w => {
+            if (!w.isDestroyed()) {
+              w.webContents.send('media-volume-update', res);
+            }
+          });
+        }
+      }
+    } finally {
+      isSettingMediaVolume = false;
+    }
+  });
+
+  ipcMain.on('toggle-media-mute', async (event, appHint) => {
+    const hint = appHint || (mediaController && mediaController.now && mediaController.now.app) || '';
+    const res = await sysHelper.toggleMediaMute(hint);
+    BrowserWindow.getAllWindows().forEach(w => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('media-volume-update', res);
+      }
+    });
+  });
+
   // Native Drag Out for Drop Shelf files
   ipcMain.on('shelf-drag-start', async (event, filePath) => {
     if (!filePath || typeof filePath !== 'string' || !fs.existsSync(filePath)) return;
@@ -576,7 +623,14 @@ function sendAntigravityState() {
 
 function sendMediaState() {
   if (mainWindow && !mainWindow.isDestroyed() && mediaController) {
-    mainWindow.webContents.send('media-state', mediaController.getState());
+    const state = mediaController.getState();
+    mainWindow.webContents.send('media-state', state);
+    const hint = (mediaController.now && mediaController.now.app) || (state.track && state.track.source) || '';
+    sysHelper.getMediaVolume(hint).then(vol => {
+      if (mainWindow && !mainWindow.isDestroyed() && vol && !vol.error) {
+        mainWindow.webContents.send('media-volume-update', vol);
+      }
+    }).catch(() => {});
   }
 }
 

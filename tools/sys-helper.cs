@@ -28,6 +28,51 @@ namespace DynamicWindowsTools {
         int GetPeakValue(out float pfPeak);
     }
 
+    [ComImport, Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IAudioSessionManager2 {
+        int NotYetImplemented1();
+        int NotYetImplemented2();
+        [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator SessionEnum);
+    }
+
+    [ComImport, Guid("E2F5BB11-0570-40CA-ACDD-3AA01277dee8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IAudioSessionEnumerator {
+        [PreserveSig] int GetCount(out int SessionCount);
+        [PreserveSig] int GetSession(int SessionIndex, out IAudioSessionControl Session);
+    }
+
+    [ComImport, Guid("F4B1A599-7266-4319-A8CA-E70ACB11E8CD"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IAudioSessionControl {
+        [PreserveSig] int GetState(out int pRetVal);
+        [PreserveSig] int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+    }
+
+    [ComImport, Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IAudioSessionControl2 {
+        [PreserveSig] int GetState(out int pRetVal);
+        [PreserveSig] int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+        [PreserveSig] int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string Value, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
+        [PreserveSig] int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+        [PreserveSig] int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string Value, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
+        [PreserveSig] int GetGroupingParam(out Guid pRetVal);
+        [PreserveSig] int SetGroupingParam([MarshalAs(UnmanagedType.LPStruct)] Guid Override, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
+        [PreserveSig] int RegisterAudioSessionNotification(object pClient);
+        [PreserveSig] int UnregisterAudioSessionNotification(object pClient);
+        [PreserveSig] int GetSessionIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+        [PreserveSig] int GetSessionInstanceIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string pRetVal);
+        [PreserveSig] int GetProcessId(out uint pRetVal);
+        [PreserveSig] int IsSystemSoundsSession();
+        [PreserveSig] int SetDuckingPreference(bool optOut);
+    }
+
+    [ComImport, Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ISimpleAudioVolume {
+        [PreserveSig] int SetMasterVolume(float fLevel, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
+        [PreserveSig] int GetMasterVolume(out float pfLevel);
+        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, [MarshalAs(UnmanagedType.LPStruct)] Guid EventContext);
+        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+    }
+
     [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     public interface IMMDevice {
         int Activate(ref Guid id, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object aev);
@@ -115,6 +160,90 @@ namespace DynamicWindowsTools {
             } catch {
                 return 0f;
             }
+        }
+
+        struct SessionItem {
+            public ISimpleAudioVolume vol;
+            public uint pid;
+            public string procName;
+            public string sessionIdent;
+        }
+
+        static List<SessionItem> GetAllSessions() {
+            var list = new List<SessionItem>();
+            try {
+                var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+                IMMDevice dev;
+                enumerator.GetDefaultAudioEndpoint(0, 1, out dev);
+                var iid = typeof(IAudioSessionManager2).GUID;
+                object mgrObj;
+                dev.Activate(ref iid, 23, IntPtr.Zero, out mgrObj);
+                var mgr = (IAudioSessionManager2)mgrObj;
+                IAudioSessionEnumerator sessionEnum;
+                int hr = mgr.GetSessionEnumerator(out sessionEnum);
+                if (hr != 0 || sessionEnum == null) return list;
+                int count;
+                sessionEnum.GetCount(out count);
+                for (int i = 0; i < count; i++) {
+                    IAudioSessionControl ctl;
+                    sessionEnum.GetSession(i, out ctl);
+                    var ctl2 = ctl as IAudioSessionControl2;
+                    var vol = ctl as ISimpleAudioVolume;
+                    if (vol == null) continue;
+                    uint pid = 0;
+                    string sId = "";
+                    if (ctl2 != null) {
+                        ctl2.GetProcessId(out pid);
+                        try { ctl2.GetSessionIdentifier(out sId); } catch {}
+                    }
+                    string pName = "";
+                    if (pid > 0) {
+                        try { pName = Process.GetProcessById((int)pid).ProcessName; } catch {}
+                    }
+                    list.Add(new SessionItem { vol = vol, pid = pid, procName = pName, sessionIdent = sId });
+                }
+            } catch {}
+            return list;
+        }
+
+        static List<SessionItem> FindMatchingSessions(string hint) {
+            var sessions = GetAllSessions();
+            var matched = new List<SessionItem>();
+            if (!string.IsNullOrEmpty(hint)) {
+                uint hintPid;
+                if (uint.TryParse(hint, out hintPid) && hintPid > 0) {
+                    foreach (var s in sessions) {
+                        if (s.pid == hintPid) matched.Add(s);
+                    }
+                    if (matched.Count > 0) return matched;
+                }
+                foreach (var s in sessions) {
+                    if (!string.IsNullOrEmpty(s.procName) && s.procName.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) {
+                        matched.Add(s);
+                    } else if (!string.IsNullOrEmpty(s.sessionIdent) && s.sessionIdent.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0) {
+                        matched.Add(s);
+                    }
+                }
+                if (matched.Count > 0) return matched;
+            }
+
+            string[] preferred = new string[] { "liner", "spotify", "music.ui", "applemusic", "itunes", "wmplayer", "foobar2000", "aimp", "vlc", "deezer", "tidal", "chrome", "msedge", "firefox", "brave" };
+            foreach (var pref in preferred) {
+                foreach (var s in sessions) {
+                    if (!string.IsNullOrEmpty(s.procName) && s.procName.IndexOf(pref, StringComparison.OrdinalIgnoreCase) >= 0) {
+                        matched.Add(s);
+                    }
+                }
+                if (matched.Count > 0) return matched;
+            }
+
+            foreach (var s in sessions) {
+                if (s.pid > 0 && !string.IsNullOrEmpty(s.procName) && !s.procName.Equals("audiodg", StringComparison.OrdinalIgnoreCase)) {
+                    matched.Add(s);
+                    break;
+                }
+            }
+            return matched;
         }
 
         static string EscapeJson(string s) {
@@ -247,6 +376,77 @@ namespace DynamicWindowsTools {
                     float vol = 0;
                     epv.GetMasterVolumeLevelScalar(out vol);
                     Console.WriteLine(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{{\"volume\":{0:F3},\"muted\":{1}}}", vol, (!mute) ? "true" : "false"));
+                }
+                else if (cmd == "get-media-volume") {
+                    string target = args.Length > 1 ? args[1] : "";
+                    var matched = FindMatchingSessions(target);
+                    if (matched.Count == 0) {
+                        Console.WriteLine("{\"volume\":1.000,\"muted\":false,\"app\":\"none\",\"pid\":0}");
+                    } else {
+                        float v = 0;
+                        bool m = false;
+                        matched[0].vol.GetMasterVolume(out v);
+                        matched[0].vol.GetMute(out m);
+                        Console.WriteLine(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{{\"volume\":{0:F3},\"muted\":{1},\"app\":\"{2}\",\"pid\":{3}}}", v, m ? "true" : "false", EscapeJson(matched[0].procName), matched[0].pid));
+                    }
+                }
+                else if (cmd == "set-media-volume" && args.Length > 1) {
+                    float targetVol;
+                    if (float.TryParse(args[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out targetVol)) {
+                        targetVol = Math.Max(0.0f, Math.Min(1.0f, targetVol));
+                        string targetApp = args.Length > 2 ? args[2] : "";
+                        var matched = FindMatchingSessions(targetApp);
+                        if (matched.Count == 0) {
+                            Console.WriteLine(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{{\"volume\":{0:F3},\"muted\":false,\"app\":\"none\",\"pid\":0}}", targetVol));
+                        } else {
+                            Guid g = Guid.Empty;
+                            foreach (var s in matched) {
+                                s.vol.SetMasterVolume(targetVol, g);
+                                if (targetVol > 0) {
+                                    s.vol.SetMute(false, g);
+                                }
+                            }
+                            float v = 0;
+                            bool m = false;
+                            matched[0].vol.GetMasterVolume(out v);
+                            matched[0].vol.GetMute(out m);
+                            Console.WriteLine(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{{\"volume\":{0:F3},\"muted\":{1},\"app\":\"{2}\",\"pid\":{3}}}", v, m ? "true" : "false", EscapeJson(matched[0].procName), matched[0].pid));
+                        }
+                    }
+                }
+                else if (cmd == "toggle-media-mute") {
+                    string targetApp = args.Length > 1 ? args[1] : "";
+                    var matched = FindMatchingSessions(targetApp);
+                    if (matched.Count == 0) {
+                        Console.WriteLine("{\"volume\":1.000,\"muted\":false,\"app\":\"none\",\"pid\":0}");
+                    } else {
+                        bool curMute = false;
+                        matched[0].vol.GetMute(out curMute);
+                        bool newMute = !curMute;
+                        Guid g = Guid.Empty;
+                        foreach (var s in matched) {
+                            s.vol.SetMute(newMute, g);
+                        }
+                        float v = 0;
+                        matched[0].vol.GetMasterVolume(out v);
+                        Console.WriteLine(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{{\"volume\":{0:F3},\"muted\":{1},\"app\":\"{2}\",\"pid\":{3}}}", v, newMute ? "true" : "false", EscapeJson(matched[0].procName), matched[0].pid));
+                    }
+                }
+                else if (cmd == "set-media-mute" && args.Length > 1) {
+                    bool targetMute = args[1] == "1" || args[1].Equals("true", StringComparison.OrdinalIgnoreCase);
+                    string targetApp = args.Length > 2 ? args[2] : "";
+                    var matched = FindMatchingSessions(targetApp);
+                    if (matched.Count == 0) {
+                        Console.WriteLine(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{{\"volume\":1.000,\"muted\":{0},\"app\":\"none\",\"pid\":0}}", targetMute ? "true" : "false"));
+                    } else {
+                        Guid g = Guid.Empty;
+                        foreach (var s in matched) {
+                            s.vol.SetMute(targetMute, g);
+                        }
+                        float v = 0;
+                        matched[0].vol.GetMasterVolume(out v);
+                        Console.WriteLine(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{{\"volume\":{0:F3},\"muted\":{1},\"app\":\"{2}\",\"pid\":{3}}}", v, targetMute ? "true" : "false", EscapeJson(matched[0].procName), matched[0].pid));
+                    }
                 }
                 else if (cmd == "get-call-audio") {
                     bool outMute = false;

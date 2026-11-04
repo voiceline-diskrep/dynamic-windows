@@ -606,12 +606,22 @@ function drawVectorSpeakerIcon(x, y, s, color, isMuted, vol) {
   ctx.restore();
 }
 
+function getMediaAppHint() {
+  if (mediaState && mediaState.track) {
+    if (mediaState.track.rawApp) return mediaState.track.rawApp;
+    if (mediaState.track.source && mediaState.track.source !== 'Windows Media' && mediaState.track.source !== 'none') {
+      return mediaState.track.source;
+    }
+  }
+  return '';
+}
+
 function updateVolumeFromMouseY(clientY, bounds) {
   if (!bounds || !bounds.trackH) return;
   const ratio = Math.max(0, Math.min(1, (bounds.trackY + bounds.trackH - clientY) / bounds.trackH));
   currentVolume = ratio;
   isVolumeMuted = false;
-  ipcRenderer.send('set-system-volume', currentVolume);
+  ipcRenderer.send('set-media-volume', { val: currentVolume, app: getMediaAppHint() });
 }
 
 function drawVectorMediaIcon(kind, x, y, s, colour) {
@@ -1170,7 +1180,7 @@ function handleButtonClick(id, data) {
   } else if (id === 'jump_antigravity' || (id && id.startsWith('focus_proj_'))) {
     ipcRenderer.send('focus-antigravity');
   } else if (id === 'media_volume_mute') {
-    ipcRenderer.send('toggle-system-mute');
+    ipcRenderer.send('toggle-media-mute', getMediaAppHint());
   } else if (id === 'media_play_pause') {
     ipcRenderer.send('media-play-pause');
   } else if (id === 'media_next') {
@@ -1285,6 +1295,15 @@ ipcRenderer.on('animation-speed', (event, speed) => {
     animSpeedMultiplier = val;
   }
 });
+ipcRenderer.on('media-volume-update', (event, data) => {
+  if (isDraggingVolume) return;
+  if (data && typeof data.volume === 'number') {
+    currentVolume = Math.max(0, Math.min(1, data.volume));
+  }
+  if (data && typeof data.muted === 'boolean') {
+    isVolumeMuted = data.muted;
+  }
+});
 ipcRenderer.on('volume-update', (event, data) => {
   if (isDraggingVolume) return;
   if (data && typeof data.volume === 'number') {
@@ -1295,7 +1314,7 @@ ipcRenderer.on('volume-update', (event, data) => {
   }
 });
 try {
-  ipcRenderer.invoke('get-system-volume').then(res => {
+  ipcRenderer.invoke('get-media-volume', '').then(res => {
     if (res && typeof res.volume === 'number') currentVolume = Math.max(0, Math.min(1, res.volume));
     if (res && typeof res.muted === 'boolean') isVolumeMuted = res.muted;
   }).catch(() => {});
@@ -1382,7 +1401,7 @@ window.addEventListener('wheel', (e) => {
       const delta = e.deltaY < 0 ? 0.03 : -0.03;
       currentVolume = Math.max(0, Math.min(1, currentVolume + delta));
       isVolumeMuted = false;
-      ipcRenderer.send('set-system-volume', currentVolume);
+      ipcRenderer.send('set-media-volume', { val: currentVolume, app: getMediaAppHint() });
     }
   }
 }, { passive: false });
@@ -3575,7 +3594,7 @@ function renderMediaView(x, y, w, h) {
     interactiveButtons.push({ id: c.id, x: cx, y: cY, w: cW, h: cH });
   });
 
-  // 4b. Vertical System Volume Slider on the Right Side of the Media Island
+  // 4b. Vertical Music Player Volume Slider on the Right Side of the Media Island
   const volPillW = 24;
   const volPillH = 190;
   const volCenterX = x + w - 24;
@@ -3590,14 +3609,14 @@ function renderMediaView(x, y, w, h) {
   ctx.beginPath();
   ctx.roundRect(volPillX, volPillY, volPillW, volPillH, volPillW / 2);
   ctx.fillStyle = isVolHovered ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.045)';
-  ctx.strokeStyle = isVolHovered ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.08)';
+  ctx.strokeStyle = isVolHovered ? (albumAccentColor ? colorWithAlpha(albumAccentColor, 0.45) : 'rgba(255, 255, 255, 0.22)') : 'rgba(255, 255, 255, 0.08)';
   ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
 
-  // Top percentage badge inside capsule
+  // Top percentage badge inside capsule (colored with album accent on hover)
   ctx.font = '600 8px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = isVolHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.65)';
+  ctx.fillStyle = isVolHovered ? (albumAccentColor || '#38bdf8') : 'rgba(255, 255, 255, 0.65)';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(`${Math.round(effectiveVol * 100)}%`, volCenterX, volPillY + 13);
@@ -3639,7 +3658,7 @@ function renderMediaView(x, y, w, h) {
     volCenterX,
     speakerY,
     12,
-    isVolumeMuted ? '#f87171' : (isMuteHovered ? '#ffffff' : 'rgba(255, 255, 255, 0.75)'),
+    isVolumeMuted ? '#f87171' : (isMuteHovered ? (albumAccentColor || '#ffffff') : 'rgba(255, 255, 255, 0.75)'),
     isVolumeMuted,
     currentVolume
   );
