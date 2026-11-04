@@ -584,16 +584,6 @@
         </div>
         <div class="setting-row">
           <div class="setting-info">
-            <span class="setting-label">Seamless Top Bezel Bar (for Chrome & Maximized Windows)</span>
-            <span class="setting-desc">Reserves a sleek 34px matte-black bezel bar across the top of your screen so Chrome tabs and maximized windows never overlap underneath the Island. Eliminates background wallpaper bleed.</span>
-          </div>
-          <label class="switch">
-            <input type="checkbox" id="setting-reserveTopBezel">
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="setting-row">
-          <div class="setting-info">
             <span class="setting-label">Live Lyrics Output</span>
             <span class="setting-desc">Displays rotating and synced lyrics lines inside the Island Media view with ambient typography.</span>
           </div>
@@ -731,7 +721,6 @@
       document.getElementById('setting-clock24h').checked = !!cfg.clock24h;
       document.getElementById('setting-showSeconds').checked = !!cfg.showSeconds;
       if (document.getElementById('setting-dynamicLyrics')) document.getElementById('setting-dynamicLyrics').checked = cfg.dynamicLyrics !== false;
-      if (document.getElementById('setting-reserveTopBezel')) document.getElementById('setting-reserveTopBezel').checked = !!cfg.reserveTopBezel;
 
       // Antigravity
       document.getElementById('setting-antigravityMonitor').checked = !!cfg.antigravityMonitor;
@@ -789,7 +778,6 @@
     bindSettingChange('setting-clock24h', 'clock24h');
     bindSettingChange('setting-showSeconds', 'showSeconds');
     bindSettingChange('setting-dynamicLyrics', 'dynamicLyrics');
-    bindSettingChange('setting-reserveTopBezel', 'reserveTopBezel');
     bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');
     bindSettingChange('setting-autoFocusAntigravity', 'autoFocusAntigravity');
     bindSettingChange('setting-hooksPort', 'hooksPort', true);

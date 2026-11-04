@@ -15,12 +15,11 @@ const CONFIG_DIR = path.join(
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.3.4',
+  version: '1.3.5',
   animationSpeed: 1.0,
   displayMode: 'island', // 'island' | 'notch'
   dynamicLyrics: true, // Smooth word-by-word progressive lyric reveal
   gameMode: true, // Auto-hide in full-screen games (default on)
-  reserveTopBezel: false, // Seamless 34px matte top bezel bar for Chrome tabs & maximized windows
   startup: false,
   startupTakeover: false,
   clock24h: false,

@@ -37,50 +37,10 @@ const BLANK_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC
 const fileIconsCache = new Map();
 
 let mainWindow = null;
-let bezelBarWindow = null;
-
-function applyTopBezel() {
+function cleanupTopBezel() {
   try {
-    const enabled = configManager.get('reserveTopBezel') === true;
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const screenBounds = primaryDisplay.bounds;
-    const notchHeight = 34;
-
-    if (enabled) {
-      sysHelper.setWorkAreaTop(notchHeight);
-      if (!bezelBarWindow || bezelBarWindow.isDestroyed()) {
-        bezelBarWindow = new BrowserWindow({
-          x: 0,
-          y: 0,
-          width: screenBounds.width,
-          height: notchHeight,
-          frame: false,
-          transparent: false,
-          backgroundColor: '#09090b',
-          alwaysOnTop: true,
-          skipTaskbar: true,
-          focusable: false,
-          resizable: false,
-          movable: false,
-          hasShadow: false,
-          webPreferences: { nodeIntegration: false, contextIsolation: true }
-        });
-        bezelBarWindow.setIgnoreMouseEvents(true);
-        bezelBarWindow.setAlwaysOnTop(true, 'screen-saver');
-      } else {
-        bezelBarWindow.setBounds({ x: 0, y: 0, width: screenBounds.width, height: notchHeight });
-        bezelBarWindow.showInactive();
-        bezelBarWindow.setAlwaysOnTop(true, 'screen-saver');
-      }
-    } else {
-      sysHelper.restoreWorkArea();
-      if (bezelBarWindow && !bezelBarWindow.isDestroyed()) {
-        bezelBarWindow.hide();
-      }
-    }
-  } catch (err) {
-    console.error('[BEZEL ERROR]', err);
-  }
+    sysHelper.restoreWorkArea();
+  } catch (err) {}
 }
 let tray = null;
 let antigravityMonitor = null;
@@ -443,19 +403,7 @@ function createIslandWindow() {
     }
   });
 
-  // Seamless Top Bezel Bar IPC
-  ipcMain.on('set-reserve-top-bezel', (event, enabled) => {
-    configManager.set('reserveTopBezel', Boolean(enabled));
-    applyTopBezel();
-    BrowserWindow.getAllWindows().forEach(w => {
-      if (!w.isDestroyed()) {
-        w.webContents.send('reserve-top-bezel-toggled', { enabled: Boolean(enabled) });
-      }
-    });
-  });
-  ipcMain.on('reserve-top-bezel-toggled', () => {
-    applyTopBezel();
-  });
+
 
   // System Volume IPC
   ipcMain.handle('get-system-volume', async () => {
@@ -625,7 +573,7 @@ function setupTray() {
     const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');
     if (!tray) {
       tray = new Tray(iconPath);
-      tray.setToolTip('Dynamic Windows (v1.3.4)');
+      tray.setToolTip('Dynamic Windows (v1.3.5)');
     }
     const contextMenu = Menu.buildFromTemplate([
       {
@@ -774,7 +722,7 @@ app.whenReady().then(() => {
   agentHooksServer.start();
 
   createIslandWindow();
-  applyTopBezel();
+  cleanupTopBezel();
   setupTray();
   setupGlobalShortcuts();
 
