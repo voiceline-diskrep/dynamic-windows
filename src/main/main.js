@@ -30,6 +30,7 @@ const AgentHooksServer = require('./agent-hooks-server');
 const MediaController = require('./media-spotify');
 const CallMonitor = require('./call-monitor');
 const DropZone = require('./drop-zone');
+const UserDataManager = require('./user-data-manager');
 const configManager = require('./config-manager');
 const sysHelper = require('./sys-helper');
 const { createSettingsWindow, registerSettingsIPC } = require('./settings-window');
@@ -49,6 +50,7 @@ let agentHooksServer = null;
 let mediaController = null;
 let callMonitor = null;
 let dropZone = null;
+let userDataManager = null;
 let isQuitting = false;
 
 let gameModeEnabled = configManager.get('gameMode') !== false;
@@ -352,9 +354,16 @@ function createIslandWindow() {
     if (dropZone) event.returnValue = dropZone.getFiles();
   });
 
-  ipcMain.on('dropzone-add-file', (event, filePath) => {
+  ipcMain.on('dropzone-add-file', (event, data) => {
+    const filePath = typeof data === 'string' ? data : (data && data.filePath);
+    const isOneTime = data && typeof data === 'object' ? Boolean(data.isOneTime) : false;
     if (dropZone && filePath) {
       dropZone.addFile(filePath);
+      const baseName = path.basename(filePath);
+      const destPath = path.join(dropZone.dir, baseName);
+      if (userDataManager) {
+        userDataManager.setFileShelfMetadata(destPath, isOneTime);
+      }
       sendDropZoneFiles();
     }
   });
@@ -367,7 +376,11 @@ function createIslandWindow() {
 
   ipcMain.on('dropzone-delete-file', (event, fileName) => {
     if (dropZone && fileName) {
-      dropZone.deleteFile(fileName);
+      const fullPath = path.isAbsolute(fileName) ? fileName : path.join(dropZone.dir, fileName);
+      if (userDataManager) {
+        userDataManager.removeFileShelfMetadata(fullPath);
+      }
+      dropZone.deleteFile(path.basename(fileName));
       sendDropZoneFiles();
     }
   });
@@ -377,6 +390,11 @@ function createIslandWindow() {
       dropZone.clearAll();
       sendDropZoneFiles();
     }
+  });
+
+  ipcMain.on('exit-app', () => {
+    isQuitting = true;
+    app.quit();
   });
 
   ipcMain.on('dropzone-browse-file', async () => {
@@ -497,7 +515,8 @@ function createIslandWindow() {
   });
 
   // Native Drag Out for Drop Shelf files
-  ipcMain.on('shelf-drag-start', async (event, filePath) => {
+  ipcMain.on('shelf-drag-start', async (event, payload) => {
+    const filePath = typeof payload === 'string' ? payload : (payload && payload.filePath);
     if (!filePath || typeof filePath !== 'string' || !fs.existsSync(filePath)) return;
     try {
       let icon = fileIconsCache.get(filePath);
@@ -515,6 +534,18 @@ function createIslandWindow() {
       event.sender.startDrag({ file: filePath, icon });
     } catch (err) {
       console.error('[DRAG ERROR]', err);
+    }
+  });
+
+  // Automatically auto-clear one-time shelf files once dragged out into external apps
+  ipcMain.on('shelf-drag-completed', (event, filePath) => {
+    if (!filePath || !dropZone) return;
+    const baseName = path.basename(filePath);
+    const destPath = path.isAbsolute(filePath) ? filePath : path.join(dropZone.dir, baseName);
+    if (userDataManager && userDataManager.isOneTimeFile(destPath)) {
+      userDataManager.removeFileShelfMetadata(destPath);
+      dropZone.deleteFile(baseName);
+      sendDropZoneFiles();
     }
   });
 
@@ -636,7 +667,12 @@ function sendMediaState() {
 
 function sendDropZoneFiles() {
   if (mainWindow && !mainWindow.isDestroyed() && dropZone) {
-    mainWindow.webContents.send('dropzone-files', dropZone.getFiles());
+    const rawFiles = dropZone.getFiles();
+    const enriched = rawFiles.map(f => ({
+      ...f,
+      oneTime: userDataManager ? userDataManager.isOneTimeFile(f.path) : false
+    }));
+    mainWindow.webContents.send('dropzone-files', enriched);
   }
 }
 
@@ -763,6 +799,8 @@ app.whenReady().then(() => {
     }
   });
   dropZone = new DropZone();
+  userDataManager = new UserDataManager();
+  userDataManager.registerIpc(ipcMain, () => mainWindow);
   registerSettingsIPC(dropZone);
   startClipboardMonitor();
 

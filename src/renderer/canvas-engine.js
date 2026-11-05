@@ -26,6 +26,137 @@ const { ipcRenderer, webUtils } = require('electron');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
+
+// -------------------------------------------------------------
+// Interactive Inline Modal Support (Calendar Notes, To-Do Tasks, Categories)
+// -------------------------------------------------------------
+function showInlineModal(title, placeholder, extraChips, callback) {
+  const modal = document.getElementById('inline-modal');
+  const modalTitle = document.getElementById('inline-modal-title');
+  const modalInput = document.getElementById('inline-modal-input');
+  const modalExtra = document.getElementById('inline-modal-extra');
+  const btnCancel = document.getElementById('inline-modal-cancel');
+  const btnSubmit = document.getElementById('inline-modal-submit');
+
+  if (!modal || !modalInput) return;
+
+  modalTitle.textContent = title || 'Input';
+  modalInput.placeholder = placeholder || 'Enter value...';
+  modalInput.value = '';
+  inlineModalCallback = callback;
+  inlineModalSelectedChip = (extraChips && extraChips[0]) ? extraChips[0].id : null;
+
+  if (Array.isArray(extraChips) && extraChips.length > 0) {
+    modalExtra.innerHTML = '';
+    modalExtra.style.display = 'flex';
+    extraChips.forEach((ch, idx) => {
+      const chipEl = document.createElement('div');
+      chipEl.className = 'modal-chip' + (idx === 0 ? ' active' : '');
+      chipEl.textContent = ch.label;
+      chipEl.onclick = () => {
+        modalExtra.querySelectorAll('.modal-chip').forEach(el => el.classList.remove('active'));
+        chipEl.classList.add('active');
+        inlineModalSelectedChip = ch.id;
+      };
+      modalExtra.appendChild(chipEl);
+    });
+  } else if (modalExtra) {
+    modalExtra.style.display = 'none';
+  }
+
+  modal.style.display = 'block';
+  ipcRenderer.send('set-ignore-mouse-events', false);
+
+  setTimeout(() => {
+    modalInput.focus();
+  }, 30);
+
+  const onSubmit = () => {
+    const val = modalInput.value.trim();
+    if (val && inlineModalCallback) {
+      inlineModalCallback(val, inlineModalSelectedChip);
+    }
+    hideInlineModal();
+  };
+
+  btnSubmit.onclick = onSubmit;
+  btnCancel.onclick = hideInlineModal;
+
+  modalInput.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      onSubmit();
+    } else if (e.key === 'Escape') {
+      hideInlineModal();
+    }
+  };
+}
+
+function hideInlineModal() {
+  const modal = document.getElementById('inline-modal');
+  if (modal) modal.style.display = 'none';
+  inlineModalCallback = null;
+  inlineModalSelectedChip = null;
+  if (!isHovered) {
+    ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+  }
+}
+
+// User Data IPC Initialization
+try {
+  ipcRenderer.invoke('calendar-get-notes').then(notes => {
+    if (Array.isArray(notes)) calendarNotes = notes;
+  }).catch(() => {});
+
+  ipcRenderer.on('calendar-notes-updated', (event, notes) => {
+    if (Array.isArray(notes)) calendarNotes = notes;
+  });
+
+  ipcRenderer.invoke('todo-get-data').then(data => {
+    if (data && Array.isArray(data.categories)) todoData = data;
+  }).catch(() => {});
+
+  ipcRenderer.on('todo-data-updated', (event, data) => {
+    if (data && Array.isArray(data.categories)) todoData = data;
+  });
+
+  ipcRenderer.invoke('clock-get-state').then(st => {
+    if (st && st.timer) {
+      timerDurationSec = st.timer.durationSec || 300;
+      timerRemainingSec = st.timer.remainingSec || 300;
+    }
+  }).catch(() => {});
+} catch (e) {}
+
+function matchesCalendarDate(note, targetDateStr) {
+  if (!note || !note.date || !targetDateStr) return false;
+  const nDate = String(note.date).slice(0, 10);
+  const tDate = String(targetDateStr).slice(0, 10);
+  if (!note.repeat || note.repeat === 'none') return nDate === tDate;
+  if (note.repeat === 'yearly') return nDate.slice(5) === tDate.slice(5);
+  if (note.repeat === 'monthly') return nDate.slice(8) === tDate.slice(8);
+  if (note.repeat === 'weekly') {
+    const d1 = new Date(nDate + 'T00:00:00');
+    const d2 = new Date(tDate + 'T00:00:00');
+    return d1.getDay() === d2.getDay();
+  }
+  if (note.repeat === 'daily') return tDate >= nDate;
+  return nDate === tDate;
+}
+
+function formatTimerSeconds(totalSec) {
+  const m = Math.floor(Math.max(0, totalSec) / 60);
+  const s = Math.floor(Math.max(0, totalSec) % 60);
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function formatStopwatchMs(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  const centis = Math.floor((ms % 1000) / 10);
+  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}.${centis < 10 ? '0' : ''}${centis}`;
+}
+
 // TwoCode-inspired Island Dimensions & Constants
 const UI = {
   REST_W: 124,
@@ -33,8 +164,11 @@ const UI = {
   ACTIVE_REST_W: 226,
   ACTIVE_BAR_H: 36,
 
-  EXPANDED_W: 550,
+  EXPANDED_W: 580,
   HOME_H: 154,
+  CALENDAR_H: 330,
+  CLOCK_H: 260,
+  TODO_H: 320,
   AGENT_H: 196,
   CALL_H: 206,
   MEDIA_H: 220,
@@ -58,6 +192,45 @@ let currentView = 'home'; // 'home' | 'agent' | 'media' | 'dropzone' | 'clipboar
 let leaveTimer = null;
 let dropZoneFiles = [];
 let isDraggingOver = false;
+let dropZoneHoverZone = 'onetime'; // 'onetime' | 'keep'
+let lastDraggedShelfCandidate = null;
+
+// Calendar State
+let calendarNotes = [];
+let calendarSelectedDate = new Date().toISOString().slice(0, 10);
+let calendarViewYear = new Date().getFullYear();
+let calendarViewMonth = new Date().getMonth(); // 0-11
+
+// Clock & Timer State
+let clockSubMode = 'timer'; // 'timer' | 'stopwatch' | 'focus'
+let timerDurationSec = 300;
+let timerRemainingSec = 300;
+let timerRunning = false;
+let timerLastTick = null;
+
+let stopwatchElapsedMs = 0;
+let stopwatchRunning = false;
+let stopwatchStartTs = null;
+let stopwatchLaps = [];
+
+let focusMode = 'work'; // 'work' | 'short_break' | 'long_break'
+let focusWorkDurationMin = 25;
+let focusBreakDurationMin = 5;
+let focusRemainingSec = 25 * 60;
+let focusRunning = false;
+let focusLastTick = null;
+let focusSessionsCompleted = 0;
+
+// To-Do State
+let todoData = {
+  categories: ['Personal', 'Work', 'Island'],
+  tasks: []
+};
+let todoSelectedCategory = 'All';
+
+// Inline Modal State
+let inlineModalCallback = null;
+let inlineModalSelectedChip = null;
 
 let clipboardHistory = [];
 let clipboardFilter = '';
@@ -815,10 +988,12 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Drag & Drop Shelf Support inside Island / Notch
+// Drag & Drop Shelf Support inside Island / Notch (Dual-Zone: One-Time vs Keep)
 window.addEventListener('dragover', (e) => {
   e.preventDefault();
   e.stopPropagation();
+  const splitX = window.innerWidth / 2;
+  dropZoneHoverZone = e.clientX < splitX ? 'onetime' : 'keep';
   if (!isDraggingOver) {
     isDraggingOver = true;
     targetProgress = 1.0;
@@ -837,6 +1012,7 @@ window.addEventListener('drop', (e) => {
   e.preventDefault();
   e.stopPropagation();
   isDraggingOver = false;
+  const isOneTime = e.clientX < (window.innerWidth / 2);
   if (e.dataTransfer) {
     const fileList = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
     if (fileList.length === 0 && e.dataTransfer.items) {
@@ -858,7 +1034,7 @@ window.addEventListener('drop', (e) => {
         filePath = file.path;
       }
       if (filePath) {
-        ipcRenderer.send('dropzone-add-file', filePath);
+        ipcRenderer.send('dropzone-add-file', { filePath, isOneTime });
       }
     }
   }
@@ -1009,7 +1185,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (currentView === 'dropzone') {
     for (const btn of interactiveButtons) {
       if (btn.id && (btn.id.startsWith('dropzone_row_') || btn.id.startsWith('dropzone_open_file_')) && pointInRect(cx, cy, btn.x, btn.y, btn.w, btn.h)) {
-        shelfDragCandidate = { x: cx, y: cy, path: btn.data };
+        shelfDragCandidate = { x: cx, y: cy, path: btn.data, oneTime: Boolean(btn.oneTime) };
         canvas.draggable = true;
         break;
       }
@@ -1020,6 +1196,7 @@ canvas.addEventListener('mousedown', (e) => {
 canvas.addEventListener('dragstart', (e) => {
   if (shelfDragCandidate && shelfDragCandidate.path) {
     wasShelfDragging = true;
+    lastDraggedShelfCandidate = { ...shelfDragCandidate };
     e.preventDefault();
     ipcRenderer.send('shelf-drag-start', shelfDragCandidate.path);
     shelfDragCandidate = null;
@@ -1029,6 +1206,10 @@ canvas.addEventListener('dragstart', (e) => {
 
 canvas.addEventListener('dragend', () => {
   canvas.draggable = false;
+  if (lastDraggedShelfCandidate && lastDraggedShelfCandidate.path && lastDraggedShelfCandidate.oneTime) {
+    ipcRenderer.send('shelf-drag-completed', lastDraggedShelfCandidate.path);
+  }
+  lastDraggedShelfCandidate = null;
   shelfDragCandidate = null;
 });
 
@@ -1107,6 +1288,125 @@ canvas.addEventListener('click', (e) => {
 function handleButtonClick(id, data) {
   if (id === 'nav_home') {
     currentView = 'home';
+  } else if (id === 'nav_calendar') {
+    currentView = 'calendar';
+  } else if (id === 'cal_prev_month') {
+    calendarViewMonth--;
+    if (calendarViewMonth < 0) {
+      calendarViewMonth = 11;
+      calendarViewYear--;
+    }
+  } else if (id === 'cal_next_month') {
+    calendarViewMonth++;
+    if (calendarViewMonth > 11) {
+      calendarViewMonth = 0;
+      calendarViewYear++;
+    }
+  } else if (id === 'cal_today') {
+    const td = new Date();
+    calendarViewYear = td.getFullYear();
+    calendarViewMonth = td.getMonth();
+    calendarSelectedDate = td.toISOString().slice(0, 10);
+  } else if (id && id.startsWith('cal_day_')) {
+    calendarSelectedDate = data;
+  } else if (id === 'cal_add_note_btn') {
+    const chips = [
+      { id: 'none', label: 'Once' },
+      { id: 'yearly', label: '🎂 Birthday / Yearly' },
+      { id: 'monthly', label: '🔁 Monthly' },
+      { id: 'weekly', label: '🔁 Weekly' },
+      { id: 'daily', label: '🔁 Daily' }
+    ];
+    showInlineModal(`Add Note (${calendarSelectedDate})`, 'e.g. Sarah Birthday, Project Deadline', chips, (text, repeat) => {
+      ipcRenderer.invoke('calendar-add-note', {
+        date: calendarSelectedDate,
+        text,
+        repeat: repeat || 'none'
+      });
+    });
+  } else if (id && id.startsWith('cal_del_')) {
+    ipcRenderer.invoke('calendar-delete-note', data);
+  } else if (id === 'nav_clock') {
+    currentView = 'clock';
+  } else if (id && id.startsWith('clock_submode_')) {
+    clockSubMode = id.replace('clock_submode_', '');
+  } else if (id && id.startsWith('timer_preset_')) {
+    const sec = Number(data) || 300;
+    timerDurationSec = sec;
+    timerRemainingSec = sec;
+    timerRunning = false;
+  } else if (id === 'timer_start_pause') {
+    timerRunning = !timerRunning;
+    timerLastTick = performance.now();
+  } else if (id === 'timer_reset') {
+    timerRemainingSec = timerDurationSec;
+    timerRunning = false;
+  } else if (id === 'timer_minus') {
+    timerRemainingSec = Math.max(30, timerRemainingSec - 60);
+  } else if (id === 'timer_plus') {
+    timerRemainingSec += 60;
+  } else if (id === 'sw_start_pause') {
+    stopwatchRunning = !stopwatchRunning;
+    stopwatchStartTs = performance.now();
+  } else if (id === 'sw_lap') {
+    if (stopwatchRunning || stopwatchElapsedMs > 0) {
+      stopwatchLaps.push({ time: stopwatchElapsedMs, timestamp: Date.now() });
+    }
+  } else if (id === 'sw_reset') {
+    stopwatchRunning = false;
+    stopwatchElapsedMs = 0;
+    stopwatchLaps = [];
+  } else if (id === 'focus_start_pause') {
+    focusRunning = !focusRunning;
+    focusLastTick = performance.now();
+  } else if (id === 'focus_skip') {
+    if (focusMode === 'work') {
+      focusSessionsCompleted++;
+      focusMode = (focusSessionsCompleted % 4 === 0) ? 'long_break' : 'short_break';
+      focusRemainingSec = (focusMode === 'long_break') ? 15 * 60 : 5 * 60;
+    } else {
+      focusMode = 'work';
+      focusRemainingSec = focusWorkDurationMin * 60;
+    }
+  } else if (id === 'focus_reset') {
+    focusRunning = false;
+    focusMode = 'work';
+    focusRemainingSec = focusWorkDurationMin * 60;
+  } else if (id === 'nav_todo') {
+    currentView = 'todo';
+  } else if (id && id.startsWith('todo_cat_')) {
+    todoSelectedCategory = data;
+  } else if (id === 'todo_add_category_btn') {
+    showInlineModal('New Category', 'Category name (e.g. Projects, Fitness)', null, (catName) => {
+      ipcRenderer.invoke('todo-add-category', catName).then(() => {
+        todoSelectedCategory = catName;
+      });
+    });
+  } else if (id === 'todo_delete_category_btn') {
+    if (todoSelectedCategory !== 'All') {
+      ipcRenderer.invoke('todo-delete-category', todoSelectedCategory).then(() => {
+        todoSelectedCategory = 'All';
+      });
+    }
+  } else if (id === 'todo_add_task_btn') {
+    const cats = (todoData.categories || []).map(c => ({ id: c, label: c }));
+    const defaultCat = (todoSelectedCategory !== 'All' && cats.some(c => c.id === todoSelectedCategory))
+      ? todoSelectedCategory
+      : (cats[0] ? cats[0].id : 'General');
+    const sortedChips = [
+      { id: defaultCat, label: defaultCat },
+      ...cats.filter(c => c.id !== defaultCat)
+    ];
+    showInlineModal('Add To-Do Task', 'Task description...', sortedChips, (taskText, chosenCat) => {
+      ipcRenderer.invoke('todo-add-task', {
+        text: taskText,
+        category: chosenCat || defaultCat
+      });
+    });
+  } else if (id && id.startsWith('todo_check_')) {
+    ipcRenderer.invoke('todo-toggle-task', data);
+  } else if (id && id.startsWith('todo_del_')) {
+    ipcRenderer.invoke('todo-delete-task', data);
   } else if (id === 'nav_agent') {
     currentView = 'agent';
   } else if (id === 'nav_call') {
@@ -1358,6 +1658,31 @@ function animate(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
+  // Clock / Timer / Stopwatch / Focus Real-Time Ticking
+  if (timerRunning) {
+    timerRemainingSec = Math.max(0, timerRemainingSec - dt);
+    if (timerRemainingSec <= 0) {
+      timerRemainingSec = 0;
+      timerRunning = false;
+    }
+  }
+  if (stopwatchRunning) {
+    stopwatchElapsedMs += dt * 1000;
+  }
+  if (focusRunning) {
+    focusRemainingSec = Math.max(0, focusRemainingSec - dt);
+    if (focusRemainingSec <= 0) {
+      if (focusMode === 'work') {
+        focusSessionsCompleted++;
+        focusMode = (focusSessionsCompleted % 4 === 0) ? 'long_break' : 'short_break';
+        focusRemainingSec = (focusMode === 'long_break') ? 15 * 60 : 5 * 60;
+      } else {
+        focusMode = 'work';
+        focusRemainingSec = focusWorkDurationMin * 60;
+      }
+    }
+  }
+
   // Fluid Spring / Lerp towards targetProgress
   const speed = (targetProgress > animProgress ? 8.5 : 9.5) * animSpeedMultiplier;
   animProgress += (targetProgress - animProgress) * Math.min(1.0, dt * speed);
@@ -1467,6 +1792,10 @@ function getTargetRestingWidth() {
   let mainPillW = UI.REST_W;
   const MAX_LYRIC_PILL_W = 520;
 
+  if (timerRunning || focusRunning || stopwatchRunning) {
+    mainPillW = Math.max(mainPillW, 196);
+  }
+
   if (hasMedia) {
     const roll = getPillRollingLyric();
     let textToMeasure = '';
@@ -1572,7 +1901,13 @@ function getTargetHeight(p) {
   }
 
   let expH = UI.HOME_H;
-  if (currentView === 'agent') {
+  if (currentView === 'calendar') {
+    expH = UI.CALENDAR_H;
+  } else if (currentView === 'clock') {
+    expH = UI.CLOCK_H;
+  } else if (currentView === 'todo') {
+    expH = UI.TODO_H;
+  } else if (currentView === 'agent') {
     const cardCount = Math.max(1, Math.min(3, projs.length));
     expH = cardCount === 1 ? UI.AGENT_H : Math.min(340, 160 + (cardCount - 1) * 82);
   } else if (currentView === 'call') {
@@ -2482,13 +2817,24 @@ function renderRestingPill(x, y, w, h, alpha) {
         ctx.fillText(timeStr, mainPillX + 12, y + pillH / 2);
         ctx.restore();
 
-        const dateStr = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+        let rightPillText = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+        let rightPillColor = '#a1a1aa';
+        if (timerRunning) {
+          rightPillText = `⏱️ ${formatTimerSeconds(timerRemainingSec)}`;
+          rightPillColor = '#38bdf8';
+        } else if (focusRunning) {
+          rightPillText = `🎯 Focus ${formatTimerSeconds(focusRemainingSec)}`;
+          rightPillColor = '#10b981';
+        } else if (stopwatchRunning) {
+          rightPillText = `⏱️ ${formatStopwatchMs(stopwatchElapsedMs)}`;
+          rightPillColor = '#22c55e';
+        }
         ctx.save();
-        ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-        ctx.fillStyle = '#a1a1aa';
+        ctx.font = (timerRunning || focusRunning || stopwatchRunning) ? '700 11px "Segoe UI Variable Display", Inter, sans-serif' : '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = rightPillColor;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
-        ctx.fillText(dateStr, mainPillX + mainPillW - 12, y + pillH / 2);
+        ctx.fillText(rightPillText, mainPillX + mainPillW - 12, y + pillH / 2);
         ctx.restore();
       } else {
         ctx.save();
@@ -2559,12 +2905,38 @@ function renderRestingPill(x, y, w, h, alpha) {
     }
     ctx.restore();
   } else {
-    // Pure minimalist clock
-    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#f4f4f5';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(timeStr, x + w / 2, y + h / 2);
+    // Pure minimalist clock or active timer badge
+    if (timerRunning || focusRunning || stopwatchRunning) {
+      ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#e4e4e7';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(timeStr, x + 12, y + h / 2);
+
+      let badgeStr = '';
+      let badgeCol = '#38bdf8';
+      if (timerRunning) {
+        badgeStr = `⏱️ ${formatTimerSeconds(timerRemainingSec)}`;
+        badgeCol = '#38bdf8';
+      } else if (focusRunning) {
+        badgeStr = `🎯 Focus ${formatTimerSeconds(focusRemainingSec)}`;
+        badgeCol = '#10b981';
+      } else if (stopwatchRunning) {
+        badgeStr = `⏱️ ${formatStopwatchMs(stopwatchElapsedMs)}`;
+        badgeCol = '#22c55e';
+      }
+      ctx.font = '700 11px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = badgeCol;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(badgeStr, x + w - 12, y + h / 2);
+    } else {
+      ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#f4f4f5';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(timeStr, x + w / 2, y + h / 2);
+    }
   }
 
   ctx.restore();
@@ -2619,6 +2991,12 @@ function renderExpandedView(x, y, w, h, alpha) {
   // View Body
   if (currentView === 'home') {
     renderHomeView(x, y, w, h);
+  } else if (currentView === 'calendar') {
+    renderCalendarTabView(x, y, w, h);
+  } else if (currentView === 'clock') {
+    renderClockTabView(x, y, w, h);
+  } else if (currentView === 'todo') {
+    renderTodoTabView(x, y, w, h);
   } else if (currentView === 'agent') {
     renderAgentView(x, y, w, h);
   } else if (currentView === 'call') {
@@ -2843,17 +3221,20 @@ function renderCallView(x, y, w, h) {
 
 function renderTopNav(x, y, w) {
   const navItems = [
-    { id: 'nav_home', label: 'Home', w: 48 },
-    { id: 'nav_agent', label: 'Ai', w: 38 }
+    { id: 'nav_home', label: 'Home', w: 42 },
+    { id: 'nav_calendar', label: 'Calendar', w: 48 },
+    { id: 'nav_clock', label: 'Clock', w: 40 },
+    { id: 'nav_todo', label: 'To-Do', w: 42 },
+    { id: 'nav_media', label: 'Media', w: 44 },
+    { id: 'nav_agent', label: 'Ai', w: 30 }
   ];
   if (hasActiveCall() || currentView === 'call') {
-    navItems.push({ id: 'nav_call', label: 'Call', w: 42 });
+    navItems.push({ id: 'nav_call', label: 'Call', w: 38 });
   }
   navItems.push(
-    { id: 'nav_media', label: 'Media', w: 52 },
-    { id: 'nav_dropzone', label: 'Drop Shelf', w: 68 },
-    { id: 'nav_clipboard', label: 'Clipboard', w: 68 },
-    { id: 'nav_settings', label: 'Settings', w: 58 }
+    { id: 'nav_dropzone', label: 'Shelf', w: 42 },
+    { id: 'nav_clipboard', label: 'Clip', w: 38 },
+    { id: 'nav_settings', label: '⚙', w: 26 }
   );
 
   const pillH = 22;
@@ -2987,6 +3368,771 @@ function renderCalendarWidget(calX, calY, calW, calH) {
   }
 
   ctx.restore();
+}
+
+// =============================================================
+// 1. DEDICATED CALENDAR TAB VIEW (Interactive Month Grid + Date Notes + Recurrence)
+// =============================================================
+function renderCalendarTabView(x, y, w, h) {
+  const topY = y + 42;
+  const padding = 18;
+  const contentW = w - padding * 2;
+  const contentX = x + padding;
+
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const curDateObj = new Date(calendarViewYear, calendarViewMonth, 1);
+  const monthName = curDateObj.toLocaleDateString([], { month: 'long' });
+
+  // --- Left Column: Interactive Month Grid & Navigation (~54% width) ---
+  const leftW = 310;
+  const leftX = contentX;
+
+  // Month navigation bar
+  const navH = 24;
+  const navY = topY;
+
+  // Prev Month Button ◀
+  const prevBtnW = 24;
+  const isPrevHov = hoveredButtonId === 'cal_prev_month';
+  ctx.beginPath();
+  ctx.roundRect(leftX, navY, prevBtnW, navH, 6);
+  ctx.fillStyle = isPrevHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
+  ctx.fill();
+  ctx.font = '600 11px "Segoe UI Variable Text", sans-serif';
+  ctx.fillStyle = isPrevHov ? '#ffffff' : '#cbd5e1';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('◀', leftX + prevBtnW / 2, navY + navH / 2);
+  interactiveButtons.push({ id: 'cal_prev_month', x: leftX, y: navY, w: prevBtnW, h: navH });
+
+  // Month Title (e.g., "November 2026")
+  ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${monthName} ${calendarViewYear}`, leftX + 32, navY + navH / 2);
+
+  // Next Month Button ▶
+  const nextBtnX = leftX + 172;
+  const isNextHov = hoveredButtonId === 'cal_next_month';
+  ctx.beginPath();
+  ctx.roundRect(nextBtnX, navY, prevBtnW, navH, 6);
+  ctx.fillStyle = isNextHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
+  ctx.fill();
+  ctx.font = '600 11px "Segoe UI Variable Text", sans-serif';
+  ctx.fillStyle = isNextHov ? '#ffffff' : '#cbd5e1';
+  ctx.textAlign = 'center';
+  ctx.fillText('▶', nextBtnX + prevBtnW / 2, navY + navH / 2);
+  interactiveButtons.push({ id: 'cal_next_month', x: nextBtnX, y: navY, w: prevBtnW, h: navH });
+
+  // Today Jump Pill
+  const todayBtnW = 46;
+  const todayBtnX = leftX + leftW - todayBtnW;
+  const isTodayHov = hoveredButtonId === 'cal_today';
+  ctx.beginPath();
+  ctx.roundRect(todayBtnX, navY, todayBtnW, navH, 6);
+  ctx.fillStyle = isTodayHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
+  ctx.strokeStyle = isTodayHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.4)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+  ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isTodayHov ? '#ffffff' : '#93c5fd';
+  ctx.textAlign = 'center';
+  ctx.fillText('Today', todayBtnX + todayBtnW / 2, navY + navH / 2);
+  interactiveButtons.push({ id: 'cal_today', x: todayBtnX, y: navY, w: todayBtnW, h: navH });
+
+  // Weekdays Row (Mo, Tu, We, Th, Fr, Sa, Su)
+  const daysHeaderY = navY + 30;
+  const daysShort = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+  const colW = leftW / 7;
+
+  ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = '#64748b';
+  ctx.textAlign = 'center';
+  daysShort.forEach((d, i) => {
+    ctx.fillText(d, leftX + i * colW + colW / 2, daysHeaderY);
+  });
+
+  // Month Date Grid calculation
+  const gridStartY = daysHeaderY + 12;
+  const rowH = 34;
+  const daysInMonth = new Date(calendarViewYear, calendarViewMonth + 1, 0).getDate();
+  const rawFirstDay = new Date(calendarViewYear, calendarViewMonth, 1).getDay(); // 0 = Sun
+  const firstCol = (rawFirstDay + 6) % 7; // Convert to Mon = 0
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const idx = (day - 1) + firstCol;
+    const col = idx % 7;
+    const row = Math.floor(idx / 7);
+
+    const cx = leftX + col * colW;
+    const cy = gridStartY + row * rowH;
+
+    const curCellDateStr = `${calendarViewYear}-${String(calendarViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const isSelected = curCellDateStr === calendarSelectedDate;
+    const isToday = curCellDateStr === todayStr;
+    const cellBtnId = `cal_day_${curCellDateStr}`;
+    const isCellHov = hoveredButtonId === cellBtnId;
+
+    // Day Selection / Today styling
+    const pillSize = 24;
+    const px = cx + (colW - pillSize) / 2;
+    const py = cy + 2;
+
+    if (isSelected) {
+      ctx.beginPath();
+      ctx.roundRect(px, py, pillSize, pillSize, 8);
+      ctx.fillStyle = '#2563eb';
+      ctx.fill();
+    } else if (isCellHov) {
+      ctx.beginPath();
+      ctx.roundRect(px, py, pillSize, pillSize, 8);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.fill();
+    }
+
+    if (isToday && !isSelected) {
+      ctx.beginPath();
+      ctx.roundRect(px, py, pillSize, pillSize, 8);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+
+    // Day Number Text
+    ctx.font = isSelected || isToday ? '700 11px "Segoe UI Variable Display", Inter, sans-serif' : '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isSelected ? '#ffffff' : (isToday ? '#38bdf8' : '#e2e8f0');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(day), px + pillSize / 2, py + pillSize / 2);
+
+    // Event / Birthday Dot Indicators below number
+    const cellNotes = calendarNotes.filter(n => matchesCalendarDate(n, curCellDateStr));
+    if (cellNotes.length > 0) {
+      const hasBirthday = cellNotes.some(n => n.isBirthday || n.repeat === 'yearly');
+      ctx.beginPath();
+      ctx.arc(px + pillSize / 2, py + pillSize + 3, 2, 0, Math.PI * 2);
+      ctx.fillStyle = hasBirthday ? '#f43f5e' : '#38bdf8';
+      ctx.fill();
+    }
+
+    interactiveButtons.push({ id: cellBtnId, data: curCellDateStr, x: cx, y: cy, w: colW, h: rowH });
+  }
+
+  // --- Right Column: Date Details & Note Editor (~46% width) ---
+  const rightX = leftX + leftW + 16;
+  const rightW = contentW - (leftW + 16);
+
+  // Selected Date Header
+  const selObj = new Date(calendarSelectedDate + 'T00:00:00');
+  const selTitle = isNaN(selObj.getTime()) ? calendarSelectedDate : selObj.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+
+  ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(selTitle, rightX, navY + 4);
+
+  // + Add Note Button
+  const addNoteW = 62;
+  const addNoteH = 22;
+  const addNoteX = rightX + rightW - addNoteW;
+  const isAddNoteHov = hoveredButtonId === 'cal_add_note_btn';
+  ctx.beginPath();
+  ctx.roundRect(addNoteX, navY, addNoteW, addNoteH, 6);
+  ctx.fillStyle = isAddNoteHov ? '#2563eb' : 'rgba(255, 255, 255, 0.08)';
+  ctx.strokeStyle = isAddNoteHov ? '#3b82f6' : 'rgba(255, 255, 255, 0.15)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isAddNoteHov ? '#ffffff' : '#f4f4f5';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('+ Note', addNoteX + addNoteW / 2, navY + addNoteH / 2);
+  interactiveButtons.push({ id: 'cal_add_note_btn', x: addNoteX, y: navY, w: addNoteW, h: addNoteH });
+
+  // Notes List for Selected Date
+  const notesListY = navY + 32;
+  const activeNotes = calendarNotes.filter(n => matchesCalendarDate(n, calendarSelectedDate));
+
+  if (activeNotes.length === 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(rightX, notesListY, rightW, 210, 10);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '22px "Segoe UI Emoji", sans-serif';
+    ctx.fillText('📅', rightX + rightW / 2, notesListY + 80);
+
+    ctx.font = '600 12px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('No notes for this date', rightX + rightW / 2, notesListY + 115);
+
+    ctx.font = '400 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('Click + Note to add birthdays or events', rightX + rightW / 2, notesListY + 135);
+    ctx.restore();
+  } else {
+    const cardH = 46;
+    const cardGap = 8;
+    const maxVisible = Math.min(activeNotes.length, 4);
+
+    for (let i = 0; i < maxVisible; i++) {
+      const note = activeNotes[i];
+      const ny = notesListY + i * (cardH + cardGap);
+      const isCardHov = hoveredButtonId === `cal_note_${note.id}`;
+
+      ctx.beginPath();
+      ctx.roundRect(rightX, ny, rightW, cardH, 8);
+      ctx.fillStyle = isCardHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.035)';
+      ctx.strokeStyle = isCardHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // Recurrence Badge
+      let badgeLabel = 'Once';
+      let badgeColor = '#94a3b8';
+      let badgeBg = 'rgba(148, 163, 184, 0.12)';
+      if (note.repeat === 'yearly' || note.isBirthday) {
+        badgeLabel = '🎂 Birthday';
+        badgeColor = '#f43f5e';
+        badgeBg = 'rgba(244, 63, 94, 0.14)';
+      } else if (note.repeat === 'monthly') {
+        badgeLabel = '🔁 Monthly';
+        badgeColor = '#a855f7';
+        badgeBg = 'rgba(168, 85, 247, 0.14)';
+      } else if (note.repeat === 'weekly') {
+        badgeLabel = '🔁 Weekly';
+        badgeColor = '#38bdf8';
+        badgeBg = 'rgba(56, 189, 248, 0.14)';
+      } else if (note.repeat === 'daily') {
+        badgeLabel = '🔁 Daily';
+        badgeColor = '#22c55e';
+        badgeBg = 'rgba(34, 197, 94, 0.14)';
+      }
+
+      ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = badgeColor;
+      ctx.fillText(badgeLabel, rightX + 10, ny + 8);
+
+      // Note Text
+      ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#f4f4f5';
+      const maxTextW = rightW - 40;
+      ctx.fillText(truncateToWidth(note.text, maxTextW, ctx.font), rightX + 10, ny + 24);
+
+      // Delete ✖ button
+      const delW = 18;
+      const delH = 18;
+      const delX = rightX + rightW - delW - 8;
+      const delY = ny + (cardH - delH) / 2;
+      const isDelHov = hoveredButtonId === `cal_del_${note.id}`;
+
+      ctx.beginPath();
+      ctx.roundRect(delX, delY, delW, delH, 4);
+      ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.25)' : 'transparent';
+      ctx.fill();
+
+      ctx.font = '600 10px sans-serif';
+      ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✕', delX + delW / 2, delY + delH / 2);
+      interactiveButtons.push({ id: `cal_del_${note.id}`, data: note.id, x: delX, y: delY, w: delW, h: delH });
+    }
+  }
+}
+
+// =============================================================
+// 2. DEDICATED CLOCK TAB VIEW (Timer Presets + Stopwatch + Focus Mode)
+// =============================================================
+function renderClockTabView(x, y, w, h) {
+  const topY = y + 42;
+  const padding = 20;
+  const contentW = w - padding * 2;
+  const contentX = x + padding;
+
+  // Sub-mode switcher pills at top: [ Timer ] [ Stopwatch ] [ Focus Mode ]
+  const modes = [
+    { id: 'timer', label: '⏳ Timer', w: 84 },
+    { id: 'stopwatch', label: '⏱️ Stopwatch', w: 96 },
+    { id: 'focus', label: '🎯 Focus Mode', w: 104 }
+  ];
+  const modeH = 22;
+  let curX = contentX;
+
+  modes.forEach(m => {
+    const isCur = clockSubMode === m.id;
+    const isHov = hoveredButtonId === `clock_submode_${m.id}`;
+    ctx.beginPath();
+    ctx.roundRect(curX, topY, m.w, modeH, 6);
+    ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+    ctx.fill();
+
+    ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(m.label, curX + m.w / 2, topY + modeH / 2);
+
+    interactiveButtons.push({ id: `clock_submode_${m.id}`, x: curX, y: topY, w: m.w, h: modeH });
+    curX += m.w + 8;
+  });
+
+  const stageY = topY + 34;
+
+  if (clockSubMode === 'timer') {
+    // Large Digital Readout
+    const timeStr = formatTimerSeconds(timerRemainingSec);
+    ctx.font = '700 48px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = timerRunning ? '#38bdf8' : '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(timeStr, contentX + contentW / 2, stageY + 36);
+
+    // Preset chips row: 1m, 5m, 15m, 25m, 45m, 60m
+    const presets = [
+      { sec: 60, label: '1m' },
+      { sec: 300, label: '5m' },
+      { sec: 900, label: '15m' },
+      { sec: 1500, label: '25m' },
+      { sec: 2700, label: '45m' },
+      { sec: 3600, label: '60m' }
+    ];
+    const pW = 44;
+    const pH = 22;
+    const pSpacing = 8;
+    const totalPW = presets.length * pW + (presets.length - 1) * pSpacing;
+    const startPX = contentX + (contentW - totalPW) / 2;
+    const pY = stageY + 76;
+
+    presets.forEach((pr, i) => {
+      const bx = startPX + i * (pW + pSpacing);
+      const isHov = hoveredButtonId === `timer_preset_${pr.sec}`;
+      const isMatch = timerDurationSec === pr.sec && !timerRunning;
+      ctx.beginPath();
+      ctx.roundRect(bx, pY, pW, pH, 6);
+      ctx.fillStyle = isMatch ? 'rgba(56, 189, 248, 0.25)' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+      ctx.strokeStyle = isMatch ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = isMatch ? '#38bdf8' : (isHov ? '#ffffff' : '#cbd5e1');
+      ctx.textAlign = 'center';
+      ctx.fillText(pr.label, bx + pW / 2, pY + pH / 2);
+      interactiveButtons.push({ id: `timer_preset_${pr.sec}`, data: pr.sec, x: bx, y: pY, w: pW, h: pH });
+    });
+
+    // Control buttons: [ -1m ] [ Start / Pause ] [ Reset ] [ +1m ]
+    const btnRowY = pY + 34;
+    const ctlH = 30;
+
+    // Start / Pause button
+    const startW = 100;
+    const startX = contentX + (contentW - startW) / 2;
+    const isStartHov = hoveredButtonId === 'timer_start_pause';
+    ctx.beginPath();
+    ctx.roundRect(startX, btnRowY, startW, ctlH, 8);
+    ctx.fillStyle = timerRunning ? '#ef4444' : '#2563eb';
+    ctx.fill();
+    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(timerRunning ? '❚❚ Pause' : '▶ Start', startX + startW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'timer_start_pause', x: startX, y: btnRowY, w: startW, h: ctlH });
+
+    // Reset button
+    const rstW = 68;
+    const rstX = startX + startW + 10;
+    const isRstHov = hoveredButtonId === 'timer_reset';
+    ctx.beginPath();
+    ctx.roundRect(rstX, btnRowY, rstW, ctlH, 8);
+    ctx.fillStyle = isRstHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isRstHov ? '#ffffff' : '#cbd5e1';
+    ctx.fillText('Reset', rstX + rstW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'timer_reset', x: rstX, y: btnRowY, w: rstW, h: ctlH });
+
+    // -1m and +1m adjustments
+    const adjW = 42;
+    const minusX = startX - adjW - 10;
+    const isMinusHov = hoveredButtonId === 'timer_minus';
+    ctx.beginPath();
+    ctx.roundRect(minusX, btnRowY, adjW, ctlH, 8);
+    ctx.fillStyle = isMinusHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isMinusHov ? '#ffffff' : '#cbd5e1';
+    ctx.fillText('-1m', minusX + adjW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'timer_minus', x: minusX, y: btnRowY, w: adjW, h: ctlH });
+
+    const plusX = rstX + rstW + 10;
+    const isPlusHov = hoveredButtonId === 'timer_plus';
+    ctx.beginPath();
+    ctx.roundRect(plusX, btnRowY, adjW, ctlH, 8);
+    ctx.fillStyle = isPlusHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isPlusHov ? '#ffffff' : '#cbd5e1';
+    ctx.fillText('+1m', plusX + adjW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'timer_plus', x: plusX, y: btnRowY, w: adjW, h: ctlH });
+
+  } else if (clockSubMode === 'stopwatch') {
+    // Millisecond Stopwatch
+    const swTimeStr = formatStopwatchMs(stopwatchElapsedMs);
+    ctx.font = '700 44px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = stopwatchRunning ? '#22c55e' : '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(swTimeStr, contentX + contentW / 2, stageY + 36);
+
+    // Controls: [ Start / Stop ] [ Lap ] [ Reset ]
+    const btnRowY = stageY + 82;
+    const ctlH = 30;
+
+    const startW = 100;
+    const startX = contentX + (contentW - (startW + 80 + 80 + 16)) / 2;
+    const isStartHov = hoveredButtonId === 'sw_start_pause';
+    ctx.beginPath();
+    ctx.roundRect(startX, btnRowY, startW, ctlH, 8);
+    ctx.fillStyle = stopwatchRunning ? '#ef4444' : '#22c55e';
+    ctx.fill();
+    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(stopwatchRunning ? '❚❚ Stop' : '▶ Start', startX + startW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'sw_start_pause', x: startX, y: btnRowY, w: startW, h: ctlH });
+
+    // Lap button
+    const lapW = 74;
+    const lapX = startX + startW + 8;
+    const isLapHov = hoveredButtonId === 'sw_lap';
+    ctx.beginPath();
+    ctx.roundRect(lapX, btnRowY, lapW, ctlH, 8);
+    ctx.fillStyle = isLapHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isLapHov ? '#ffffff' : '#cbd5e1';
+    ctx.fillText('Lap', lapX + lapW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'sw_lap', x: lapX, y: btnRowY, w: lapW, h: ctlH });
+
+    // Reset button
+    const rstW = 74;
+    const rstX = lapX + lapW + 8;
+    const isRstHov = hoveredButtonId === 'sw_reset';
+    ctx.beginPath();
+    ctx.roundRect(rstX, btnRowY, rstW, ctlH, 8);
+    ctx.fillStyle = isRstHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isRstHov ? '#ffffff' : '#cbd5e1';
+    ctx.fillText('Reset', rstX + rstW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'sw_reset', x: rstX, y: btnRowY, w: rstW, h: ctlH });
+
+    // Laps preview summary below controls
+    if (stopwatchLaps.length > 0) {
+      const lastLap = stopwatchLaps[stopwatchLaps.length - 1];
+      ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText(`Lap ${stopwatchLaps.length}: ${formatStopwatchMs(lastLap.time)} • Total Laps: ${stopwatchLaps.length}`, contentX + contentW / 2, btnRowY + ctlH + 18);
+    }
+
+  } else if (clockSubMode === 'focus') {
+    // Focus Mode (Pomodoro Sessions)
+    const isBreak = focusMode !== 'work';
+    const focusStr = formatTimerSeconds(focusRemainingSec);
+
+    // Mode title badge
+    ctx.font = '600 12px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isBreak ? '#10b981' : '#f59e0b';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(isBreak ? '☕ Short Break' : '🎯 Deep Focus Session', contentX + contentW / 2, stageY + 12);
+
+    // Large Countdown
+    ctx.font = '700 48px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(focusStr, contentX + contentW / 2, stageY + 48);
+
+    // Session progress dots (Session 1 of 4)
+    ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(`Session ${(focusSessionsCompleted % 4) + 1} of 4 • Total Finished: ${focusSessionsCompleted}`, contentX + contentW / 2, stageY + 86);
+
+    // Controls: [ Start / Pause ] [ Skip ] [ Reset ]
+    const btnRowY = stageY + 104;
+    const ctlH = 28;
+
+    const startW = 100;
+    const startX = contentX + (contentW - (startW + 74 + 74 + 16)) / 2;
+    const isStartHov = hoveredButtonId === 'focus_start_pause';
+    ctx.beginPath();
+    ctx.roundRect(startX, btnRowY, startW, ctlH, 8);
+    ctx.fillStyle = focusRunning ? '#ef4444' : '#2563eb';
+    ctx.fill();
+    ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(focusRunning ? '❚❚ Pause' : '▶ Start Focus', startX + startW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'focus_start_pause', x: startX, y: btnRowY, w: startW, h: ctlH });
+
+    // Skip button
+    const skpW = 74;
+    const skpX = startX + startW + 8;
+    const isSkpHov = hoveredButtonId === 'focus_skip';
+    ctx.beginPath();
+    ctx.roundRect(skpX, btnRowY, skpW, ctlH, 8);
+    ctx.fillStyle = isSkpHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isSkpHov ? '#ffffff' : '#cbd5e1';
+    ctx.fillText('Skip ➔', skpX + skpW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'focus_skip', x: skpX, y: btnRowY, w: skpW, h: ctlH });
+
+    // Reset button
+    const rstW = 74;
+    const rstX = skpX + skpW + 8;
+    const isRstHov = hoveredButtonId === 'focus_reset';
+    ctx.beginPath();
+    ctx.roundRect(rstX, btnRowY, rstW, ctlH, 8);
+    ctx.fillStyle = isRstHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isRstHov ? '#ffffff' : '#cbd5e1';
+    ctx.fillText('Reset', rstX + rstW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'focus_reset', x: rstX, y: btnRowY, w: rstW, h: ctlH });
+  }
+}
+
+// =============================================================
+// 3. DEDICATED TO-DO LIST TAB VIEW (Categories + Checklist + Strike-through)
+// =============================================================
+function renderTodoTabView(x, y, w, h) {
+  const topY = y + 42;
+  const padding = 18;
+  const contentW = w - padding * 2;
+  const contentX = x + padding;
+
+  // 1. Category Filter Chips Row
+  const allCategories = ['All', ...(todoData.categories || [])];
+  const chipH = 22;
+  let curX = contentX;
+
+  allCategories.forEach(cat => {
+    ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    const textW = ctx.measureText(cat).width;
+    const chipW = Math.max(38, textW + 18);
+    const isCur = todoSelectedCategory === cat;
+    const isHov = hoveredButtonId === `todo_cat_${cat}`;
+
+    ctx.beginPath();
+    ctx.roundRect(curX, topY, chipW, chipH, 6);
+    ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+    ctx.fill();
+
+    ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(cat, curX + chipW / 2, topY + chipH / 2);
+
+    interactiveButtons.push({ id: `todo_cat_${cat}`, data: cat, x: curX, y: topY, w: chipW, h: chipH });
+    curX += chipW + 6;
+  });
+
+  // + New Category button
+  const addCatW = 46;
+  const isAddCatHov = hoveredButtonId === 'todo_add_category_btn';
+  ctx.beginPath();
+  ctx.roundRect(curX, topY, addCatW, chipH, 6);
+  ctx.fillStyle = isAddCatHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
+  ctx.fill();
+  ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isAddCatHov ? '#ffffff' : '#94a3b8';
+  ctx.textAlign = 'center';
+  ctx.fillText('+ Cat', curX + addCatW / 2, topY + chipH / 2);
+  interactiveButtons.push({ id: 'todo_add_category_btn', x: curX, y: topY, w: addCatW, h: chipH });
+  curX += addCatW + 6;
+
+  // Delete Category button (if custom category selected)
+  if (todoSelectedCategory !== 'All' && !['Personal', 'Work', 'Island'].includes(todoSelectedCategory)) {
+    const delCatW = 22;
+    const isDelCatHov = hoveredButtonId === 'todo_delete_category_btn';
+    ctx.beginPath();
+    ctx.roundRect(curX, topY, delCatW, chipH, 6);
+    ctx.fillStyle = isDelCatHov ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.05)';
+    ctx.fill();
+    ctx.font = '600 10px sans-serif';
+    ctx.fillStyle = isDelCatHov ? '#ef4444' : '#94a3b8';
+    ctx.fillText('✕', curX + delCatW / 2, topY + chipH / 2);
+    interactiveButtons.push({ id: 'todo_delete_category_btn', x: curX, y: topY, w: delCatW, h: chipH });
+  }
+
+  // + Add Task Button on top right
+  const addTaskW = 68;
+  const addTaskH = 22;
+  const addTaskX = contentX + contentW - addTaskW;
+  const isAddTaskHov = hoveredButtonId === 'todo_add_task_btn';
+  ctx.beginPath();
+  ctx.roundRect(addTaskX, topY, addTaskW, addTaskH, 6);
+  ctx.fillStyle = isAddTaskHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
+  ctx.strokeStyle = isAddTaskHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.4)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isAddTaskHov ? '#ffffff' : '#93c5fd';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('+ Task', addTaskX + addTaskW / 2, topY + addTaskH / 2);
+  interactiveButtons.push({ id: 'todo_add_task_btn', x: addTaskX, y: topY, w: addTaskW, h: addTaskH });
+
+  // 2. Filtered Tasks List
+  const listY = topY + 32;
+  const allTasks = todoData.tasks || [];
+  const filteredTasks = todoSelectedCategory === 'All'
+    ? allTasks
+    : allTasks.filter(t => t.category === todoSelectedCategory);
+
+  if (filteredTasks.length === 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(contentX, listY, contentW, 200, 10);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '24px "Segoe UI Emoji", sans-serif';
+    ctx.fillText('✅', contentX + contentW / 2, listY + 75);
+
+    ctx.font = '600 12.5px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('All caught up!', contentX + contentW / 2, listY + 110);
+
+    ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('Click + Task to add something to your list', contentX + contentW / 2, listY + 130);
+    ctx.restore();
+  } else {
+    const rowH = 34;
+    const rowGap = 6;
+    const maxRows = Math.min(filteredTasks.length, 5);
+
+    for (let i = 0; i < maxRows; i++) {
+      const task = filteredTasks[i];
+      const ry = listY + i * (rowH + rowGap);
+      const isRowHov = hoveredButtonId === `todo_row_${task.id}`;
+
+      ctx.beginPath();
+      ctx.roundRect(contentX, ry, contentW, rowH, 8);
+      ctx.fillStyle = isRowHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.035)';
+      ctx.strokeStyle = isRowHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // Circular Checkbox [ ] / [✓]
+      const checkSize = 18;
+      const checkX = contentX + 12;
+      const checkY = ry + (rowH - checkSize) / 2;
+      const isCheckHov = hoveredButtonId === `todo_check_${task.id}`;
+
+      ctx.beginPath();
+      ctx.arc(checkX + checkSize / 2, checkY + checkSize / 2, checkSize / 2, 0, Math.PI * 2);
+      ctx.fillStyle = task.completed ? '#22c55e' : (isCheckHov ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.06)');
+      ctx.strokeStyle = task.completed ? '#16a34a' : 'rgba(255, 255, 255, 0.25)';
+      ctx.lineWidth = 1.2;
+      ctx.fill();
+      ctx.stroke();
+
+      if (task.completed) {
+        ctx.font = '700 11px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('✓', checkX + checkSize / 2, checkY + checkSize / 2);
+      }
+      interactiveButtons.push({ id: `todo_check_${task.id}`, data: task.id, x: checkX, y: checkY, w: checkSize, h: checkSize });
+
+      // Category Pill
+      const catBadge = task.category || 'General';
+      ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
+      const catBadgeW = ctx.measureText(catBadge).width + 10;
+      const catBadgeH = 16;
+      const catBadgeX = checkX + checkSize + 10;
+      const catBadgeY = ry + (rowH - catBadgeH) / 2;
+
+      ctx.beginPath();
+      ctx.roundRect(catBadgeX, catBadgeY, catBadgeW, catBadgeH, 4);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(catBadge, catBadgeX + catBadgeW / 2, catBadgeY + catBadgeH / 2);
+
+      // Task Description Text (with strike-through if completed)
+      const textX = catBadgeX + catBadgeW + 10;
+      const maxTextW = contentW - (textX - contentX) - 36;
+      ctx.font = task.completed ? '500 11.5px "Segoe UI Variable Text", Inter, sans-serif' : '600 12px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = task.completed ? '#64748b' : '#f4f4f5';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const renderedText = truncateToWidth(task.text, maxTextW, ctx.font);
+      ctx.fillText(renderedText, textX, ry + rowH / 2);
+
+      if (task.completed) {
+        const textW = ctx.measureText(renderedText).width;
+        ctx.beginPath();
+        ctx.moveTo(textX, ry + rowH / 2);
+        ctx.lineTo(textX + textW, ry + rowH / 2);
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+
+      // Delete ✖ button
+      const delW = 18;
+      const delH = 18;
+      const delX = contentX + contentW - delW - 10;
+      const delY = ry + (rowH - delH) / 2;
+      const isDelHov = hoveredButtonId === `todo_del_${task.id}`;
+
+      ctx.beginPath();
+      ctx.roundRect(delX, delY, delW, delH, 4);
+      ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.25)' : 'transparent';
+      ctx.fill();
+
+      ctx.font = '600 10px sans-serif';
+      ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✕', delX + delW / 2, delY + delH / 2);
+      interactiveButtons.push({ id: `todo_del_${task.id}`, data: task.id, x: delX, y: delY, w: delW, h: delH });
+    }
+  }
 }
 
 function renderHomeView(x, y, w, h) {
@@ -4032,16 +5178,78 @@ function renderDropZoneView(x, y, w, h) {
   // Files Area
   const listY = topY + 30;
 
+  // --- DUAL-ZONE DRAG-IN OVERLAY (One-Time Use on Left vs Keep on Right) ---
+  if (isDraggingOver) {
+    const zoneH = 170;
+    const gap = 12;
+    const zoneW = (contentW - gap) / 2;
+    const leftX = contentX;
+    const rightX = contentX + zoneW + gap;
+
+    // Left Zone: ⚡ One-Time Use
+    const isOneTimeHover = dropZoneHoverZone === 'onetime';
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = isOneTimeHover ? '#f59e0b' : 'rgba(245, 158, 11, 0.45)';
+    ctx.lineWidth = isOneTimeHover ? 2 : 1.5;
+    ctx.beginPath();
+    ctx.roundRect(leftX, listY, zoneW, zoneH, 12);
+    ctx.fillStyle = isOneTimeHover ? 'rgba(245, 158, 11, 0.16)' : 'rgba(245, 158, 11, 0.05)';
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '28px "Segoe UI Emoji", sans-serif';
+    ctx.fillText('⚡', leftX + zoneW / 2, listY + zoneH / 2 - 28);
+    ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = isOneTimeHover ? '#fbbf24' : '#f59e0b';
+    ctx.fillText('One-Time Use', leftX + zoneW / 2, listY + zoneH / 2 + 6);
+    ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillText('Auto-removes once dragged out', leftX + zoneW / 2, listY + zoneH / 2 + 24);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.fillText('(WhatsApp, Discord, Browser, etc.)', leftX + zoneW / 2, listY + zoneH / 2 + 38);
+
+    // Right Zone: 📌 Keep
+    const isKeepHover = dropZoneHoverZone === 'keep';
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = isKeepHover ? '#10b981' : 'rgba(16, 185, 129, 0.45)';
+    ctx.lineWidth = isKeepHover ? 2 : 1.5;
+    ctx.beginPath();
+    ctx.roundRect(rightX, listY, zoneW, zoneH, 12);
+    ctx.fillStyle = isKeepHover ? 'rgba(16, 185, 129, 0.16)' : 'rgba(16, 185, 129, 0.05)';
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '28px "Segoe UI Emoji", sans-serif';
+    ctx.fillText('📌', rightX + zoneW / 2, listY + zoneH / 2 - 28);
+    ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = isKeepHover ? '#34d399' : '#10b981';
+    ctx.fillText('Keep on Shelf', rightX + zoneW / 2, listY + zoneH / 2 + 6);
+    ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillText('Stays permanently on shelf', rightX + zoneW / 2, listY + zoneH / 2 + 24);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.fillText('Until you click ✖ to remove', rightX + zoneW / 2, listY + zoneH / 2 + 38);
+    return;
+  }
+
   if (dropZoneFiles.length === 0) {
     // Empty Drop Target state
     const emptyH = 160;
     ctx.save();
     ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : 'rgba(255, 255, 255, 0.15)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.roundRect(contentX, listY, contentW, emptyH, 10);
-    ctx.fillStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.02)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
     ctx.fill();
     ctx.stroke();
     ctx.restore();
@@ -4051,13 +5259,13 @@ function renderDropZoneView(x, y, w, h) {
     ctx.font = '24px "Segoe UI Emoji", sans-serif';
     ctx.fillText('📥', contentX + contentW / 2, listY + emptyH / 2 - 20);
 
-    ctx.fillStyle = isDraggingOver ? '#93c5fd' : '#e4e4e7';
+    ctx.fillStyle = '#e4e4e7';
     ctx.font = '600 13px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillText(isDraggingOver ? 'Release to shelf files!' : 'Drop files here to store on shelf', contentX + contentW / 2, listY + emptyH / 2 + 8);
+    ctx.fillText('Drop files here to store on shelf', contentX + contentW / 2, listY + emptyH / 2 + 8);
 
     ctx.fillStyle = '#71717a';
     ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillText('Drag files from desktop, apps, or click + Add', contentX + contentW / 2, listY + emptyH / 2 + 28);
+    ctx.fillText('Split into ⚡ One-Time Use or 📌 Keep when dragging in', contentX + contentW / 2, listY + emptyH / 2 + 28);
   } else {
     // Full-width vertical rows
     const rowH = 38;
@@ -4070,7 +5278,15 @@ function renderDropZoneView(x, y, w, h) {
       const isRowHov = hoveredButtonId === `dropzone_row_${i}`;
 
       // Row clickable target (opens file when row is clicked)
-      interactiveButtons.push({ id: `dropzone_row_${i}`, data: file.path || file.name, x: contentX, y: ry, w: contentW - 95, h: rowH });
+      interactiveButtons.push({
+        id: `dropzone_row_${i}`,
+        data: file.path || file.name,
+        oneTime: Boolean(file.oneTime),
+        x: contentX,
+        y: ry,
+        w: contentW - 95,
+        h: rowH
+      });
 
       // Row background
       ctx.beginPath();
@@ -4093,7 +5309,7 @@ function renderDropZoneView(x, y, w, h) {
       ctx.font = '600 12px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      const truncName = truncateText(file.name, 34);
+      const truncName = truncateText(file.name, 30);
       ctx.fillText(truncName, contentX + 38, ry + rowH / 2 - 6);
 
       // File Size
@@ -4101,13 +5317,45 @@ function renderDropZoneView(x, y, w, h) {
       ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.fillText(formatBytes(file.size), contentX + 38, ry + rowH / 2 + 8);
 
+      // Badge for One-Time vs Keep
+      const badgeText = file.oneTime ? '⚡ 1-Time' : '📌 Keep';
+      const badgeBg = file.oneTime ? 'rgba(245, 158, 11, 0.18)' : 'rgba(16, 185, 129, 0.18)';
+      const badgeBorder = file.oneTime ? 'rgba(245, 158, 11, 0.45)' : 'rgba(16, 185, 129, 0.45)';
+      const badgeColor = file.oneTime ? '#fbbf24' : '#34d399';
+      const badgeW = 54;
+      const badgeH = 16;
+      const badgeX = contentX + contentW - 152;
+      const badgeY = ry + (rowH - badgeH) / 2;
+
+      ctx.beginPath();
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 4);
+      ctx.fillStyle = badgeBg;
+      ctx.strokeStyle = badgeBorder;
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = badgeColor;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2);
+
       // Dedicated Open ↗ Button
-      const openBtnW = 54;
+      const openBtnW = 50;
       const openBtnH = 22;
       const openBtnX = contentX + contentW - 90;
       const openBtnY = ry + (rowH - openBtnH) / 2;
       const isOpenHov = hoveredButtonId === `dropzone_open_file_${i}`;
-      interactiveButtons.push({ id: `dropzone_open_file_${i}`, data: file.path || file.name, x: openBtnX, y: openBtnY, w: openBtnW, h: openBtnH });
+      interactiveButtons.push({
+        id: `dropzone_open_file_${i}`,
+        data: file.path || file.name,
+        oneTime: Boolean(file.oneTime),
+        x: openBtnX,
+        y: openBtnY,
+        w: openBtnW,
+        h: openBtnH
+      });
 
       ctx.beginPath();
       ctx.roundRect(openBtnX, openBtnY, openBtnW, openBtnH, 6);
@@ -4131,38 +5379,21 @@ function renderDropZoneView(x, y, w, h) {
       interactiveButtons.push({ id: `dropzone_delete_file_${i}`, data: file.name, x: delX, y: delY, w: delSize, h: delSize });
 
       ctx.beginPath();
-      ctx.roundRect(delX, delY, delSize, delSize, 5);
-      ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.2)' : 'transparent';
+      ctx.roundRect(delX, delY, delSize, delSize, 4);
+      ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.25)' : 'transparent';
       ctx.fill();
 
+      ctx.font = '600 11px sans-serif';
       ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
-      ctx.font = '700 12px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('✕', delX + delSize / 2, delY + delSize / 2);
     }
-
-    // Mini Drop Bar at bottom to drop more files
-    const barY = listY + maxRows * (rowH + rowGap) + 4;
-    const barH = 34;
-    ctx.save();
-    ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : 'rgba(255, 255, 255, 0.12)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(contentX, barY, contentW, barH, 6);
-    ctx.fillStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.02)';
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = isDraggingOver ? '#93c5fd' : '#71717a';
-    ctx.fillText(isDraggingOver ? 'Release to add to shelf!' : '+ Drag more files here to shelf', contentX + contentW / 2, barY + barH / 2);
   }
 }
+
+// -------------------------------------------------------------
+// Clipboard History View
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return '0 B';

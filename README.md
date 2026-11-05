@@ -1,18 +1,53 @@
-# 🏝️ Dynamic Windows (v1.3.9)
+# 🏝️ Dynamic Windows (v1.4.0)
 
-A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment built for Windows, powered by high-performance hardware-accelerated Canvas rendering with deep **Google Antigravity & AI Agent** tracking, a **Dual Split Resting Pill (AI Activity Capsule + Main Activity Pill + Right Call Capsule)**, a **Home Monthly Calendar Widget**, real-time **Liner Synced Lyrics**, **Connected Song Change Announcements**, **Customizable Animation Speed**, **Crisp Monochrome Vector Logos**, a **Clipboard History Manager**, **Game Mode**, and a **Drag-and-Drop Desktop Shelf**.
+A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment built for Windows, powered by high-performance hardware-accelerated Canvas rendering with deep **Google Antigravity & AI Agent** tracking, a **Dual Split Resting Pill (AI Activity Capsule + Main Activity Pill + Right Call Capsule)**, a **Dedicated Calendar Tab with Recurring Date Notes**, a **Dedicated Clock Tab (Timer, Stopwatch, Focus Mode)**, a **Dedicated To-Do List Tab with Custom Categories**, a **Dual-Zone Drop Shelf (One-Time Use vs Keep with Auto-Clear on Drag-Out)**, real-time **Liner Synced Lyrics**, **Connected Song Change Announcements**, **Customizable Animation Speed**, **Crisp Monochrome Vector Logos**, a **Clipboard History Manager**, **Game Mode**, and a **Settings Exit Button**.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.3.9.exe)
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.0.exe)
 
 ---
 
 ## 📥 Download & Install
 
-👉 **[Download DynamicWindows-Setup-v1.3.9.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.3.9.exe)**
+👉 **[Download DynamicWindows-Setup-v1.4.0.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.0.exe)**
 
 - **Single-File Standalone Setup**: Self-contained installer compiled with native C# (`.NET`).
 - **Zero Admin Rights Required**: Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` without UAC prompts.
 - **Instant Shortcuts**: Creates Desktop and Start Menu shortcuts automatically.
+
+---
+
+## ✨ Features & Highlights
+
+### 📅 Dedicated Calendar Tab
+- **Interactive Month Grid & Date Picker**: Full-month calendar navigation with previous/next month buttons, day selection, and a `Today` jump pill.
+- **Date Notes & Recurring Events**: Record notes for any date with flexible recurrence:
+  - `🎂 Birthday / Yearly`: Recurring annual celebrations and milestones.
+  - `🔁 Monthly`: Monthly deadlines and bills.
+  - `🔁 Weekly`: Recurring weekly standups and meetings.
+  - `🔁 Daily`: Daily routines and habits.
+  - `📌 Once`: One-time notes and reminders.
+- **Visual Event Indicators**: Days with notes render colored indicator dots (pink for birthdays, cyan for reminders).
+
+### ⏱️ Dedicated Clock Tab
+- **3 Sub-Modes in One Tab**:
+  - **⏳ Timer**: Countdown timer with presets (`1m`, `5m`, `15m`, `25m`, `45m`, `60m`), `+1m` / `-1m` nudges, and live progress.
+  - **⏱️ Stopwatch**: High-precision millisecond stopwatch (`00:00.00`) with split and lap tracking.
+  - **🎯 Focus Mode**: Pomodoro session manager with 25m focus sessions, 5m short breaks, and session cycle counters.
+- **Resting Pill Live Badges**: When a timer or focus session is running and the Island collapses to rest, the resting pill displays a live countdown badge (e.g. `⏱️ 14:20` or `🎯 Focus 22:05`).
+
+### ✅ Dedicated To-Do List Tab
+- **Custom User Categories**: Add custom categories (e.g. `Projects`, `Fitness`, `Ideas`) or delete them anytime.
+- **Category Filter Chips**: Easily filter tasks by clicking category chips (`All`, `Personal`, `Work`, `Island`, or custom).
+- **Interactive Checklist**: Tasks feature circular checkmarks `[✓]` with smooth green strike-through animations and completion timestamps.
+
+### 📁 Dual-Zone Drop Shelf (One-Time Use vs. Keep)
+- **Visual Split on Drag-In**: Dragging any file over the Island or Drop Shelf splits the drop target into two equal zones:
+  - **Left Zone (`⚡ One-Time Use`)**: Amber dashed border. Files dropped here automatically remove themselves from the shelf as soon as you drag them out into external apps (e.g. WhatsApp, Discord, Browser, Slack).
+  - **Right Zone (`📌 Keep`)**: Emerald dashed border. Files dropped here stay permanently on your shelf across drag-outs until you explicitly click `✖`.
+- **Shelf Row Badges**: Each file displays an amber `⚡ 1-Time` badge or an emerald `📌 Keep` badge.
+
+### 🚪 Settings Page Exit Button
+- **Clean One-Click Exit**: Dedicated `Exit Dynamic Windows` button in the Settings sidebar and About page to cleanly terminate the app without needing Windows Task Manager.
 
 ---
 
