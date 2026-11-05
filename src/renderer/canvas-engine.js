@@ -415,6 +415,7 @@ function getCallCapsuleWidth() {
 // TwoCode Album Cover & Dominant Color Extraction
 // -------------------------------------------------------------
 const albumImage = new Image();
+albumImage.crossOrigin = 'anonymous';
 let albumImageForUrl = '';
 let albumAccentColor = '#22c55e';
 let tintK = 0;
@@ -422,33 +423,57 @@ let tintK = 0;
 function updateAlbumArt(url) {
   if (!url) {
     albumImageForUrl = '';
-    albumAccentColor = '#22c55e';
+    const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Island');
+    let hash = 0;
+    for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i);
+    const hue = Math.abs(hash) % 360;
+    albumAccentColor = `hsl(${hue}, 85%, 60%)`;
     return;
   }
   if (url === albumImageForUrl) return;
   albumImageForUrl = url;
+  albumImage.crossOrigin = 'anonymous';
   albumImage.onload = () => {
     try {
       const c = document.createElement('canvas');
-      c.width = c.height = 12;
+      c.width = c.height = 16;
       const x = c.getContext('2d');
-      x.drawImage(albumImage, 0, 0, 12, 12);
-      const d = x.getImageData(0, 0, 12, 12).data;
-      let r = 0, g = 0, b = 0, n = 0;
+      x.drawImage(albumImage, 0, 0, 16, 16);
+      const d = x.getImageData(0, 0, 16, 16).data;
+      let r = 0, g = 0, b = 0, totalW = 0;
       for (let i = 0; i < d.length; i += 4) {
-        const sat = Math.max(d[i], d[i + 1], d[i + 2]) - Math.min(d[i], d[i + 1], d[i + 2]);
-        const w = 1 + sat / 16;
-        r += d[i] * w;
-        g += d[i + 1] * w;
-        b += d[i + 2] * w;
-        n += w;
+        const pr = d[i], pg = d[i + 1], pb = d[i + 2];
+        const max = Math.max(pr, pg, pb);
+        const min = Math.min(pr, pg, pb);
+        const sat = max - min;
+        const weight = (sat > 15 ? (sat / 10) : 0.2) * (max > 25 && max < 245 ? 1.5 : 0.4);
+        r += pr * weight;
+        g += pg * weight;
+        b += pb * weight;
+        totalW += weight;
       }
-      r /= n; g /= n; b /= n;
-      const boost = 210 / Math.max(60, Math.max(r, g, b));
-      albumAccentColor = `rgb(${[r, g, b].map(v => Math.min(255, Math.round(v * boost))).join(',')})`;
-    } catch {
-      albumAccentColor = '#22c55e';
+      if (totalW > 0) {
+        r /= totalW; g /= totalW; b /= totalW;
+      } else {
+        r = 56; g = 189; b = 248;
+      }
+      const maxVal = Math.max(r, g, b, 40);
+      const boost = 220 / maxVal;
+      albumAccentColor = `rgb(${[r, g, b].map(v => Math.min(255, Math.max(0, Math.round(v * boost)))).join(',')})`;
+    } catch (e) {
+      const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Music');
+      let hash = 0;
+      for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i);
+      const hue = Math.abs(hash) % 360;
+      albumAccentColor = `hsl(${hue}, 85%, 60%)`;
     }
+  };
+  albumImage.onerror = () => {
+    const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Music');
+    let hash = 0;
+    for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i);
+    const hue = Math.abs(hash) % 360;
+    albumAccentColor = `hsl(${hue}, 85%, 60%)`;
   };
   albumImage.src = url;
 }
@@ -2131,27 +2156,34 @@ function render() {
 
     // 2b. Dynamic Island Album Cover Ambient Fade Gradient Glow
     const hasMediaTrack = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
-    const wantTint = (albumColorGradientEnabled && hasMediaTrack && (currentView === 'media' || p > 0.35 || !isSplitResting)) ? 1.0 : 0.0;
-    tintK += (wantTint - tintK) * 0.14;
+    const wantTint = (albumColorGradientEnabled && hasMediaTrack) ? 1.0 : 0.0;
+    tintK += (wantTint - tintK) * 0.16;
     if (tintK > 0.01 && albumAccentColor) {
       ctx.save();
       ctx.beginPath();
       ctx.roundRect(x, y, w, h, radii);
       ctx.clip();
       const tintGrad = ctx.createLinearGradient(x, y + h, x, y);
-      tintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.42 * tintK));
-      tintGrad.addColorStop(0.55, colorWithAlpha(albumAccentColor, 0.15 * tintK));
+      tintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.58 * tintK));
+      tintGrad.addColorStop(0.48, colorWithAlpha(albumAccentColor, 0.24 * tintK));
+      tintGrad.addColorStop(0.85, colorWithAlpha(albumAccentColor, 0.06 * tintK));
       tintGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = tintGrad;
       ctx.fillRect(x, y, w, h);
       ctx.restore();
     }
 
-    // 3. Specular Border Rim (1px Glass Edge)
+    // 3. Specular Border Rim (illuminated with album accent when active)
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, radii);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = isDraggingOver ? 'rgba(59, 130, 246, 0.85)' : `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
+    if (isDraggingOver) {
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.85)';
+    } else if (tintK > 0.08 && albumAccentColor) {
+      ctx.strokeStyle = colorWithAlpha(albumAccentColor, 0.42 * tintK + 0.12);
+    } else {
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
+    }
     ctx.stroke();
 
     ctx.restore();
@@ -2903,8 +2935,9 @@ function renderRestingPill(x, y, w, h, alpha) {
       ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
       ctx.clip();
       const restTintGrad = ctx.createLinearGradient(mainPillX, y + pillH, mainPillX, y);
-      restTintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.45 * alpha));
-      restTintGrad.addColorStop(0.65, colorWithAlpha(albumAccentColor, 0.15 * alpha));
+      restTintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.58 * alpha));
+      restTintGrad.addColorStop(0.5, colorWithAlpha(albumAccentColor, 0.22 * alpha));
+      restTintGrad.addColorStop(0.85, colorWithAlpha(albumAccentColor, 0.05 * alpha));
       restTintGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = restTintGrad;
       ctx.fillRect(mainPillX, y, mainPillW, pillH);
@@ -2915,7 +2948,7 @@ function renderRestingPill(x, y, w, h, alpha) {
     ctx.beginPath();
     ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.strokeStyle = (albumColorGradientEnabled && hasMediaForPill && albumAccentColor) ? colorWithAlpha(albumAccentColor, 0.45 * alpha + 0.12) : 'rgba(255, 255, 255, 0.12)';
     ctx.stroke();
     ctx.restore();
 

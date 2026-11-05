@@ -59,7 +59,7 @@ function getAppVersion() {
   } catch (e) {}
   const v = app.getVersion();
   if (v && v !== '0.0.0' && !v.startsWith('33.') && !v.startsWith('32.')) return v;
-  return configManager.get('version') || '1.4.2';
+  return configManager.get('version') || '1.4.3';
 }
 
 function registerSettingsIPC(dropZoneInstance) {
