@@ -392,9 +392,40 @@ function createIslandWindow() {
     }
   });
 
-  ipcMain.on('exit-app', () => {
+  function exitApplication() {
     isQuitting = true;
-    app.quit();
+    try {
+      const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+      fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] exitApplication invoked\n`);
+    } catch (err) {}
+    try { sysHelper.restoreWorkArea(); } catch (e) {}
+    try {
+      if (agentHooksServer && typeof agentHooksServer.stop === 'function') {
+        agentHooksServer.stop();
+      }
+    } catch (e) {}
+    try {
+      if (callMonitor && typeof callMonitor.stop === 'function') {
+        callMonitor.stop();
+      }
+    } catch (e) {}
+    try {
+      const wins = BrowserWindow.getAllWindows();
+      for (const win of wins) {
+        if (!win.isDestroyed()) {
+          win.destroy();
+        }
+      }
+    } catch (e) {}
+    try {
+      app.exit(0);
+    } catch (e) {
+      process.exit(0);
+    }
+  }
+
+  ipcMain.on('exit-app', () => {
+    exitApplication();
   });
 
   ipcMain.on('dropzone-browse-file', async () => {
@@ -743,8 +774,7 @@ function setupTray() {
       {
         label: 'Exit Dynamic Windows',
         click: () => {
-          isQuitting = true;
-          app.quit();
+          exitApplication();
         }
       }
     ]);

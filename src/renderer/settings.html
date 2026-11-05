@@ -72,6 +72,24 @@
       font-weight: 600;
     }
 
+    .sidebar-exit-btn {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      color: #fca5a5;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .sidebar-exit-btn:hover {
+      background-color: rgba(239, 68, 68, 0.15);
+      color: #ef4444;
+    }
+
     .nav-icon {
       width: 18px;
       height: 18px;
@@ -396,11 +414,11 @@
       <span>About</span>
     </div>
     <div style="margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
-      <div class="nav-item nav-item-exit" id="btn-sidebar-exit" style="color: #fca5a5;">
+      <div class="sidebar-exit-btn" id="btn-sidebar-exit">
         <span class="nav-icon" style="color: #ef4444;">
           <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
         </span>
-        <span>Exit</span>
+        <span>Exit Dynamic Windows</span>
       </div>
     </div>
   </div>
@@ -696,7 +714,7 @@
     const { ipcRenderer } = require('electron');
 
     // Navigation Tabs
-    const navItems = document.querySelectorAll('.nav-item');
+    const navItems = document.querySelectorAll('.sidebar .nav-item[data-page]');
     const pages = document.querySelectorAll('.page');
 
     navItems.forEach(item => {
@@ -894,9 +912,13 @@
       });
     });
 
-    // Initialize
-    document.getElementById('btn-sidebar-exit')?.addEventListener('click', () => ipcRenderer.send('exit-app'));
-    document.getElementById('btn-about-exit')?.addEventListener('click', () => ipcRenderer.send('exit-app'));
+    // Initialize Exit actions
+    const doExit = (e) => {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      ipcRenderer.send('exit-app');
+    };
+    document.getElementById('btn-sidebar-exit')?.addEventListener('click', doExit);
+    document.getElementById('btn-about-exit')?.addEventListener('click', doExit);
     loadSettings();
   </script>
 </body>

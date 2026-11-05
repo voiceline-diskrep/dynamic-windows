@@ -56,7 +56,7 @@ function registerSettingsIPC(dropZoneInstance) {
   ipcMain.handle('get-app-settings', async () => {
     return {
       config: configManager.get(),
-      version: app.getVersion() || '1.1.3',
+      version: app.getVersion() || '1.4.1',
       dropZonePath: dropZoneInstance ? dropZoneInstance.dir : '',
       dropZoneCount: dropZoneInstance ? dropZoneInstance.getFiles().length : 0
     };

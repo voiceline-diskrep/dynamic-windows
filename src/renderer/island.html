@@ -21,6 +21,16 @@
       height: 100%;
       touch-action: none;
     }
+    #inline-modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 9998;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      pointer-events: auto;
+    }
     #inline-modal {
       display: none;
       position: absolute;
@@ -37,6 +47,7 @@
       box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
       z-index: 9999;
       color: #ffffff;
+      pointer-events: auto;
     }
     #inline-modal-title {
       font-size: 13px;
@@ -115,6 +126,7 @@
 </head>
 <body>
   <canvas id="canvas"></canvas>
+  <div id="inline-modal-backdrop"></div>
   <div id="inline-modal">
     <div id="inline-modal-title">Add Note</div>
     <input id="inline-modal-input" type="text" placeholder="Enter details..." />

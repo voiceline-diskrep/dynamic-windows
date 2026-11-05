@@ -30,8 +30,13 @@ const ctx = canvas.getContext('2d');
 // -------------------------------------------------------------
 // Interactive Inline Modal Support (Calendar Notes, To-Do Tasks, Categories)
 // -------------------------------------------------------------
+let isInlineModalOpen = false;
+let inlineModalCallback = null;
+let inlineModalSelectedChip = null;
+
 function showInlineModal(title, placeholder, extraChips, callback) {
   const modal = document.getElementById('inline-modal');
+  const backdrop = document.getElementById('inline-modal-backdrop');
   const modalTitle = document.getElementById('inline-modal-title');
   const modalInput = document.getElementById('inline-modal-input');
   const modalExtra = document.getElementById('inline-modal-extra');
@@ -39,6 +44,13 @@ function showInlineModal(title, placeholder, extraChips, callback) {
   const btnSubmit = document.getElementById('inline-modal-submit');
 
   if (!modal || !modalInput) return;
+
+  isInlineModalOpen = true;
+  isHovered = true;
+  if (leaveTimer) {
+    clearTimeout(leaveTimer);
+    leaveTimer = null;
+  }
 
   modalTitle.textContent = title || 'Input';
   modalInput.placeholder = placeholder || 'Enter value...';
@@ -53,7 +65,8 @@ function showInlineModal(title, placeholder, extraChips, callback) {
       const chipEl = document.createElement('div');
       chipEl.className = 'modal-chip' + (idx === 0 ? ' active' : '');
       chipEl.textContent = ch.label;
-      chipEl.onclick = () => {
+      chipEl.onclick = (e) => {
+        e.stopPropagation();
         modalExtra.querySelectorAll('.modal-chip').forEach(el => el.classList.remove('active'));
         chipEl.classList.add('active');
         inlineModalSelectedChip = ch.id;
@@ -64,12 +77,14 @@ function showInlineModal(title, placeholder, extraChips, callback) {
     modalExtra.style.display = 'none';
   }
 
+  if (backdrop) backdrop.style.display = 'block';
   modal.style.display = 'block';
   ipcRenderer.send('set-ignore-mouse-events', false);
 
   setTimeout(() => {
     modalInput.focus();
-  }, 30);
+    ipcRenderer.send('set-ignore-mouse-events', false);
+  }, 40);
 
   const onSubmit = () => {
     const val = modalInput.value.trim();
@@ -79,8 +94,14 @@ function showInlineModal(title, placeholder, extraChips, callback) {
     hideInlineModal();
   };
 
-  btnSubmit.onclick = onSubmit;
-  btnCancel.onclick = hideInlineModal;
+  btnSubmit.onclick = (e) => {
+    e.stopPropagation();
+    onSubmit();
+  };
+  btnCancel.onclick = (e) => {
+    e.stopPropagation();
+    hideInlineModal();
+  };
 
   modalInput.onkeydown = (e) => {
     if (e.key === 'Enter') {
@@ -92,14 +113,70 @@ function showInlineModal(title, placeholder, extraChips, callback) {
 }
 
 function hideInlineModal() {
+  isInlineModalOpen = false;
   const modal = document.getElementById('inline-modal');
+  const backdrop = document.getElementById('inline-modal-backdrop');
   if (modal) modal.style.display = 'none';
+  if (backdrop) backdrop.style.display = 'none';
   inlineModalCallback = null;
   inlineModalSelectedChip = null;
-  if (!isHovered) {
-    ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
-  }
+  setTimeout(() => {
+    if (!isHovered && !isInlineModalOpen) {
+      ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+    }
+  }, 100);
 }
+
+// Modal and Backdrop Interactive Event Wiring
+const inlineModalEl = document.getElementById('inline-modal');
+const inlineModalBackdropEl = document.getElementById('inline-modal-backdrop');
+
+if (inlineModalEl) {
+  inlineModalEl.addEventListener('mouseenter', (e) => {
+    e.stopPropagation();
+    if (leaveTimer) {
+      clearTimeout(leaveTimer);
+      leaveTimer = null;
+    }
+    isHovered = true;
+    ipcRenderer.send('set-ignore-mouse-events', false);
+  });
+  inlineModalEl.addEventListener('mousemove', (e) => {
+    e.stopPropagation();
+    if (leaveTimer) {
+      clearTimeout(leaveTimer);
+      leaveTimer = null;
+    }
+    isHovered = true;
+  });
+  inlineModalEl.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    ipcRenderer.send('set-ignore-mouse-events', false);
+  });
+}
+
+if (inlineModalBackdropEl) {
+  inlineModalBackdropEl.addEventListener('mouseenter', (e) => {
+    e.stopPropagation();
+    if (leaveTimer) {
+      clearTimeout(leaveTimer);
+      leaveTimer = null;
+    }
+    isHovered = true;
+    ipcRenderer.send('set-ignore-mouse-events', false);
+  });
+  inlineModalBackdropEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    hideInlineModal();
+  });
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isInlineModalOpen) {
+    hideInlineModal();
+  }
+});
 
 // User Data IPC Initialization
 try {
@@ -227,10 +304,6 @@ let todoData = {
   tasks: []
 };
 let todoSelectedCategory = 'All';
-
-// Inline Modal State
-let inlineModalCallback = null;
-let inlineModalSelectedChip = null;
 
 let clipboardHistory = [];
 let clipboardFilter = '';
@@ -1044,6 +1117,16 @@ canvas.addEventListener('mousemove', (e) => {
   mouseX = e.clientX;
   mouseY = e.clientY;
 
+  if (isInlineModalOpen) {
+    if (leaveTimer) {
+      clearTimeout(leaveTimer);
+      leaveTimer = null;
+    }
+    isHovered = true;
+    ipcRenderer.send('set-ignore-mouse-events', false);
+    return;
+  }
+
   if (isTucked) {
     const tuckW = 84;
     const tuckH = 10;
@@ -1104,15 +1187,16 @@ canvas.addEventListener('mousemove', (e) => {
       ipcRenderer.send('island-hover-start');
     }
   } else {
-    if (isHovered && !leaveTimer) {
+    if (isHovered && !leaveTimer && !isInlineModalOpen) {
       leaveTimer = setTimeout(() => {
+        if (isInlineModalOpen) return;
         isHovered = false;
         targetProgress = 0.0;
         currentView = 'home';
         ipcRenderer.send('island-hover-end');
         leaveTimer = null;
         setTimeout(() => {
-          if (!isHovered) {
+          if (!isHovered && !isInlineModalOpen) {
             ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
           }
         }, 320);
@@ -1150,8 +1234,10 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 canvas.addEventListener('mouseleave', () => {
+  if (isInlineModalOpen) return;
   if (leaveTimer) clearTimeout(leaveTimer);
   leaveTimer = setTimeout(() => {
+    if (isInlineModalOpen) return;
     isHovered = false;
     targetProgress = 0.0;
     currentView = 'home';
