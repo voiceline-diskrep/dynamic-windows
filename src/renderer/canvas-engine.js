@@ -312,6 +312,7 @@ let copiedFeedbackTimer = null;
 let shelfDragCandidate = null;
 let currentRestingWidth = UI.REST_W;
 let dynamicLyricsEnabled = true;
+let albumColorGradientEnabled = true;
 let wasShelfDragging = false;
 let currentVolume = 0.66;
 let isVolumeMuted = false;
@@ -913,6 +914,7 @@ let gameModeToastUntil = 0;
 let lastSongAnnouncementKey = '';
 let songPopupActiveUntil = 0;
 let songPopupProgress = 0.0; // 0.0 (compact) -> 1.0 (fully extended downward)
+let hoveredDuringSongPopup = false;
 const SONG_POPUP_DURATION_MS = 6000; // 6 seconds display duration approved by user
 const SONG_POPUP_HEIGHT = 124;
 const SONG_POPUP_WIDTH = 480;
@@ -920,6 +922,12 @@ const SONG_POPUP_WIDTH = 480;
 function triggerSongAnnouncement() {
   if (isTucked) return;
   songPopupActiveUntil = performance.now() + SONG_POPUP_DURATION_MS;
+  hoveredDuringSongPopup = false;
+}
+
+function dismissSongAnnouncement() {
+  songPopupActiveUntil = 0;
+  hoveredDuringSongPopup = false;
 }
 
 try {
@@ -1152,6 +1160,9 @@ canvas.addEventListener('mousemove', (e) => {
   const isOverIsland = pointInRect(mouseX, mouseY, curX - 8, Math.max(0, curY - 4), curW + 16, curH + 16);
 
   if (isOverIsland) {
+    if (songPopupProgress > 0.05 || songPopupActiveUntil > performance.now()) {
+      hoveredDuringSongPopup = true;
+    }
     if (leaveTimer) {
       clearTimeout(leaveTimer);
       leaveTimer = null;
@@ -1187,6 +1198,9 @@ canvas.addEventListener('mousemove', (e) => {
       ipcRenderer.send('island-hover-start');
     }
   } else {
+    if (hoveredDuringSongPopup) {
+      dismissSongAnnouncement();
+    }
     if (isHovered && !leaveTimer && !isInlineModalOpen) {
       leaveTimer = setTimeout(() => {
         if (isInlineModalOpen) return;
@@ -1235,6 +1249,9 @@ canvas.addEventListener('mousemove', (e) => {
 
 canvas.addEventListener('mouseleave', () => {
   if (isInlineModalOpen) return;
+  if (hoveredDuringSongPopup || songPopupActiveUntil > performance.now()) {
+    dismissSongAnnouncement();
+  }
   if (leaveTimer) clearTimeout(leaveTimer);
   leaveTimer = setTimeout(() => {
     if (isInlineModalOpen) return;
@@ -1337,6 +1354,18 @@ canvas.addEventListener('click', (e) => {
   for (const btn of interactiveButtons) {
     if (pointInRect(cx, cy, btn.x, btn.y, btn.w, btn.h)) {
       handleButtonClick(btn.id, btn.data);
+      return;
+    }
+  }
+
+  // Dismiss song announcement if clicking banner surface
+  if (songPopupProgress > 0.05 && animProgress < 0.25) {
+    const popW = SONG_POPUP_WIDTH;
+    const popH = SONG_POPUP_HEIGHT;
+    const popX = (window.innerWidth - popW) / 2;
+    const popY = displayMode === 'notch' ? 0 : 8;
+    if (pointInRect(cx, cy, popX, popY, popW, popH)) {
+      dismissSongAnnouncement();
       return;
     }
   }
@@ -1530,6 +1559,8 @@ function handleButtonClick(id, data) {
     songPopupActiveUntil = 0;
     currentView = 'media';
     targetProgress = 1.0;
+  } else if (id === 'song_popup_dismiss') {
+    dismissSongAnnouncement();
   } else if (id === 'tuck_island') {
     setTucked(true);
   } else if (id && id.startsWith('media_speed_')) {
@@ -1710,11 +1741,19 @@ ipcRenderer.on('dynamic-lyrics-toggled', (event, data) => {
     dynamicLyricsEnabled = data.enabled;
   }
 });
+ipcRenderer.on('album-color-gradient-toggled', (event, data) => {
+  if (data && typeof data.enabled === 'boolean') {
+    albumColorGradientEnabled = data.enabled;
+  }
+});
 try {
   ipcRenderer.invoke('get-app-settings').then(res => {
     if (res && res.config) {
       if (typeof res.config.dynamicLyrics === 'boolean') {
         dynamicLyricsEnabled = res.config.dynamicLyrics;
+      }
+      if (typeof res.config.albumColorGradient === 'boolean') {
+        albumColorGradientEnabled = res.config.albumColorGradient;
       }
       if (res.config.animationSpeed) {
         const val = parseFloat(res.config.animationSpeed);
@@ -1778,10 +1817,10 @@ function animate(now) {
   const restSpeed = (targetRestW > currentRestingWidth ? 8.5 : 7.0) * animSpeedMultiplier;
   currentRestingWidth += (targetRestW - currentRestingWidth) * Math.min(1.0, dt * restSpeed);
 
-  // Song Announcement Downward Popup Spring & Hover Pause
-  const isHoveredOverPopup = songPopupProgress > 0.05 && mouseX >= 0 && mouseY >= 0 && pointInRect(mouseX, mouseY, (window.innerWidth - getTargetWidth(animProgress)) / 2, (displayMode === 'notch' ? 0 : 8), getTargetWidth(animProgress), getTargetHeight(animProgress));
-  if (isHoveredOverPopup && songPopupActiveUntil > now) {
-    songPopupActiveUntil = Math.max(songPopupActiveUntil, now + 1500);
+  // Song Announcement Downward Popup Spring & Hover Tracking
+  const isHoveredOverPopup = (songPopupProgress > 0.05 || songPopupActiveUntil > now) && mouseX >= 0 && mouseY >= 0 && pointInRect(mouseX, mouseY, (window.innerWidth - getTargetWidth(animProgress)) / 2 - 8, (displayMode === 'notch' ? 0 : 8) - 4, getTargetWidth(animProgress) + 16, getTargetHeight(animProgress) + 16);
+  if (isHoveredOverPopup) {
+    hoveredDuringSongPopup = true;
   }
   const isSongPopupActive = songPopupActiveUntil > now && animProgress < 0.2;
   const targetSongPopupProgress = isSongPopupActive ? 1.0 : 0.0;
@@ -2090,10 +2129,11 @@ function render() {
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // 2b. Album Cover Ambient Tint Glow when on Media page
-    const wantTint = (p > 0.35 && currentView === 'media' && mediaState.track && mediaState.track.title !== 'No media playing') ? 1 : 0;
+    // 2b. Dynamic Island Album Cover Ambient Fade Gradient Glow
+    const hasMediaTrack = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
+    const wantTint = (albumColorGradientEnabled && hasMediaTrack && (currentView === 'media' || p > 0.35 || !isSplitResting)) ? 1.0 : 0.0;
     tintK += (wantTint - tintK) * 0.14;
-    if (tintK > 0.01) {
+    if (tintK > 0.01 && albumAccentColor) {
       ctx.save();
       ctx.beginPath();
       ctx.roundRect(x, y, w, h, radii);
@@ -2200,9 +2240,34 @@ function renderSongAnnouncementPopup(x, y, w, h, popAlpha) {
   ctx.fillText(timeStr, x + 16, y + topH / 2);
   const clockW = ctx.measureText(timeStr).width;
 
-  // Animated 5-Bar Audio Equalizer on Top Right
+  // Close / Dismiss button on Top Right
+  const closeBtnSize = 16;
+  const closeBtnX = x + w - closeBtnSize - 14;
+  const closeBtnY = y + (topH - closeBtnSize) / 2;
+  const isCloseHov = pointInRect(mouseX, mouseY, closeBtnX - 4, closeBtnY - 4, closeBtnSize + 8, closeBtnSize + 8);
+  interactiveButtons.push({
+    id: 'song_popup_dismiss',
+    x: closeBtnX - 4,
+    y: closeBtnY - 4,
+    w: closeBtnSize + 8,
+    h: closeBtnSize + 8
+  });
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(closeBtnX + closeBtnSize / 2, closeBtnY + closeBtnSize / 2, closeBtnSize / 2, 0, Math.PI * 2);
+  ctx.fillStyle = isCloseHov ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.08)';
+  ctx.fill();
+  ctx.fillStyle = isCloseHov ? '#ffffff' : 'rgba(255, 255, 255, 0.6)';
+  ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('✕', closeBtnX + closeBtnSize / 2, closeBtnY + closeBtnSize / 2);
+  ctx.restore();
+
+  // Animated 5-Bar Audio Equalizer to the left of close button
   const eqW = 22;
-  const eqX = x + w - eqW - 16;
+  const eqX = closeBtnX - eqW - 10;
   drawEqualizer('popup_top', eqX, y + topH / 2, eqW, 11, albumAccentColor, 5);
 
   // Center Rolling Lyric or Title Snippet
@@ -2829,6 +2894,22 @@ function renderRestingPill(x, y, w, h, alpha) {
     ctx.fillStyle = mainGrad;
     ctx.fill();
     ctx.restore();
+
+    // Ambient fade gradient derived from album cover on resting main capsule
+    const hasMediaForPill = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
+    if (albumColorGradientEnabled && hasMediaForPill && albumAccentColor) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
+      ctx.clip();
+      const restTintGrad = ctx.createLinearGradient(mainPillX, y + pillH, mainPillX, y);
+      restTintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.45 * alpha));
+      restTintGrad.addColorStop(0.65, colorWithAlpha(albumAccentColor, 0.15 * alpha));
+      restTintGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = restTintGrad;
+      ctx.fillRect(mainPillX, y, mainPillW, pillH);
+      ctx.restore();
+    }
 
     ctx.save();
     ctx.beginPath();

@@ -668,6 +668,7 @@ function createIslandWindow() {
     sendDisplayMode();
     sendAnimationSpeed();
     sendDynamicLyrics();
+    sendAlbumColorGradient();
   });
 }
 
@@ -725,6 +726,13 @@ function sendDynamicLyrics() {
   const enabled = configManager.get('dynamicLyrics') !== false;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('dynamic-lyrics-toggled', { enabled });
+  }
+}
+
+function sendAlbumColorGradient() {
+  const enabled = configManager.get('albumColorGradient') !== false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('album-color-gradient-toggled', { enabled });
   }
 }
 

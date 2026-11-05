@@ -81,4 +81,11 @@ test('ConfigManager: get and set settings including displayMode', () => {
   assert.strictEqual(configManager.get('dynamicLyrics'), false);
   configManager.set('dynamicLyrics', true);
   assert.strictEqual(configManager.get('dynamicLyrics'), true);
+
+  // Test albumColorGradient setting
+  assert.strictEqual(typeof cur.albumColorGradient, 'boolean');
+  configManager.set('albumColorGradient', false);
+  assert.strictEqual(configManager.get('albumColorGradient'), false);
+  configManager.set('albumColorGradient', true);
+  assert.strictEqual(configManager.get('albumColorGradient'), true);
 });

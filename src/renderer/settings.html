@@ -610,6 +610,16 @@
         </div>
         <div class="setting-row">
           <div class="setting-info">
+            <span class="setting-label">Album Art Fade Gradient Glow</span>
+            <span class="setting-desc">Applies an ambient bottom-to-top fluid gradient tint derived from the active album cover to the Dynamic Island (resting pill and expanded views).</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-albumColorGradient">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
             <span class="setting-label">Live Lyrics Output</span>
             <span class="setting-desc">Displays rotating and synced lyrics lines inside the Island Media view with ambient typography.</span>
           </div>
@@ -690,7 +700,7 @@
       <div class="card" style="padding: 24px; text-align: center;">
         <img src="../../app_icon.png" alt="Dynamic Windows" style="width: 64px; height: 64px; border-radius: 14px; margin-bottom: 12px;">
         <h2 style="font-size: 18px; font-weight: 700; color: #ffffff;">Dynamic Windows</h2>
-        <p style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.1.4 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
+        <p id="about-version-text" style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.4.2 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
 
         <p style="font-size: 12.5px; color: #71717a; max-width: 480px; margin: 0 auto 20px auto; line-height: 1.5;">
           Featuring Apple-inspired 144Hz physics, Start Menu application discovery, one-click preset launching, and deep integration with Google Antigravity.
@@ -765,8 +775,12 @@
       document.getElementById('dropzone-count-badge').textContent = `${data.dropZoneCount || 0} items`;
 
       // Updates
-      document.getElementById('current-version-badge').textContent = `v${data.version || '1.0.7'}`;
+      const currentVer = data.version || '1.4.2';
+      document.getElementById('current-version-badge').textContent = `v${currentVer}`;
+      const aboutVer = document.getElementById('about-version-text');
+      if (aboutVer) aboutVer.textContent = `Version ${currentVer} • Electron 33 • HTML5 2D Canvas Engine`;
       document.getElementById('setting-autoCheckUpdates').checked = !!cfg.autoCheckUpdates;
+      document.getElementById('setting-albumColorGradient').checked = cfg.albumColorGradient !== false;
 
       // Update status
     }
@@ -809,6 +823,7 @@
     bindSettingChange('setting-clock24h', 'clock24h');
     bindSettingChange('setting-showSeconds', 'showSeconds');
     bindSettingChange('setting-dynamicLyrics', 'dynamicLyrics');
+    bindSettingChange('setting-albumColorGradient', 'albumColorGradient');
     bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');
     bindSettingChange('setting-autoFocusAntigravity', 'autoFocusAntigravity');
     bindSettingChange('setting-hooksPort', 'hooksPort', true);
@@ -865,7 +880,10 @@
           notesPreview.textContent = res.releaseNotes;
         }
       } else {
-        statusMsg.innerHTML = `<span style="color: #4ade80;">✓ You are running the latest version (v${res.currentVersion}).</span>`;
+        statusMsg.innerHTML = `
+          <strong style="color: #4ade80;">✓ You are running the latest version (v${res.currentVersion})!</strong><br>
+          <span style="color: #a1a1aa; font-size: 12px;">Dynamic Windows is fully up to date with official GitHub Releases.</span>
+        `;
       }
     });
 

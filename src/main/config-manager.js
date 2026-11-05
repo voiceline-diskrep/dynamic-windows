@@ -15,10 +15,11 @@ const CONFIG_DIR = path.join(
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.4.1',
+  version: '1.4.2',
   animationSpeed: 1.0,
   displayMode: 'island', // 'island' | 'notch'
   dynamicLyrics: true, // Smooth word-by-word progressive lyric reveal
+  albumColorGradient: true, // Dynamic Island ambient fade gradient from album cover
   gameMode: true, // Auto-hide in full-screen games (default on)
   startup: false,
   startupTakeover: false,
