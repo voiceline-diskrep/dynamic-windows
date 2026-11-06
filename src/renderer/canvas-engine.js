@@ -397,7 +397,7 @@ function getCallAvatarImage(url) {
 }
 
 function hasActiveCall() {
-  return Boolean(callState && callState.inCall && callState.status !== 'idle');
+  return false; // User requested removing the resting call overlay capsule
 }
 
 function getCallCapsuleLabel() {
@@ -1633,8 +1633,15 @@ function handleButtonClick(id, data) {
     currentView = 'home';
   } else if (id === 'call_answer') {
     ipcRenderer.send('call-action', 'answer-call');
+    callState.status = 'connected';
+    lastCallRinging = false;
+    targetProgress = 0.0;
+    currentView = 'home';
   } else if (id === 'call_decline') {
     ipcRenderer.send('call-action', 'decline-call');
+    callState = { inCall: false, status: 'idle', participants: [] };
+    lastCallRinging = false;
+    targetProgress = 0.0;
     currentView = 'home';
   } else if (id === 'call_focus_app') {
     ipcRenderer.send('call-action', 'focus-app');
@@ -1727,8 +1734,27 @@ ipcRenderer.on('antigravity-state', (event, state) => {
   antigravityState = state;
 });
 
+let lastCallRinging = false;
 ipcRenderer.on('call-state', (event, state) => {
   callState = state || { inCall: false, status: 'idle', participants: [] };
+
+  const isRinging = Boolean(callState && callState.inCall && callState.status === 'ringing');
+  if (isRinging && !lastCallRinging) {
+    // ENLARGE Dynamic Island automatically when an incoming call arrives!
+    currentView = 'call';
+    targetProgress = 1.0;
+    if (isTucked) setTucked(false);
+    if (isGameModeFullscreen) {
+      gameModeOpenedAnyway = true;
+      ipcRenderer.send('game-mode-hide', false);
+    }
+  } else if (!isRinging && lastCallRinging) {
+    if (currentView === 'call') {
+      currentView = 'home';
+      targetProgress = 0.0;
+    }
+  }
+  lastCallRinging = isRinging;
 });
 
 ipcRenderer.on('media-state', (event, state) => {
@@ -3329,6 +3355,106 @@ function renderExpandedView(x, y, w, h, alpha) {
 }
 
 function renderCallView(x, y, w, h) {
+  // Dedicated Enlarged Incoming Call Alert View
+  if (callState.status === 'ringing') {
+    const midX = x + w / 2;
+
+    // 1. Ringing Pulse Halo & Calling App Icon
+    const ringRadius = 24;
+    const ringCenterY = y + 54;
+    const now = performance.now();
+    const pulse1 = (now % 1600) / 1600;
+    const pulse2 = ((now + 800) % 1600) / 1600;
+
+    ctx.save();
+    // Concentric pulsating waves
+    ctx.beginPath();
+    ctx.arc(midX, ringCenterY, ringRadius + pulse1 * 28, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(34, 197, 94, ${Math.max(0, 0.45 * (1 - pulse1))})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(midX, ringCenterY, ringRadius + pulse2 * 28, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(34, 197, 94, ${Math.max(0, 0.45 * (1 - pulse2))})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Center circular badge with calling app icon
+    ctx.beginPath();
+    ctx.arc(midX, ringCenterY, ringRadius, 0, Math.PI * 2);
+    ctx.fillStyle = '#18181b';
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2;
+    ctx.fill();
+    ctx.stroke();
+
+    drawCallAppIcon(callState.appId, midX - 12, ringCenterY - 12, 24);
+    ctx.restore();
+
+    // 2. Main Caller Title & Ringing Subtitle
+    const callerTitle = callState.channelName || callState.appName || 'Incoming Call';
+    ctx.font = '700 17px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(truncateToWidth(callerTitle, w - 80, ctx.font), midX, y + 96);
+
+    ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(`${callState.appName || 'Voice'} Call • Ringing...`, midX, y + 116);
+
+    // 3. Action Buttons:
+    // Left side: Decline (Red)
+    // Right side: Pick Up (Green button with phone logo)
+    const btnY = y + 138;
+    const btnH = 40;
+    const btnW = 140;
+    const btnRadius = 20;
+
+    // Left Button: Decline
+    const isDecHov = hoveredButtonId === 'call_decline';
+    const decX = x + 44;
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(decX, btnY, btnW, btnH, btnRadius);
+    ctx.fillStyle = isDecHov ? '#ef4444' : '#dc2626';
+    ctx.fill();
+    ctx.strokeStyle = isDecHov ? 'rgba(255, 255, 255, 0.45)' : 'rgba(239, 68, 68, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✖ Decline', decX + btnW / 2, btnY + btnH / 2);
+    interactiveButtons.push({ id: 'call_decline', x: decX, y: btnY, w: btnW, h: btnH });
+    ctx.restore();
+
+    // Right Button: Pick Up (Green button with phone logo)
+    const isAnsHov = hoveredButtonId === 'call_answer';
+    const ansX = x + w - btnW - 44;
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(ansX, btnY, btnW, btnH, btnRadius);
+    ctx.fillStyle = isAnsHov ? '#22c55e' : '#16a34a';
+    ctx.fill();
+    ctx.strokeStyle = isAnsHov ? 'rgba(255, 255, 255, 0.45)' : 'rgba(34, 197, 94, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('📞 Pick Up', ansX + btnW / 2, btnY + btnH / 2);
+    interactiveButtons.push({ id: 'call_answer', x: ansX, y: btnY, w: btnW, h: btnH });
+    ctx.restore();
+
+    return;
+  }
+
   const topY = y + 42;
   const contentX = x + 20;
   const contentW = w - 40;

@@ -274,15 +274,19 @@ namespace DynamicWindowsTools {
                             sessionEnum.GetSession(i, out ctl);
                             var ctl2 = ctl as IAudioSessionControl2;
                             if (ctl2 != null) {
-                                uint pid = 0;
-                                ctl2.GetProcessId(out pid);
-                                if (pid > 0) {
-                                    try {
-                                        string pName = Process.GetProcessById((int)pid).ProcessName;
-                                        if (!string.IsNullOrEmpty(pName) && !pName.Equals("audiodg", StringComparison.OrdinalIgnoreCase)) {
-                                            if (!list.Contains(pName)) list.Add(pName);
-                                        }
-                                    } catch { }
+                                int sessionState = 0;
+                                ctl2.GetState(out sessionState);
+                                if (sessionState == 1) { // 1 = AudioSessionStateActive
+                                    uint pid = 0;
+                                    ctl2.GetProcessId(out pid);
+                                    if (pid > 0) {
+                                        try {
+                                            string pName = Process.GetProcessById((int)pid).ProcessName;
+                                            if (!string.IsNullOrEmpty(pName) && !pName.Equals("audiodg", StringComparison.OrdinalIgnoreCase)) {
+                                                if (!list.Contains(pName)) list.Add(pName);
+                                            }
+                                        } catch { }
+                                    }
                                 }
                             }
                         }
@@ -293,52 +297,13 @@ namespace DynamicWindowsTools {
         }
 
         static List<string> GetActiveMicApps() {
-            var list = GetLiveCaptureApps();
-            try {
-                using (var baseKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone")) {
-                    if (baseKey == null) return list;
-                    foreach (var subName in baseKey.GetSubKeyNames()) {
-                        if (subName == "NonPackaged") {
-                            using (var npKey = baseKey.OpenSubKey("NonPackaged")) {
-                                if (npKey != null) {
-                                    foreach (var appKeyName in npKey.GetSubKeyNames()) {
-                                        using (var appKey = npKey.OpenSubKey(appKeyName)) {
-                                            if (appKey != null) {
-                                                object startObj = appKey.GetValue("LastUsedTimeStart");
-                                                object stopObj = appKey.GetValue("LastUsedTimeStop");
-                                                long start = startObj != null ? Convert.ToInt64(startObj) : 0;
-                                                long stop = stopObj != null ? Convert.ToInt64(stopObj) : 1;
-                                                if (start > 0 && stop == 0 && !list.Contains(appKeyName)) {
-                                                    list.Add(appKeyName);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            using (var pkgKey = baseKey.OpenSubKey(subName)) {
-                                if (pkgKey != null) {
-                                    object startObj = pkgKey.GetValue("LastUsedTimeStart");
-                                    object stopObj = pkgKey.GetValue("LastUsedTimeStop");
-                                    long start = startObj != null ? Convert.ToInt64(startObj) : 0;
-                                    long stop = stopObj != null ? Convert.ToInt64(stopObj) : 1;
-                                    if (start > 0 && stop == 0 && !list.Contains(subName)) {
-                                        list.Add(subName);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch { }
-            return list;
+            return GetLiveCaptureApps();
         }
 
         static Dictionary<string, string> GetAppWindowTitles() {
             var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var pidToName = new Dictionary<uint, string>();
-            string[] targets = new string[] { "Discord", "DiscordPTB", "DiscordCanary", "WhatsApp", "WhatsApp.Root", "Zoom", "Teams", "ms-teams", "Telegram" };
+            string[] targets = new string[] { "Discord", "DiscordPTB", "DiscordCanary", "WhatsApp", "WhatsApp.Root", "Zoom", "Teams", "ms-teams", "Telegram", "PhoneExperienceHost", "PhoneLink", "Skype" };
             foreach (var t in targets) {
                 try {
                     foreach (var p in Process.GetProcessesByName(t)) {

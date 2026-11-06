@@ -228,30 +228,44 @@ class CallMonitor extends EventEmitter {
       const micApps = Array.isArray(audio.activeMicApps) ? audio.activeMicApps : [];
       const windowTitles = audio.windowTitles || {};
 
-      // Classify active microphone apps
+      // 1. Check for incoming call window title across any calling app
       let detectedApp = null;
-      for (const rawApp of micApps) {
-        const info = classifyMicApp(rawApp);
-        if (info) {
-          detectedApp = info;
-          // Prioritize Discord or WhatsApp if multiple apps use mic
-          if (info.appId === 'discord' || info.appId === 'whatsapp') break;
+      let isIncoming = false;
+      let matchedWinTitle = '';
+
+      for (const [procKey, title] of Object.entries(windowTitles)) {
+        if (/\b(incoming\s+call|calling|ringing|whatsapp\s+call)\b/i.test(title)) {
+          detectedApp = classifyMicApp(procKey);
+          isIncoming = true;
+          matchedWinTitle = title;
+          break;
         }
       }
 
-      // Check for incoming call window title even if mic isn't active yet
+      // 2. Check for Discord RPC active voice channel
+      if (!detectedApp && this.rpcVoiceChannel && this.rpcVoiceChannel.id) {
+        detectedApp = { appId: 'discord', appName: 'Discord', processName: 'Discord' };
+      }
+
+      // 3. Check for active voice call window titles for known call apps
       if (!detectedApp) {
         for (const [procKey, title] of Object.entries(windowTitles)) {
-          if (/\b(incoming\s+call|calling|ringing)\b/i.test(title)) {
+          const tLower = title.toLowerCase();
+          const pLower = procKey.toLowerCase();
+          if (pLower.includes('discord') && (title.startsWith('#') || title.startsWith('@') || tLower.includes('voice connected'))) {
             detectedApp = classifyMicApp(procKey);
+            matchedWinTitle = title;
+            break;
+          } else if (pLower.includes('whatsapp') && tLower.includes('call')) {
+            detectedApp = classifyMicApp(procKey);
+            matchedWinTitle = title;
+            break;
+          } else if ((pLower.includes('zoom') || pLower.includes('teams') || pLower.includes('skype')) && (tLower.includes('meeting') || tLower.includes('call'))) {
+            detectedApp = classifyMicApp(procKey);
+            matchedWinTitle = title;
             break;
           }
         }
-      }
-
-      // If RPC reports an active voice channel, Discord is in a call
-      if (!detectedApp && this.rpcVoiceChannel && this.rpcVoiceChannel.id) {
-        detectedApp = { appId: 'discord', appName: 'Discord', processName: 'Discord' };
       }
 
       if (!detectedApp) {
@@ -281,6 +295,7 @@ class CallMonitor extends EventEmitter {
       const remoteSpeaking = !selfDeafened && Number(audio.outPeak) > 0.028;
 
       const winTitle =
+        matchedWinTitle ||
         windowTitles[detectedApp.processName] ||
         windowTitles.Discord ||
         windowTitles.DiscordPTB ||
@@ -290,7 +305,7 @@ class CallMonitor extends EventEmitter {
 
       let callType = parsedMeta.callType;
       let channelName = parsedMeta.channelName;
-      let status = parsedMeta.isIncoming && micApps.length === 0 ? 'ringing' : 'connected';
+      let status = (isIncoming || parsedMeta.isIncoming) ? 'ringing' : 'connected';
       let participants = [];
       let participantCount = 2;
 
@@ -513,8 +528,8 @@ class CallMonitor extends EventEmitter {
       }
       const proc = this.state.processName || 'Discord';
       await sysHelper.focusProcess(proc);
-      // Temporarily dismiss if user clicked decline/leave while closing call in app
-      this.dismissedUntil = Date.now() + 3500;
+      // Dismiss incoming ringing alerts for 45s on decline
+      this.dismissedUntil = Date.now() + (action === 'decline-call' ? 45000 : 3500);
       this.state = {
         ...this.state,
         inCall: false,
