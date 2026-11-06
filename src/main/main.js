@@ -29,6 +29,7 @@ const AntigravityMonitor = require('./antigravity-monitor');
 const AgentHooksServer = require('./agent-hooks-server');
 const MediaController = require('./media-spotify');
 const CallMonitor = require('./call-monitor');
+const NotificationMonitor = require('./notification-monitor');
 const DropZone = require('./drop-zone');
 const UserDataManager = require('./user-data-manager');
 const configManager = require('./config-manager');
@@ -49,6 +50,7 @@ let antigravityMonitor = null;
 let agentHooksServer = null;
 let mediaController = null;
 let callMonitor = null;
+let notificationMonitor = null;
 let dropZone = null;
 let userDataManager = null;
 let isQuitting = false;
@@ -661,6 +663,20 @@ function createIslandWindow() {
     }
   });
 
+  // Notification Center IPC
+  ipcMain.handle('get-notifications', () => {
+    return notificationMonitor ? notificationMonitor.getNotifications() : [];
+  });
+  ipcMain.on('dismiss-notification', (event, id) => {
+    if (notificationMonitor) notificationMonitor.dismiss(id);
+  });
+  ipcMain.on('clear-all-notifications', () => {
+    if (notificationMonitor) notificationMonitor.clearAll();
+  });
+  ipcMain.on('mark-notifications-read', () => {
+    if (notificationMonitor) notificationMonitor.markAllRead();
+  });
+
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
@@ -671,12 +687,19 @@ function createIslandWindow() {
     sendAnimationSpeed();
     sendDynamicLyrics();
     sendAlbumColorGradient();
+    sendNotifications();
   });
 }
 
 function sendCallState() {
   if (mainWindow && !mainWindow.isDestroyed() && callMonitor) {
     mainWindow.webContents.send('call-state', callMonitor.getState());
+  }
+}
+
+function sendNotifications() {
+  if (mainWindow && !mainWindow.isDestroyed() && notificationMonitor) {
+    mainWindow.webContents.send('notifications-updated', notificationMonitor.getNotifications());
   }
 }
 
@@ -863,6 +886,17 @@ app.whenReady().then(() => {
   callMonitor = new CallMonitor();
   callMonitor.on('changed', () => sendCallState());
 
+  // 2c. Windows & Universal Notification Monitor
+  notificationMonitor = new NotificationMonitor();
+  notificationMonitor.on('new-notification', (notif) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('notification-received', notif);
+      sendNotifications();
+    }
+  });
+  notificationMonitor.on('notifications-updated', () => sendNotifications());
+  notificationMonitor.start();
+
   // 3. Agent Hooks Server & Antigravity MCP Bridge
   agentHooksServer = new AgentHooksServer();
   agentHooksServer.on('permission-requested', (prompt) => {
@@ -875,6 +909,14 @@ app.whenReady().then(() => {
     if (antigravityMonitor) {
       antigravityMonitor.updateFromMcp(data);
       sendAntigravityState();
+    }
+    if (notificationMonitor && data && data.phase && (data.status === 'done' || data.status === 'waiting' || data.status === 'error')) {
+      notificationMonitor.addNotification({
+        app: 'Antigravity',
+        title: data.status === 'done' ? 'Task Completed' : (data.status === 'waiting' ? 'Action Required' : 'Alert'),
+        body: data.phase,
+        icon: '🤖'
+      });
     }
   });
 

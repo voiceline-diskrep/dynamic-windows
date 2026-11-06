@@ -460,7 +460,7 @@
         <div class="setting-row">
           <div class="setting-info">
             <span class="setting-label">Display Mode</span>
-            <span class="setting-desc">Switch between floating Dynamic Island (detached pill) and flush-to-top Dynamic Notch (MacBook style).</span>
+            <span class="setting-desc">Switch between floating Dynamic Island and top Dynamic Notch.</span>
           </div>
           <div style="display: flex; gap: 8px;">
             <button class="btn" id="btn-mode-island">
@@ -478,25 +478,14 @@
         <div class="setting-row">
           <div class="setting-info">
             <span class="setting-label">Island Background Opacity</span>
-            <span class="setting-desc">Control the glass opacity and transparency of the Dynamic Island and Notch capsule.</span>
+            <span class="setting-desc">Adjust Island background transparency.</span>
           </div>
           <div style="display: flex; align-items: center; gap: 12px;">
             <input type="range" id="setting-islandOpacity" min="40" max="100" step="5" value="95" style="width: 140px; accent-color: #2563eb; cursor: pointer;">
             <span id="opacity-value-badge" style="font-size: 13px; font-weight: 700; color: #ffffff; background: rgba(37,99,235,0.25); border: 1px solid rgba(37,99,235,0.5); padding: 3px 8px; border-radius: 6px; width: 48px; text-align: center;">95%</span>
           </div>
         </div>
-        <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
-          <div class="setting-info">
-            <span class="setting-label">Opacity Presets</span>
-            <span class="setting-desc">Quickly apply glass transparency profiles.</span>
-          </div>
-          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <button class="btn-opacity" data-opacity="65">Glass (65%)</button>
-            <button class="btn-opacity" data-opacity="85">Frosted (85%)</button>
-            <button class="btn-opacity" data-opacity="95">Subtle (95%)</button>
-            <button class="btn-opacity" data-opacity="100">OLED Solid (100%)</button>
-          </div>
-        </div>
+        
       </div>
 
       <div class="card">
@@ -504,7 +493,7 @@
         <div class="setting-row">
           <div class="setting-info">
             <span class="setting-label">Opening & Closing Speed</span>
-            <span class="setting-desc">Control how fast the Island expands, contracts, and morphs. Adjust slider or click a preset below.</span>
+            <span class="setting-desc">Adjust expansion and transition speed.</span>
           </div>
           <div style="display: flex; align-items: center; gap: 12px;">
             <input type="range" id="setting-animationSpeed" min="0.4" max="2.5" step="0.1" value="1.0" style="width: 140px; accent-color: #2563eb; cursor: pointer;">
@@ -514,7 +503,7 @@
         <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
           <div class="setting-info">
             <span class="setting-label">Speed Presets</span>
-            <span class="setting-desc">Quickly apply spring & lerp velocity dynamics.</span>
+            <span class="setting-desc">Preset animation speeds.</span>
           </div>
           <div style="display: flex; gap: 6px; flex-wrap: wrap;">
             <button class="btn-speed" data-speed="0.6">Cinematic (0.6x)</button>
@@ -651,7 +640,7 @@
         <div class="setting-row">
           <div class="setting-info">
             <span class="setting-label">Dynamic Word-by-Word Lyrics</span>
-            <span class="setting-desc">Progressively reveals lyrics word-by-word with fluid horizontal capsule extension and illuminated vocal tracking. Turn off for classic line-by-line sync.</span>
+            <span class="setting-desc">Reveal lyrics word-by-word with vocal tracking.</span>
           </div>
           <label class="switch">
             <input type="checkbox" id="setting-dynamicLyrics">
@@ -661,7 +650,7 @@
         <div class="setting-row">
           <div class="setting-info">
             <span class="setting-label">Album Art Fade Gradient Glow</span>
-            <span class="setting-desc">Applies an ambient bottom-to-top fluid gradient tint derived from the active album cover to the Dynamic Island (resting pill and expanded views).</span>
+            <span class="setting-desc">Tint Island with current album artwork colors.</span>
           </div>
           <label class="switch">
             <input type="checkbox" id="setting-albumColorGradient">
@@ -671,7 +660,7 @@
         <div class="setting-row">
           <div class="setting-info">
             <span class="setting-label">Live Lyrics Output</span>
-            <span class="setting-desc">Displays rotating and synced lyrics lines inside the Island Media view with ambient typography.</span>
+            <span class="setting-desc">Show synchronized lyrics in media view.</span>
           </div>
           <span class="badge" style="background-color: rgba(34, 197, 94, 0.15); color: #22c55e;">Active</span>
         </div>
@@ -817,7 +806,7 @@
         const opacityBadge = document.getElementById('opacity-value-badge');
         if (opacitySlider) opacitySlider.value = curOpacityPct;
         if (opacityBadge) opacityBadge.textContent = curOpacityPct + '%';
-        updateOpacityPresetButtons(curOpacityPct);
+        
 
         // General
         const elStartup = document.getElementById('setting-startup');
@@ -848,7 +837,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.7';
+        const currentVer = data.version || '1.4.8';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');
@@ -1024,6 +1013,18 @@
     };
     document.getElementById('btn-sidebar-exit')?.addEventListener('click', doExit);
     document.getElementById('btn-about-exit')?.addEventListener('click', doExit);
+    const opacitySlider = document.getElementById('setting-islandOpacity');
+    const opacityBadge = document.getElementById('opacity-value-badge');
+    if (opacitySlider) {
+      opacitySlider.addEventListener('input', () => {
+        const val = parseInt(opacitySlider.value, 10) || 95;
+        if (opacityBadge) opacityBadge.textContent = val + '%';
+      });
+      opacitySlider.addEventListener('change', async () => {
+        const val = (parseInt(opacitySlider.value, 10) || 95) / 100;
+        await ipcRenderer.invoke('save-app-settings', { islandOpacity: val });
+      });
+    }
     loadSettings();
   </script>
 </body>

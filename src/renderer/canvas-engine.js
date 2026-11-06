@@ -234,18 +234,30 @@ function formatStopwatchMs(ms) {
   return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}.${centis < 10 ? '0' : ''}${centis}`;
 }
 
-// TwoCode-inspired Island Dimensions & Constants
+function formatRelativeTime(ts) {
+  if (!ts) return 'Just now';
+  const diffSec = Math.floor((Date.now() - ts) / 1000);
+  if (diffSec < 60) return 'Just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return `${Math.floor(diffHours / 24)}d ago`;
+}
+
+// Dynamic Windows Island Dimensions & Constants
 const UI = {
-  REST_W: 124,
+  REST_W: 80,
   BAR_H: 32,
   ACTIVE_REST_W: 226,
   ACTIVE_BAR_H: 36,
 
   EXPANDED_W: 580,
-  HOME_H: 154,
+  HOME_H: 164,
   CALENDAR_H: 330,
   CLOCK_H: 260,
   TODO_H: 320,
+  NOTIF_H: 260,
   AGENT_H: 196,
   CALL_H: 206,
   MEDIA_H: 220,
@@ -327,6 +339,9 @@ let todoSelectedCategory = 'All';
 
 let clipboardHistory = [];
 let clipboardFilter = '';
+let notificationList = [];
+let activeNotification = null;
+let notificationBannerUntil = 0;
 let copiedFeedbackId = null;
 let copiedFeedbackTimer = null;
 let shelfDragCandidate = null;
@@ -1468,6 +1483,23 @@ canvas.addEventListener('click', (e) => {
 function handleButtonClick(id, data) {
   if (id === 'nav_home') {
     currentView = 'home';
+  } else if (id === 'nav_notif' || id === 'nav_notif_card') {
+    currentView = 'notifications';
+    ipcRenderer.send('mark-notifications-read');
+  } else if (id === 'notif_clear_all') {
+    ipcRenderer.send('clear-all-notifications');
+    notificationList = [];
+  } else if (id && id.startsWith('notif_dismiss_')) {
+    const notifId = id.replace('notif_dismiss_', '');
+    ipcRenderer.send('dismiss-notification', notifId);
+    notificationList = notificationList.filter(n => n.id !== notifId);
+  } else if (id === 'notif_banner_dismiss') {
+    notificationBannerUntil = 0;
+    targetProgress = 0.0;
+    currentView = 'home';
+  } else if (id === 'notif_banner_click') {
+    currentView = 'notifications';
+    ipcRenderer.send('mark-notifications-read');
   } else if (id === 'nav_calendar') {
     currentView = 'calendar';
   } else if (id === 'cal_prev_month') {
@@ -1893,6 +1925,25 @@ try {
   }).catch(() => {});
 } catch (e) {}
 
+ipcRenderer.on('notifications-updated', (event, list) => {
+  if (Array.isArray(list)) notificationList = list;
+});
+ipcRenderer.on('notification-received', (event, notif) => {
+  if (notif) {
+    activeNotification = notif;
+    notificationBannerUntil = performance.now() + 4000;
+    if (animProgress < 0.25) {
+      currentView = 'notification_banner';
+      targetProgress = 1.0;
+    }
+  }
+});
+try {
+  ipcRenderer.invoke('get-notifications').then(list => {
+    if (Array.isArray(list)) notificationList = list;
+  }).catch(() => {});
+} catch (e) {}
+
 ipcRenderer.on('permission-prompt', (event, prompt) => {
   pendingPrompt = prompt;
   if (isTucked) setTucked(false);
@@ -1956,6 +2007,21 @@ function animate(now) {
   const targetSongPopupProgress = isSongPopupActive ? 1.0 : 0.0;
   const songSpringSpeed = (targetSongPopupProgress > songPopupProgress ? 9.5 : 7.0) * animSpeedMultiplier;
   songPopupProgress += (targetSongPopupProgress - songPopupProgress) * Math.min(1.0, dt * songSpringSpeed);
+
+  // Auto-collapse notification banner after 4s unless hovered
+  if (currentView === 'notification_banner' && notificationBannerUntil > 0 && now > notificationBannerUntil) {
+    const curW = getTargetWidth(animProgress);
+    const curH = getTargetHeight(animProgress);
+    const curX = (window.innerWidth - curW) / 2;
+    const curY = displayMode === 'notch' ? 0 : 8;
+    const isHovered = mouseX >= 0 && mouseY >= 0 && pointInRect(mouseX, mouseY, curX - 4, curY - 4, curW + 8, curH + 8);
+    if (!isHovered) {
+      notificationBannerUntil = 0;
+      targetProgress = 0.0;
+      currentView = 'home';
+      activeNotification = null;
+    }
+  }
 
   // Send window size updates to Electron Main
   const currentHeight = getTargetHeight(animProgress);
@@ -2190,6 +2256,10 @@ function getTargetHeight(p) {
     expH = UI.CLIPBOARD_H;
   } else if (currentView === 'prompt') {
     expH = UI.PROMPT_H;
+  } else if (currentView === 'notifications') {
+    expH = UI.NOTIF_H;
+  } else if (currentView === 'notification_banner') {
+    expH = 82;
   }
 
   const normalH = restH + (expH - restH) * easeOutQuart(p);
@@ -2315,29 +2385,31 @@ function render() {
     ctx.restore();
   }
 
-  // 4. Render Views
-  if (p < 0.28) {
+  // 4. Render Views with Master Rounded Rect Clipping (fixes picture lagging & overflow)
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, radii);
+  ctx.clip();
+
+  if (p < 0.32) {
     if (songPopupProgress > 0.05) {
-      const popAlpha = (0.28 - p) / 0.28;
+      const popAlpha = Math.max(0, (0.32 - p) / 0.32);
       renderSongAnnouncementPopup(x, y, w, h, popAlpha);
     } else {
-      renderRestingPill(x, y, w, h, (0.28 - p) / 0.28);
+      renderRestingPill(x, y, w, h, Math.max(0, (0.32 - p) / 0.32));
     }
-  } else if (p > 0.35) {
-    const alpha = (p - 0.35) / 0.65;
+  }
+  if (p > 0.15) {
+    const alpha = Math.max(0, Math.min(1.0, (p - 0.15) / 0.85));
     renderExpandedView(x, y, w, h, alpha);
 
     // Inner Capsule Modal Dimmer (isolated strictly to the Island capsule)
     if (isInlineModalOpen) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.roundRect(x, y, w, h, radii);
-      ctx.clip();
       ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
       ctx.fillRect(x, y, w, h);
-      ctx.restore();
     }
   }
+  ctx.restore();
 
   // 5. Game Mode Toast / Status Notification
   if (gameModeToastUntil > performance.now() && gameModeToastText) {
@@ -3276,6 +3348,7 @@ function renderRestingPill(x, y, w, h, alpha) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(timeStr, x + w / 2, y + h / 2);
+      interactiveButtons.push({ id: 'nav_home', x, y, w, h });
     }
   }
 
@@ -3660,8 +3733,10 @@ function renderCallView(x, y, w, h) {
 }
 
 function renderTopNav(x, y, w) {
+  const hasUnreadNotifs = notificationList.some(n => !n.read);
   const navItems = [
     { id: 'nav_home', label: 'Home', w: 42 },
+    { id: 'nav_notif', label: hasUnreadNotifs ? 'Notif •' : 'Notif', w: 46 },
     { id: 'nav_calendar', label: 'Calendar', w: 48 },
     { id: 'nav_clock', label: 'Clock', w: 40 },
     { id: 'nav_todo', label: 'To-Do', w: 42 },
@@ -4775,6 +4850,50 @@ function renderHomeView(x, y, w, h) {
   ctx.font = '500 12px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = '#94a3b8';
   ctx.fillText(dateStr, clockX, y + 84);
+
+  // 1b. Latest Notification Card below Digital Clock
+  const notifCardX = clockX;
+  const notifCardY = y + 104;
+  const notifCardW = 132;
+  const notifCardH = 48;
+  const isNotifHov = hoveredButtonId === 'nav_notif_card';
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(notifCardX, notifCardY, notifCardW, notifCardH, 8);
+  ctx.fillStyle = isNotifHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)';
+  ctx.strokeStyle = isNotifHov ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.08)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  if (notificationList && notificationList.length > 0) {
+    const latestNotif = notificationList[0];
+    const appIcon = latestNotif.icon || '🔔';
+    const appName = latestNotif.app || 'Notification';
+    const bodySnippet = latestNotif.title || latestNotif.body || 'New alert';
+
+    // Header: icon + app name
+    ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#38bdf8';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${appIcon} ${truncateToWidth(appName, notifCardW - 20, ctx.font)}`, notifCardX + 8, notifCardY + 14);
+
+    // Body text snippet
+    ctx.font = '400 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(truncateToWidth(bodySnippet, notifCardW - 16, ctx.font), notifCardX + 8, notifCardY + 32);
+  } else {
+    ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🔔 No notifications', notifCardX + 8, notifCardY + notifCardH / 2);
+  }
+  ctx.restore();
+
+  interactiveButtons.push({ id: 'nav_notif_card', x: notifCardX, y: notifCardY, w: notifCardW, h: notifCardH });
 
   // 2. Middle Mini Calendar Widget Card
   const calX = x + 162;
@@ -6043,4 +6162,233 @@ function truncateText(text, maxChars) {
   if (!text) return '';
   if (text.length <= maxChars) return text;
   return text.slice(0, maxChars - 3) + '...';
+}
+
+// -------------------------------------------------------------
+// Notification Center View (History, Badges & Quick Dismiss)
+// -------------------------------------------------------------
+function renderNotificationCenterView(x, y, w, h) {
+  const contentX = x + 20;
+  const contentY = y + 42;
+  const contentW = w - 40;
+  const contentH = h - 54;
+
+  // Header row: "Notification Center" on left, "Clear All" on right
+  ctx.font = '700 16px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const unreadCount = notificationList.filter(n => !n.read).length;
+  const headerText = unreadCount > 0 ? `Notification Center (${unreadCount} new)` : 'Notification Center';
+  ctx.fillText(headerText, contentX, contentY + 12);
+
+  // Clear All button
+  if (notificationList.length > 0) {
+    const clrW = 74;
+    const clrH = 24;
+    const clrX = contentX + contentW - clrW;
+    const clrY = contentY;
+    const isClrHov = hoveredButtonId === 'notif_clear_all';
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(clrX, clrY, clrW, clrH, 6);
+    ctx.fillStyle = isClrHov ? 'rgba(239, 68, 68, 0.28)' : 'rgba(255, 255, 255, 0.08)';
+    ctx.strokeStyle = isClrHov ? '#ef4444' : 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isClrHov ? '#fca5a5' : '#cbd5e1';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Clear All', clrX + clrW / 2, clrY + clrH / 2);
+    ctx.restore();
+
+    interactiveButtons.push({ id: 'notif_clear_all', x: clrX, y: clrY, w: clrW, h: clrH });
+  }
+
+  // Notification items list
+  const listY = contentY + 32;
+  const itemH = 52;
+  const gap = 8;
+  const maxVisible = 3;
+  const itemsToShow = notificationList.slice(0, maxVisible);
+
+  if (itemsToShow.length === 0) {
+    ctx.save();
+    ctx.font = '28px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🔔', x + w / 2, listY + 50);
+
+    ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('All caught up', x + w / 2, listY + 90);
+
+    ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('New notifications from Windows apps & agents will appear here.', x + w / 2, listY + 112);
+    ctx.restore();
+    return;
+  }
+
+  itemsToShow.forEach((notif, idx) => {
+    const iy = listY + idx * (itemH + gap);
+    const isHov = hoveredButtonId === `notif_item_${notif.id}`;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(contentX, iy, contentW, itemH, 10);
+    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.09)' : 'rgba(24, 24, 32, 0.75)';
+    ctx.strokeStyle = notif.read ? 'rgba(255, 255, 255, 0.08)' : 'rgba(56, 189, 248, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    // Unread indicator dot
+    if (!notif.read) {
+      ctx.beginPath();
+      ctx.arc(contentX + 10, iy + itemH / 2, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fill();
+    }
+
+    // App Icon & Name
+    const textLeft = contentX + (notif.read ? 14 : 22);
+    ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#38bdf8';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${notif.icon || '🔔'} ${notif.app}`, textLeft, iy + 8);
+
+    // Timestamp
+    const timeAgoStr = formatRelativeTime(notif.timestamp);
+    ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'right';
+    ctx.fillText(timeAgoStr, contentX + contentW - 34, iy + 9);
+
+    // Title & Body
+    const titleText = notif.title || notif.body || '';
+    const bodyText = notif.title && notif.body ? notif.body : '';
+    const fullSnippet = bodyText ? `${titleText} — ${bodyText}` : titleText;
+
+    ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#f1f5f9';
+    ctx.textAlign = 'left';
+    ctx.fillText(truncateToWidth(fullSnippet, contentW - 68, ctx.font), textLeft, iy + 27);
+
+    // Dismiss X button
+    const dsmBtnSize = 20;
+    const dsmX = contentX + contentW - dsmBtnSize - 8;
+    const dsmY = iy + (itemH - dsmBtnSize) / 2;
+    const isDsmHov = hoveredButtonId === `notif_dismiss_${notif.id}`;
+
+    ctx.beginPath();
+    ctx.arc(dsmX + dsmBtnSize / 2, dsmY + dsmBtnSize / 2, dsmBtnSize / 2, 0, Math.PI * 2);
+    ctx.fillStyle = isDsmHov ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+
+    ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isDsmHov ? '#ef4444' : '#94a3b8';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✕', dsmX + dsmBtnSize / 2, dsmY + dsmBtnSize / 2);
+    ctx.restore();
+
+    interactiveButtons.push({ id: `notif_dismiss_${notif.id}`, x: dsmX, y: dsmY, w: dsmBtnSize, h: dsmBtnSize });
+    interactiveButtons.push({ id: `notif_item_${notif.id}`, x: contentX, y: iy, w: contentW - dsmBtnSize - 12, h: itemH });
+  });
+}
+
+// -------------------------------------------------------------
+// Auto-Expanding 4-Second Incoming Notification Banner View
+// -------------------------------------------------------------
+function renderNotificationBannerView(x, y, w, h) {
+  if (!activeNotification) return;
+
+  const notif = activeNotification;
+  const isNotch = displayMode === 'notch';
+  const cornerR = UI.COMPACT_RADIUS + 8;
+  const radii = isNotch ? [0, 0, cornerR, cornerR] : cornerR;
+
+  // Background glow
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, radii);
+  ctx.clip();
+  const glowGrad = ctx.createRadialGradient(x + 50, y + h / 2, 5, x + 50, y + h / 2, 120);
+  glowGrad.addColorStop(0.0, 'rgba(56, 189, 248, 0.28)');
+  glowGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = glowGrad;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+
+  // App Icon circle on left
+  const iconSize = 36;
+  const iconX = x + 16;
+  const iconY = y + (h - iconSize) / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize / 2, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.font = '20px "Segoe UI Emoji", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(notif.icon || '🔔', iconX + iconSize / 2, iconY + iconSize / 2);
+  ctx.restore();
+
+  // Content Column
+  const textX = iconX + iconSize + 14;
+  const maxW = w - textX - 44;
+
+  // Line 1: App Name & relative time
+  ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = '#38bdf8';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(notif.app || 'Notification', textX, y + 14);
+
+  // Line 2: Title (Bold white)
+  const title = notif.title || notif.body || 'New Notification';
+  ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(truncateToWidth(title, maxW, ctx.font), textX, y + 29);
+
+  // Line 3: Body snippet
+  if (notif.title && notif.body) {
+    ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(truncateToWidth(notif.body, maxW, ctx.font), textX, y + 47);
+  }
+
+  // Dismiss button on right
+  const dsmSize = 22;
+  const dsmX = x + w - dsmSize - 16;
+  const dsmY = y + (h - dsmSize) / 2;
+  const isDsmHov = hoveredButtonId === 'notif_banner_dismiss';
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(dsmX + dsmSize / 2, dsmY + dsmSize / 2, dsmSize / 2, 0, Math.PI * 2);
+  ctx.fillStyle = isDsmHov ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.08)';
+  ctx.fill();
+
+  ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isDsmHov ? '#ffffff' : '#94a3b8';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('✕', dsmX + dsmSize / 2, dsmY + dsmSize / 2);
+  ctx.restore();
+
+  interactiveButtons.push({ id: 'notif_banner_dismiss', x: dsmX, y: dsmY, w: dsmSize, h: dsmSize });
+  interactiveButtons.push({ id: 'notif_banner_click', x: x, y: y, w: w - dsmSize - 20, h: h });
 }
