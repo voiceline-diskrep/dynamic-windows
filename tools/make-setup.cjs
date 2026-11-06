@@ -32,6 +32,13 @@ const exePath = path.join(outDir, `DynamicWindows-Setup-v${version}.exe`);
 const setupCs = path.join(__dirname, 'setup', 'Setup.cs');
 const iconIco = path.join(repo, 'app_icon.ico');
 
+// Ensure Setup.cs version matches package.json
+let csContent = fs.readFileSync(setupCs, 'utf8');
+csContent = csContent.replace(/public const string VERSION = ".*?";/, `public const string VERSION = "${version}";`);
+csContent = csContent.replace(/\[assembly: AssemblyVersion\(".*?"\)\]/, `[assembly: AssemblyVersion("${version}.0")]`);
+csContent = csContent.replace(/\[assembly: AssemblyFileVersion\(".*?"\)\]/, `[assembly: AssemblyFileVersion("${version}.0")]`);
+fs.writeFileSync(setupCs, csContent, 'utf8');
+
 const cscArgs = [
   '/nologo',
   '/target:winexe',

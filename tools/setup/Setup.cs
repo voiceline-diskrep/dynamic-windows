@@ -10,11 +10,11 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Dynamic Windows Setup")]
 [assembly: AssemblyProduct("Dynamic Windows")]
 [assembly: AssemblyCompany("voiceline-diskrep")]
-[assembly: AssemblyVersion("1.1.4.0")]
-[assembly: AssemblyFileVersion("1.1.4.0")]
+[assembly: AssemblyVersion("1.4.5.0")]
+[assembly: AssemblyFileVersion("1.4.5.0")]
 
 static class Setup {
-    public const string VERSION = "1.1.4";
+    public const string VERSION = "1.4.5";
     public static string Home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "DynamicWindows");
     public static bool NoStart, Quiet;
 
@@ -55,7 +55,7 @@ class SetupForm : Form {
     Button installButton;
 
     public SetupForm() {
-        this.Text = "Dynamic Windows Setup (v1.1.3)";
+        this.Text = "Dynamic Windows Setup (v" + Setup.VERSION + ")";
         this.Size = new Size(480, 240);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -65,7 +65,7 @@ class SetupForm : Form {
         this.Font = new Font("Segoe UI", 9.5f);
 
         titleLabel = new Label() {
-            Text = "Dynamic Windows + One-Shot",
+            Text = "Dynamic Windows",
             Font = new Font("Segoe UI Variable Display", 15f, FontStyle.Bold),
             ForeColor = Color.White,
             Location = new Point(24, 20),
@@ -74,7 +74,7 @@ class SetupForm : Form {
         this.Controls.Add(titleLabel);
 
         statusLabel = new Label() {
-            Text = "Installs Dynamic Windows with Google Antigravity integration to:\n" + Setup.Home,
+            Text = "Installs Dynamic Windows (v" + Setup.VERSION + ") with Google Antigravity integration to:\n" + Setup.Home,
             Location = new Point(26, 58),
             Size = new Size(420, 44),
             ForeColor = Color.FromArgb(161, 161, 170)
@@ -91,6 +91,7 @@ class SetupForm : Form {
 
         installButton = new Button() {
             Text = "Install & Launch",
+            UseMnemonic = false,
             Location = new Point(306, 148),
             Size = new Size(132, 34),
             BackColor = Color.FromArgb(37, 99, 235),
@@ -142,9 +143,15 @@ static class Installer {
             Directory.CreateDirectory(targetDir);
         }
 
-        // Close any running instance of DynamicWindows
+        // Close any running instance of DynamicWindows and electron
         try {
             foreach (var p in Process.GetProcessesByName("DynamicWindows")) {
+                try {
+                    p.Kill();
+                    p.WaitForExit(5000);
+                } catch { }
+            }
+            foreach (var p in Process.GetProcessesByName("electron")) {
                 try {
                     p.Kill();
                     p.WaitForExit(5000);
@@ -205,13 +212,17 @@ static class Installer {
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
                 bool extracted = false;
-                for (int attempt = 0; attempt < 4; attempt++) {
+                for (int attempt = 0; attempt < 8; attempt++) {
                     try {
+                        if (File.Exists(destPath)) {
+                            try { File.SetAttributes(destPath, FileAttributes.Normal); } catch { }
+                            try { File.Delete(destPath); } catch { }
+                        }
                         entry.ExtractToFile(destPath, true);
                         extracted = true;
                         break;
                     } catch {
-                        Thread.Sleep(200 * (attempt + 1));
+                        Thread.Sleep(250);
                     }
                 }
                 if (!extracted) {

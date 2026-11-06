@@ -664,7 +664,7 @@
             <span class="setting-label">Currently Installed Version</span>
             <span class="setting-desc">Dynamic Windows Standalone Edition</span>
           </div>
-          <span class="badge" id="current-version-badge">v1.4.4</span>
+          <span class="badge" id="current-version-badge">v1.4.5</span>
         </div>
 
         <div class="setting-row">
@@ -698,9 +698,15 @@
       <p class="page-subtitle">Desktop Dynamic Island & Dynamic Notch with Antigravity & Liner Integration.</p>
 
       <div class="card" style="padding: 24px; text-align: center;">
-        <img src="../../app_icon.png" alt="Dynamic Windows" style="width: 64px; height: 64px; border-radius: 14px; margin-bottom: 12px;">
+        <div style="width: 64px; height: 64px; margin: 0 auto 14px auto; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #18181b, #09090b); border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 8px 24px rgba(0,0,0,0.5);">
+          <svg width="44" height="22" viewBox="0 0 44 22" fill="none">
+            <rect width="44" height="22" rx="11" fill="#000000" stroke="#38bdf8" stroke-width="1.5"/>
+            <circle cx="11" cy="11" r="4" fill="#22c55e"/>
+            <rect x="20" y="8.5" width="16" height="5" rx="2.5" fill="#a855f7"/>
+          </svg>
+        </div>
         <h2 style="font-size: 18px; font-weight: 700; color: #ffffff;">Dynamic Windows</h2>
-        <p id="about-version-text" style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.4.4 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
+        <p id="about-version-text" style="font-size: 13px; color: #a1a1aa; margin: 6px 0 16px 0;">Version 1.4.5 &bull; Electron 33 &bull; HTML5 2D Canvas Engine</p>
 
         <p style="font-size: 12.5px; color: #71717a; max-width: 480px; margin: 0 auto 20px auto; line-height: 1.5;">
           Featuring Apple-inspired 144Hz physics, Start Menu application discovery, one-click preset launching, and deep integration with Google Antigravity.
@@ -741,53 +747,68 @@
 
     // Load initial settings
     async function loadSettings() {
-      const data = await ipcRenderer.invoke('get-app-settings');
-      const cfg = data.config || {};
+      try {
+        const data = await ipcRenderer.invoke('get-app-settings');
+        const cfg = data.config || {};
 
-      // Display Mode
-      updateDisplayModeButtons(cfg.displayMode || 'island');
+        // Display Mode
+        updateDisplayModeButtons(cfg.displayMode || 'island');
 
-      // Animation Speed
-      const curSpeed = typeof cfg.animationSpeed === 'number' ? cfg.animationSpeed : 1.0;
-      const speedSlider = document.getElementById('setting-animationSpeed');
-      const speedBadge = document.getElementById('speed-value-badge');
-      if (speedSlider) speedSlider.value = curSpeed.toFixed(1);
-      if (speedBadge) speedBadge.textContent = curSpeed.toFixed(1) + 'x';
-      updateSpeedPresetButtons(curSpeed);
+        // Animation Speed
+        const curSpeed = typeof cfg.animationSpeed === 'number' ? cfg.animationSpeed : 1.0;
+        const speedSlider = document.getElementById('setting-animationSpeed');
+        const speedBadge = document.getElementById('speed-value-badge');
+        if (speedSlider) speedSlider.value = curSpeed.toFixed(1);
+        if (speedBadge) speedBadge.textContent = curSpeed.toFixed(1) + 'x';
+        updateSpeedPresetButtons(curSpeed);
 
-      // General
-      document.getElementById('setting-startup').checked = !!cfg.startup;
-      document.getElementById('setting-startupTakeover').checked = !!cfg.startupTakeover;
-      document.getElementById('setting-gameMode').checked = cfg.gameMode !== false;
-      document.getElementById('setting-clock24h').checked = !!cfg.clock24h;
-      document.getElementById('setting-showSeconds').checked = !!cfg.showSeconds;
-      if (document.getElementById('setting-dynamicLyrics')) document.getElementById('setting-dynamicLyrics').checked = cfg.dynamicLyrics !== false;
+        // General
+        const elStartup = document.getElementById('setting-startup');
+        if (elStartup) elStartup.checked = !!cfg.startup;
+        const elGameMode = document.getElementById('setting-gameMode');
+        if (elGameMode) elGameMode.checked = cfg.gameMode !== false;
+        const elClock24 = document.getElementById('setting-clock24h');
+        if (elClock24) elClock24.checked = !!cfg.clock24h;
+        const elSeconds = document.getElementById('setting-showSeconds');
+        if (elSeconds) elSeconds.checked = !!cfg.showSeconds;
+        const elLyrics = document.getElementById('setting-dynamicLyrics');
+        if (elLyrics) elLyrics.checked = cfg.dynamicLyrics !== false;
 
-      // Antigravity
-      document.getElementById('setting-antigravityMonitor').checked = !!cfg.antigravityMonitor;
-      document.getElementById('setting-autoFocusAntigravity').checked = !!cfg.autoFocusAntigravity;
-      document.getElementById('setting-hooksPort').value = cfg.hooksPort || 47823;
+        // Antigravity
+        const elAntigravity = document.getElementById('setting-antigravityMonitor');
+        if (elAntigravity) elAntigravity.checked = !!cfg.antigravityMonitor;
+        const elAutoFocus = document.getElementById('setting-autoFocusAntigravity');
+        if (elAutoFocus) elAutoFocus.checked = !!cfg.autoFocusAntigravity;
+        const elHooksPort = document.getElementById('setting-hooksPort');
+        if (elHooksPort) elHooksPort.value = cfg.hooksPort || 47823;
 
-      // DropZone
-      if (data.dropZonePath) {
-        document.getElementById('dropzone-path-text').textContent = data.dropZonePath;
+        // DropZone
+        if (data.dropZonePath && document.getElementById('dropzone-path-text')) {
+          document.getElementById('dropzone-path-text').textContent = data.dropZonePath;
+        }
+        if (document.getElementById('dropzone-count-badge')) {
+          document.getElementById('dropzone-count-badge').textContent = `${data.dropZoneCount || 0} items`;
+        }
+
+        // Updates
+        const currentVer = data.version || '1.4.5';
+        const curBadge = document.getElementById('current-version-badge');
+        if (curBadge) curBadge.textContent = `v${currentVer}`;
+        const aboutVer = document.getElementById('about-version-text');
+        if (aboutVer) aboutVer.textContent = `Version ${currentVer} • Electron 33 • HTML5 2D Canvas Engine`;
+        const autoCheck = document.getElementById('setting-autoCheckUpdates');
+        if (autoCheck) autoCheck.checked = !!cfg.autoCheckUpdates;
+        const gradToggle = document.getElementById('setting-albumColorGradient');
+        if (gradToggle) gradToggle.checked = cfg.albumColorGradient !== false;
+      } catch (err) {
+        console.error('loadSettings error:', err);
       }
-      document.getElementById('dropzone-count-badge').textContent = `${data.dropZoneCount || 0} items`;
-
-      // Updates
-      const currentVer = data.version || '1.4.4';
-      document.getElementById('current-version-badge').textContent = `v${currentVer}`;
-      const aboutVer = document.getElementById('about-version-text');
-      if (aboutVer) aboutVer.textContent = `Version ${currentVer} • Electron 33 • HTML5 2D Canvas Engine`;
-      document.getElementById('setting-autoCheckUpdates').checked = !!cfg.autoCheckUpdates;
-      document.getElementById('setting-albumColorGradient').checked = cfg.albumColorGradient !== false;
-
-      // Update status
     }
 
     function updateDisplayModeButtons(mode) {
       const btnIsland = document.getElementById('btn-mode-island');
       const btnNotch = document.getElementById('btn-mode-notch');
+      if (!btnIsland || !btnNotch) return;
       if (mode === 'notch') {
         btnNotch.classList.add('btn-primary');
         btnIsland.classList.remove('btn-primary');
@@ -797,12 +818,12 @@
       }
     }
 
-    document.getElementById('btn-mode-island').addEventListener('click', async () => {
+    document.getElementById('btn-mode-island')?.addEventListener('click', async () => {
       updateDisplayModeButtons('island');
       await ipcRenderer.invoke('save-app-settings', { displayMode: 'island' });
     });
 
-    document.getElementById('btn-mode-notch').addEventListener('click', async () => {
+    document.getElementById('btn-mode-notch')?.addEventListener('click', async () => {
       updateDisplayModeButtons('notch');
       await ipcRenderer.invoke('save-app-settings', { displayMode: 'notch' });
     });
@@ -818,7 +839,6 @@
     }
 
     bindSettingChange('setting-startup', 'startup');
-    bindSettingChange('setting-startupTakeover', 'startupTakeover');
     bindSettingChange('setting-gameMode', 'gameMode');
     bindSettingChange('setting-clock24h', 'clock24h');
     bindSettingChange('setting-showSeconds', 'showSeconds');
@@ -830,19 +850,15 @@
     bindSettingChange('setting-autoCheckUpdates', 'autoCheckUpdates');
 
     // Buttons
-    document.getElementById('btn-open-dropzone').addEventListener('click', () => {
+    document.getElementById('btn-open-dropzone')?.addEventListener('click', () => {
       ipcRenderer.send('settings-open-dropzone');
     });
 
-    document.getElementById('btn-preview-takeover').addEventListener('click', () => {
-      ipcRenderer.send('trigger-startup-takeover');
-    });
-
-    document.getElementById('btn-open-repo').addEventListener('click', () => {
+    document.getElementById('btn-open-repo')?.addEventListener('click', () => {
       ipcRenderer.send('open-external-url', 'https://github.com/voiceline-diskrep/dynamic-windows');
     });
 
-    document.getElementById('btn-view-releases').addEventListener('click', () => {
+    document.getElementById('btn-view-releases')?.addEventListener('click', () => {
       ipcRenderer.send('open-external-url', 'https://github.com/voiceline-diskrep/dynamic-windows/releases');
     });
 
@@ -854,40 +870,44 @@
     const actionArea = document.getElementById('update-action-area');
     const notesPreview = document.getElementById('release-notes-preview');
 
-    btnCheck.addEventListener('click', async () => {
+    btnCheck?.addEventListener('click', async () => {
       btnCheck.disabled = true;
       btnCheck.textContent = 'Checking GitHub...';
-      resultBox.style.display = 'block';
-      statusMsg.innerHTML = '<span style="color: #93c5fd;">Checking GitHub Releases API...</span>';
-      actionArea.style.display = 'none';
-      notesPreview.style.display = 'none';
+      if (resultBox) resultBox.style.display = 'block';
+      if (statusMsg) statusMsg.innerHTML = '<span style="color: #93c5fd;">Checking GitHub Releases API...</span>';
+      if (actionArea) actionArea.style.display = 'none';
+      if (notesPreview) notesPreview.style.display = 'none';
 
       const res = await ipcRenderer.invoke('check-github-update');
       btnCheck.disabled = false;
       btnCheck.textContent = 'Check for Updates Now';
 
       if (res.error) {
-        statusMsg.innerHTML = `<span style="color: #ef4444;">Error checking updates: ${res.error}</span>`;
+        if (statusMsg) statusMsg.innerHTML = `<span style="color: #ef4444;">Error checking updates: ${res.error}</span>`;
       } else if (res.updateAvailable) {
         latestDownloadUrl = res.downloadUrl;
-        statusMsg.innerHTML = `
-          <strong style="color: #4ade80;">New update available! (v${res.latestVersion})</strong><br>
-          <span style="color: #a1a1aa; font-size: 12px;">You are currently running v${res.currentVersion}.</span>
-        `;
-        actionArea.style.display = 'block';
-        if (res.releaseNotes) {
+        if (statusMsg) {
+          statusMsg.innerHTML = `
+            <strong style="color: #4ade80;">New update available! (v${res.latestVersion})</strong><br>
+            <span style="color: #a1a1aa; font-size: 12px;">You are currently running v${res.currentVersion}.</span>
+          `;
+        }
+        if (actionArea) actionArea.style.display = 'block';
+        if (res.releaseNotes && notesPreview) {
           notesPreview.style.display = 'block';
           notesPreview.textContent = res.releaseNotes;
         }
       } else {
-        statusMsg.innerHTML = `
-          <strong style="color: #4ade80;">✓ You are running the latest version (v${res.currentVersion})!</strong><br>
-          <span style="color: #a1a1aa; font-size: 12px;">Dynamic Windows is fully up to date with official GitHub Releases.</span>
-        `;
+        if (statusMsg) {
+          statusMsg.innerHTML = `
+            <strong style="color: #4ade80;">✓ You are running the latest version (v${res.currentVersion})!</strong><br>
+            <span style="color: #a1a1aa; font-size: 12px;">Dynamic Windows is fully up to date with official GitHub Releases.</span>
+          `;
+        }
       }
     });
 
-    document.getElementById('btn-download-update').addEventListener('click', () => {
+    document.getElementById('btn-download-update')?.addEventListener('click', () => {
       if (latestDownloadUrl) {
         ipcRenderer.send('open-external-url', latestDownloadUrl);
       }

@@ -59,7 +59,7 @@ function getAppVersion() {
   } catch (e) {}
   const v = app.getVersion();
   if (v && v !== '0.0.0' && !v.startsWith('33.') && !v.startsWith('32.')) return v;
-  return configManager.get('version') || '1.4.4';
+  return configManager.get('version') || '1.4.5';
 }
 
 function checkForGitHubUpdate() {
