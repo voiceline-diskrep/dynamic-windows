@@ -59,7 +59,91 @@ function getAppVersion() {
   } catch (e) {}
   const v = app.getVersion();
   if (v && v !== '0.0.0' && !v.startsWith('33.') && !v.startsWith('32.')) return v;
-  return configManager.get('version') || '1.4.3';
+  return configManager.get('version') || '1.4.4';
+}
+
+function checkForGitHubUpdate() {
+  return new Promise((resolve) => {
+    const cfg = configManager.get();
+    const owner = cfg.repoOwner || 'voiceline-diskrep';
+    const repo = cfg.repoName || 'dynamic-windows';
+    const curVer = getAppVersion();
+
+    const options = {
+      hostname: 'api.github.com',
+      path: `/repos/${owner}/${repo}/releases/latest`,
+      headers: {
+        'User-Agent': 'DynamicWindows-Desktop-App'
+      }
+    };
+
+    const req = https.get(options, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try {
+            const data = JSON.parse(body);
+            const tag = (data.tag_name || '').replace(/^v/, '');
+            const isNewer = compareVersions(tag, curVer) > 0;
+            
+            // Look for windows installer asset
+            let downloadUrl = data.html_url;
+            if (Array.isArray(data.assets)) {
+              const exeAsset = data.assets.find(a => a.name.endsWith('.exe'));
+              if (exeAsset && exeAsset.browser_download_url) {
+                downloadUrl = exeAsset.browser_download_url;
+              }
+            }
+
+            return resolve({
+              updateAvailable: isNewer,
+              latestVersion: tag || data.tag_name,
+              currentVersion: curVer,
+              releaseName: data.name || data.tag_name,
+              releaseNotes: data.body || 'No release notes provided.',
+              downloadUrl: downloadUrl
+            });
+          } catch (e) {
+            fallbackRedirect();
+          }
+        } else {
+          fallbackRedirect();
+        }
+      });
+    });
+
+    req.on('error', () => fallbackRedirect());
+
+    req.setTimeout(6000, () => {
+      req.destroy();
+      fallbackRedirect();
+    });
+
+    function fallbackRedirect() {
+      https.get(`https://github.com/${owner}/${repo}/releases/latest`, {
+        headers: { 'User-Agent': 'DynamicWindows-Desktop-App' }
+      }, (res) => {
+        const loc = res.headers.location || '';
+        const match = loc.match(/\/tag\/v?([0-9.]+)/i);
+        if (match && match[1]) {
+          const tag = match[1];
+          const isNewer = compareVersions(tag, curVer) > 0;
+          return resolve({
+            updateAvailable: isNewer,
+            latestVersion: tag,
+            currentVersion: curVer,
+            releaseName: `Dynamic Windows v${tag}`,
+            releaseNotes: `Visit GitHub for release details: ${loc}`,
+            downloadUrl: `https://github.com/${owner}/${repo}/releases/download/v${tag}/DynamicWindows-Setup-v${tag}.exe`
+          });
+        }
+        resolve({ error: 'Could not determine latest release version.' });
+      }).on('error', (e) => {
+        resolve({ error: 'Update check failed: ' + e.message });
+      });
+    }
+  });
 }
 
 function registerSettingsIPC(dropZoneInstance) {
@@ -120,87 +204,7 @@ function registerSettingsIPC(dropZoneInstance) {
   });
 
   ipcMain.handle('check-github-update', async () => {
-    return new Promise((resolve) => {
-      const cfg = configManager.get();
-      const owner = cfg.repoOwner || 'voiceline-diskrep';
-      const repo = cfg.repoName || 'dynamic-windows';
-      const curVer = getAppVersion();
-
-      const options = {
-        hostname: 'api.github.com',
-        path: `/repos/${owner}/${repo}/releases/latest`,
-        headers: {
-          'User-Agent': 'DynamicWindows-Desktop-App'
-        }
-      };
-
-      const req = https.get(options, (res) => {
-        let body = '';
-        res.on('data', chunk => body += chunk);
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            try {
-              const data = JSON.parse(body);
-              const tag = (data.tag_name || '').replace(/^v/, '');
-              const isNewer = compareVersions(tag, curVer) > 0;
-              
-              // Look for windows installer asset
-              let downloadUrl = data.html_url;
-              if (Array.isArray(data.assets)) {
-                const exeAsset = data.assets.find(a => a.name.endsWith('.exe'));
-                if (exeAsset && exeAsset.browser_download_url) {
-                  downloadUrl = exeAsset.browser_download_url;
-                }
-              }
-
-              return resolve({
-                updateAvailable: isNewer,
-                latestVersion: tag || data.tag_name,
-                currentVersion: curVer,
-                releaseName: data.name || data.tag_name,
-                releaseNotes: data.body || 'No release notes provided.',
-                downloadUrl: downloadUrl
-              });
-            } catch (e) {
-              fallbackRedirect();
-            }
-          } else {
-            fallbackRedirect();
-          }
-        });
-      });
-
-      req.on('error', () => fallbackRedirect());
-
-      req.setTimeout(6000, () => {
-        req.destroy();
-        fallbackRedirect();
-      });
-
-      function fallbackRedirect() {
-        https.get(`https://github.com/${owner}/${repo}/releases/latest`, {
-          headers: { 'User-Agent': 'DynamicWindows-Desktop-App' }
-        }, (res) => {
-          const loc = res.headers.location || '';
-          const match = loc.match(/\/tag\/v?([0-9.]+)/i);
-          if (match && match[1]) {
-            const tag = match[1];
-            const isNewer = compareVersions(tag, curVer) > 0;
-            return resolve({
-              updateAvailable: isNewer,
-              latestVersion: tag,
-              currentVersion: curVer,
-              releaseName: `Dynamic Windows v${tag}`,
-              releaseNotes: `Visit GitHub for release details: ${loc}`,
-              downloadUrl: `https://github.com/${owner}/${repo}/releases/download/v${tag}/DynamicWindows-Setup-v${tag}.exe`
-            });
-          }
-          resolve({ error: 'Could not determine latest release version.' });
-        }).on('error', (e) => {
-          resolve({ error: 'Update check failed: ' + e.message });
-        });
-      }
-    });
+    return checkForGitHubUpdate();
   });
 
   ipcMain.on('open-external-url', (event, url) => {
@@ -231,5 +235,6 @@ function compareVersions(v1, v2) {
 
 module.exports = {
   createSettingsWindow,
-  registerSettingsIPC
+  registerSettingsIPC,
+  checkForGitHubUpdate
 };

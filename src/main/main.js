@@ -398,6 +398,8 @@ function createIslandWindow() {
       const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
       fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] exitApplication invoked\n`);
     } catch (err) {}
+    try { globalShortcut.unregisterAll(); } catch (e) {}
+    try { if (tray) tray.destroy(); } catch (e) {}
     try { sysHelper.restoreWorkArea(); } catch (e) {}
     try {
       if (agentHooksServer && typeof agentHooksServer.stop === 'function') {
@@ -741,7 +743,7 @@ function setupTray() {
     const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');
     if (!tray) {
       tray = new Tray(iconPath);
-      tray.setToolTip('Dynamic Windows (v1.3.8)');
+      tray.setToolTip(`Dynamic Windows (v${app.getVersion()})`);
     }
     const contextMenu = Menu.buildFromTemplate([
       {
@@ -898,6 +900,25 @@ app.whenReady().then(() => {
   cleanupTopBezel();
   setupTray();
   setupGlobalShortcuts();
+
+  // Automatic Update Check on Startup (GitHub Releases)
+  if (configManager.get('autoCheckUpdates') !== false) {
+    setTimeout(async () => {
+      try {
+        const { checkForGitHubUpdate } = require('./settings-window');
+        const updateResult = await checkForGitHubUpdate();
+        if (updateResult && updateResult.updateAvailable) {
+          const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+          fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] [UpdateChecker] New update available: v${updateResult.latestVersion} (current: v${updateResult.currentVersion})\n`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('app-update-available', updateResult);
+          }
+        }
+      } catch (err) {
+        console.warn('[UpdateChecker] Startup check error:', err.message);
+      }
+    }, 3500).unref?.();
+  }
 
   // Periodically stream media & lyrics updates to Island
   setInterval(() => {

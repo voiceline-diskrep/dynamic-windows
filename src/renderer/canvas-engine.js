@@ -458,8 +458,18 @@ function updateAlbumArt(url) {
         r = 56; g = 189; b = 248;
       }
       const maxVal = Math.max(r, g, b, 40);
-      const boost = 220 / maxVal;
-      albumAccentColor = `rgb(${[r, g, b].map(v => Math.min(255, Math.max(0, Math.round(v * boost)))).join(',')})`;
+      const minVal = Math.min(r, g, b);
+      // If the artwork is monochrome/grayscale, generate a vivid harmonic hue so music always produces a vibrant Apple-grade glow
+      if (maxVal - minVal < 26) {
+        const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Music');
+        let hash = 0;
+        for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i);
+        const hue = Math.abs(hash) % 360;
+        albumAccentColor = `hsl(${hue}, 85%, 62%)`;
+      } else {
+        const boost = 220 / maxVal;
+        albumAccentColor = `rgb(${[r, g, b].map(v => Math.min(255, Math.max(0, Math.round(v * boost)))).join(',')})`;
+      }
     } catch (e) {
       const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Music');
       let hash = 0;
@@ -479,11 +489,21 @@ function updateAlbumArt(url) {
 }
 
 function colorWithAlpha(c, a) {
-  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c);
-  if (m) return `rgba(${m[1]},${m[2]},${m[3]},${a})`;
-  const hex = String(c || '#22c55e').replace('#', '').slice(0, 6);
-  const n = parseInt(hex, 16) || 0x22c55e;
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  const safeA = (typeof a === 'number' && !isNaN(a)) ? Math.max(0, Math.min(1, a)) : 1.0;
+  if (!c) return `rgba(34,197,94,${safeA})`;
+  const rgbMatch = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c);
+  if (rgbMatch) return `rgba(${rgbMatch[1]},${rgbMatch[2]},${rgbMatch[3]},${safeA})`;
+  const hslMatch = /hsla?\((\d+),\s*([\d.]+)%?,\s*([\d.]+)%?/.exec(c);
+  if (hslMatch) return `hsla(${hslMatch[1]},${hslMatch[2]}%,${hslMatch[3]}%,${safeA})`;
+  const hex = String(c).replace('#', '').trim();
+  if (hex.length === 3) {
+    const r = parseInt(hex[0] + hex[0], 16) || 0;
+    const g = parseInt(hex[1] + hex[1], 16) || 0;
+    const b = parseInt(hex[2] + hex[2], 16) || 0;
+    return `rgba(${r},${g},${b},${safeA})`;
+  }
+  const n = parseInt(hex.slice(0, 6), 16) || 0x22c55e;
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${safeA})`;
 }
 
 // -------------------------------------------------------------
@@ -2138,9 +2158,18 @@ function render() {
     ctx.save();
     ctx.globalAlpha = unifiedAlpha;
 
-    // 1. Ambient Drop Shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-    ctx.shadowBlur = 18 + 14 * p;
+    // 1. Ambient Drop Shadow (illuminated when music is playing with album gradient)
+    const hasMediaTrack = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
+    const wantTint = (albumColorGradientEnabled && hasMediaTrack) ? 1.0 : 0.0;
+    tintK += (wantTint - tintK) * 0.16;
+
+    if (tintK > 0.05 && albumAccentColor) {
+      ctx.shadowColor = colorWithAlpha(albumAccentColor, 0.45 * tintK);
+      ctx.shadowBlur = (18 + 14 * p) + (tintK * 12);
+    } else {
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+      ctx.shadowBlur = 18 + 14 * p;
+    }
     ctx.shadowOffsetY = 6 + 6 * p;
 
     // 2. Liquid Glass OLED Black Surface
@@ -2155,18 +2184,15 @@ function render() {
     ctx.fill();
 
     // 2b. Dynamic Island Album Cover Ambient Fade Gradient Glow
-    const hasMediaTrack = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
-    const wantTint = (albumColorGradientEnabled && hasMediaTrack) ? 1.0 : 0.0;
-    tintK += (wantTint - tintK) * 0.16;
     if (tintK > 0.01 && albumAccentColor) {
       ctx.save();
       ctx.beginPath();
       ctx.roundRect(x, y, w, h, radii);
       ctx.clip();
       const tintGrad = ctx.createLinearGradient(x, y + h, x, y);
-      tintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.58 * tintK));
-      tintGrad.addColorStop(0.48, colorWithAlpha(albumAccentColor, 0.24 * tintK));
-      tintGrad.addColorStop(0.85, colorWithAlpha(albumAccentColor, 0.06 * tintK));
+      tintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.65 * tintK));
+      tintGrad.addColorStop(0.45, colorWithAlpha(albumAccentColor, 0.28 * tintK));
+      tintGrad.addColorStop(0.85, colorWithAlpha(albumAccentColor, 0.08 * tintK));
       tintGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = tintGrad;
       ctx.fillRect(x, y, w, h);
@@ -2179,8 +2205,8 @@ function render() {
     ctx.lineWidth = 1;
     if (isDraggingOver) {
       ctx.strokeStyle = 'rgba(59, 130, 246, 0.85)';
-    } else if (tintK > 0.08 && albumAccentColor) {
-      ctx.strokeStyle = colorWithAlpha(albumAccentColor, 0.42 * tintK + 0.12);
+    } else if (tintK > 0.05 && albumAccentColor) {
+      ctx.strokeStyle = colorWithAlpha(albumAccentColor, 0.55 * tintK + 0.15);
     } else {
       ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
     }
@@ -2912,10 +2938,14 @@ function renderRestingPill(x, y, w, h, alpha) {
       interactiveButtons.push({ id: 'nav_agent', x: leftPillX, y: y, w: aiPillW, h: pillH });
     }
 
+    const hasMediaForPill = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
+    const pillGlow = (albumColorGradientEnabled && hasMediaForPill && albumAccentColor);
+    const safeAlpha = (typeof alpha === 'number' && !isNaN(alpha)) ? alpha : 1.0;
+
     // --- 2. CENTER MAIN CAPSULE [ Clock | Media or Status ] ---
     ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    ctx.shadowBlur = 14;
+    ctx.shadowColor = pillGlow ? colorWithAlpha(albumAccentColor, 0.45 * safeAlpha) : 'rgba(0, 0, 0, 0.45)';
+    ctx.shadowBlur = pillGlow ? 18 : 14;
     ctx.shadowOffsetY = 4;
     ctx.beginPath();
     ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
@@ -2928,16 +2958,15 @@ function renderRestingPill(x, y, w, h, alpha) {
     ctx.restore();
 
     // Ambient fade gradient derived from album cover on resting main capsule
-    const hasMediaForPill = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
-    if (albumColorGradientEnabled && hasMediaForPill && albumAccentColor) {
+    if (pillGlow) {
       ctx.save();
       ctx.beginPath();
       ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
       ctx.clip();
       const restTintGrad = ctx.createLinearGradient(mainPillX, y + pillH, mainPillX, y);
-      restTintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.58 * alpha));
-      restTintGrad.addColorStop(0.5, colorWithAlpha(albumAccentColor, 0.22 * alpha));
-      restTintGrad.addColorStop(0.85, colorWithAlpha(albumAccentColor, 0.05 * alpha));
+      restTintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.65 * safeAlpha));
+      restTintGrad.addColorStop(0.45, colorWithAlpha(albumAccentColor, 0.28 * safeAlpha));
+      restTintGrad.addColorStop(0.85, colorWithAlpha(albumAccentColor, 0.08 * safeAlpha));
       restTintGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = restTintGrad;
       ctx.fillRect(mainPillX, y, mainPillW, pillH);
@@ -2948,7 +2977,7 @@ function renderRestingPill(x, y, w, h, alpha) {
     ctx.beginPath();
     ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = (albumColorGradientEnabled && hasMediaForPill && albumAccentColor) ? colorWithAlpha(albumAccentColor, 0.45 * alpha + 0.12) : 'rgba(255, 255, 255, 0.12)';
+    ctx.strokeStyle = pillGlow ? colorWithAlpha(albumAccentColor, 0.55 * safeAlpha + 0.15) : 'rgba(255, 255, 255, 0.12)';
     ctx.stroke();
     ctx.restore();
 

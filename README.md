@@ -1,14 +1,14 @@
-# 🏝️ Dynamic Windows (v1.4.3)
+# 🏝️ Dynamic Windows (v1.4.4)
 
 A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment built for Windows, powered by high-performance hardware-accelerated Canvas rendering with deep **Google Antigravity & AI Agent** tracking, a **Dual Split Resting Pill (AI Activity Capsule + Main Activity Pill + Right Call Capsule)**, a **Dedicated Calendar Tab with Recurring Date Notes**, a **Dedicated Clock Tab (Timer, Stopwatch, Focus Mode)**, a **Dedicated To-Do List Tab with Custom Categories**, a **Dual-Zone Drop Shelf (One-Time Use vs Keep with Auto-Clear on Drag-Out)**, **Dynamic Island Album Cover Color Gradient Fade**, real-time **Liner Synced Lyrics**, **Connected Song Change Announcements with Mouse-Hover Dismiss**, **Customizable Animation Speed**, **Crisp Monochrome Vector Logos**, a **Clipboard History Manager**, **Game Mode**, and a **Settings Exit Button**.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.3.exe)
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.4.exe)
 
 ---
 
 ## 📥 Download & Install
 
-👉 **[Download DynamicWindows-Setup-v1.4.3.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.3.exe)**
+👉 **[Download DynamicWindows-Setup-v1.4.4.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.4.exe)**
 
 - **Single-File Standalone Setup**: Self-contained installer compiled with native C# (`.NET`).
 - **Zero Admin Rights Required**: Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` without UAC prompts.
