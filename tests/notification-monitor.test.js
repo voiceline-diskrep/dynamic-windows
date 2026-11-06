@@ -58,6 +58,17 @@ test('NotificationMonitor: clearAll and markAllRead', () => {
   assert.strictEqual(nm.getNotifications().length, 0);
 });
 
+test('NotificationMonitor: excludes Antigravity notifications', () => {
+  const nm = new NotificationMonitor({ pollIntervalMs: 60000 });
+  let emitted = false;
+  nm.on('new-notification', () => { emitted = true; });
+
+  const res = nm.addNotification({ app: 'Antigravity', title: 'Task Completed', body: 'Done' });
+  assert.strictEqual(res, null);
+  assert.strictEqual(emitted, false);
+  assert.strictEqual(nm.getNotifications().length, 0);
+});
+
 test('NotificationMonitor: getIconForApp mappings', () => {
   const nm = new NotificationMonitor({ pollIntervalMs: 60000 });
   assert.strictEqual(nm.getIconForApp('WhatsApp'), '💬');

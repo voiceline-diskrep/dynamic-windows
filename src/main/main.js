@@ -910,14 +910,6 @@ app.whenReady().then(() => {
       antigravityMonitor.updateFromMcp(data);
       sendAntigravityState();
     }
-    if (notificationMonitor && data && data.phase && (data.status === 'done' || data.status === 'waiting' || data.status === 'error')) {
-      notificationMonitor.addNotification({
-        app: 'Antigravity',
-        title: data.status === 'done' ? 'Task Completed' : (data.status === 'waiting' ? 'Action Required' : 'Alert'),
-        body: data.phase,
-        icon: '🤖'
-      });
-    }
   });
 
   agentHooksServer.on('mcp-shelf-file', (data) => {

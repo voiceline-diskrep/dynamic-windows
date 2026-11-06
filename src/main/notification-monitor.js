@@ -74,17 +74,20 @@ class NotificationMonitor extends EventEmitter {
 
         for (const item of items) {
           if (!item || !item.id) continue;
+          const appName = (item.app || 'Windows').trim();
+          if (appName.toLowerCase().includes('antigravity')) continue;
+
           const idStr = `win_${item.id}`;
           const isNew = !this.knownIds.has(idStr);
           this.knownIds.add(idStr);
 
           const notif = {
             id: idStr,
-            app: (item.app || 'Windows').trim(),
+            app: appName,
             title: (item.title || '').trim(),
             body: (item.body || '').trim(),
             timestamp: item.creationTime ? new Date(item.creationTime).getTime() : Date.now(),
-            icon: this.getIconForApp(item.app),
+            icon: this.getIconForApp(appName),
             read: !isNew || !this.initialized
           };
 
@@ -109,13 +112,16 @@ class NotificationMonitor extends EventEmitter {
 
   addNotification(entry) {
     if (!entry) return null;
+    const app = (entry.app || 'Dynamic Windows').trim();
+    if (app.toLowerCase().includes('antigravity')) return null;
+
     const notif = {
       id: entry.id || `app_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-      app: entry.app || 'Dynamic Windows',
+      app: app,
       title: entry.title || '',
       body: entry.body || '',
       timestamp: entry.timestamp || Date.now(),
-      icon: entry.icon || this.getIconForApp(entry.app),
+      icon: entry.icon || this.getIconForApp(app),
       read: false
     };
 
@@ -151,7 +157,7 @@ class NotificationMonitor extends EventEmitter {
   }
 
   getNotifications() {
-    return [...this.notifications];
+    return this.notifications.filter(n => !String(n.app || '').toLowerCase().includes('antigravity'));
   }
 
   getIconForApp(appName) {

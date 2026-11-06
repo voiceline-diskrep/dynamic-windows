@@ -1926,10 +1926,12 @@ try {
 } catch (e) {}
 
 ipcRenderer.on('notifications-updated', (event, list) => {
-  if (Array.isArray(list)) notificationList = list;
+  if (Array.isArray(list)) {
+    notificationList = list.filter(n => !String(n.app || '').toLowerCase().includes('antigravity'));
+  }
 });
 ipcRenderer.on('notification-received', (event, notif) => {
-  if (notif) {
+  if (notif && !String(notif.app || '').toLowerCase().includes('antigravity')) {
     activeNotification = notif;
     notificationBannerUntil = performance.now() + 4000;
     if (animProgress < 0.25) {
@@ -1940,7 +1942,9 @@ ipcRenderer.on('notification-received', (event, notif) => {
 });
 try {
   ipcRenderer.invoke('get-notifications').then(list => {
-    if (Array.isArray(list)) notificationList = list;
+    if (Array.isArray(list)) {
+      notificationList = list.filter(n => !String(n.app || '').toLowerCase().includes('antigravity'));
+    }
   }).catch(() => {});
 } catch (e) {}
 
