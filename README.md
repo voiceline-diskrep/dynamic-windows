@@ -1,14 +1,14 @@
-# 🏝️ Dynamic Windows (v1.4.5)
+# 🏝️ Dynamic Windows (v1.4.6)
 
-A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment built for Windows, powered by high-performance hardware-accelerated Canvas rendering with deep **Google Antigravity & AI Agent** tracking, a **Dual Split Resting Pill (AI Activity Capsule + Main Activity Pill + Right Call Capsule)**, a **Dedicated Calendar Tab with Recurring Date Notes**, a **Dedicated Clock Tab (Timer, Stopwatch, Focus Mode)**, a **Dedicated To-Do List Tab with Custom Categories**, a **Dual-Zone Drop Shelf (One-Time Use vs Keep with Auto-Clear on Drag-Out)**, **Dynamic Island Album Cover Color Gradient Fade**, real-time **Liner Synced Lyrics**, **Connected Song Change Announcements with Mouse-Hover Dismiss**, **Customizable Animation Speed**, **Crisp Monochrome Vector Logos**, a **Clipboard History Manager**, **Game Mode**, and a **Settings Exit Button**.
+A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment built for Windows, powered by high-performance hardware-accelerated Canvas rendering with deep **Google Antigravity & AI Agent** tracking, a **Dual Split Resting Pill (AI Activity Capsule + Main Activity Pill + Right Call Capsule)**, an **Adjustable Island Opacity & Frosted Glass Slider**, an **Interactive Timer Scroll Dial (Hours, Minutes, Seconds) with Mouse Wheel & Steppers**, **Customizable Focus Mode (Selectable Durations & Goal Tags)**, a **Dedicated Calendar Tab with Recurring Date Notes**, a **Dedicated To-Do List Tab with Custom Categories**, a **Dual-Zone Drop Shelf (One-Time Use vs Keep with Auto-Clear on Drag-Out)**, **Dynamic Island Album Cover Color Gradient Fade**, real-time **Liner Synced Lyrics**, **Connected Song Change Announcements with Mouse-Hover Dismiss**, **Customizable Animation Speed**, **Crisp Monochrome Vector Logos**, a **Clipboard History Manager**, **Game Mode**, and a **Settings Exit Button**.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.5.exe)
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.6.exe)
 
 ---
 
 ## 📥 Download & Install
 
-👉 **[Download DynamicWindows-Setup-v1.4.5.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.5.exe)**
+👉 **[Download DynamicWindows-Setup-v1.4.6.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.6.exe)**
 
 - **Single-File Standalone Setup**: Self-contained installer compiled with native C# (`.NET`).
 - **Zero Admin Rights Required**: Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` without UAC prompts.
@@ -30,10 +30,15 @@ A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment buil
 
 ### ⏱️ Dedicated Clock Tab
 - **3 Sub-Modes in One Tab**:
-  - **⏳ Timer**: Countdown timer with presets (`1m`, `5m`, `15m`, `25m`, `45m`, `60m`), `+1m` / `-1m` nudges, and live progress.
+  - **⏳ Timer**: Interactive digital dial with 3 columns (**Hours, Minutes, Seconds**). Scroll your mouse wheel directly over any column or click the `▲` / `▼` steppers to dial any custom duration. Also includes quick presets (`1m`, `5m`, `15m`, `25m`, `45m`, `60m`), `Reset`, and `Clear`.
   - **⏱️ Stopwatch**: High-precision millisecond stopwatch (`00:00.00`) with split and lap tracking.
-  - **🎯 Focus Mode**: Pomodoro session manager with 25m focus sessions, 5m short breaks, and session cycle counters.
+  - **🎯 Focus Mode**: Fully customizable Pomodoro session manager. Select your focus session duration (`15m`, `20m`, `25m`, `30m`, `45m`, `60m`), break duration (`3m`, `5m`, `10m`), and tag your session (`🎯 Deep Work`, `💻 Coding`, `📚 Study`, `✍️ Writing`, `📖 Reading`).
 - **Resting Pill Live Badges**: When a timer or focus session is running and the Island collapses to rest, the resting pill displays a live countdown badge (e.g. `⏱️ 14:20` or `🎯 Focus 22:05`).
+
+### 🪟 Island Background Opacity & Frosted Glass
+- **Adjustable Transparency Slider**: Configure island background opacity from **40% to 100%** in Settings.
+- **Glass Presets**: Quick 1-click profiles for `Glass (65%)`, `Frosted (85%)`, `Subtle (95%)`, and `OLED Solid (100%)`.
+- **Seamless Desktop Integration**: Full transparency outside the island capsule with zero unsightly black bounding boxes or backdrop clipping over wallpapers.
 
 ### ✅ Dedicated To-Do List Tab
 - **Custom User Categories**: Add custom categories (e.g. `Projects`, `Fitness`, `Ideas`) or delete them anytime.

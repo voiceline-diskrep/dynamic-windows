@@ -59,7 +59,7 @@ function getAppVersion() {
   } catch (e) {}
   const v = app.getVersion();
   if (v && v !== '0.0.0' && !v.startsWith('33.') && !v.startsWith('32.')) return v;
-  return configManager.get('version') || '1.4.5';
+  return configManager.get('version') || '1.4.6';
 }
 
 function checkForGitHubUpdate() {
@@ -190,6 +190,13 @@ function registerSettingsIPC(dropZoneInstance) {
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {
           w.webContents.send('album-color-gradient-toggled', { enabled: Boolean(newSettings.albumColorGradient) });
+        }
+      });
+    }
+    if (newSettings && 'islandOpacity' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('island-opacity-changed', { opacity: Number(newSettings.islandOpacity) });
         }
       });
     }

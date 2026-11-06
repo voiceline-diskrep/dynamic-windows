@@ -293,10 +293,30 @@ let stopwatchLaps = [];
 let focusMode = 'work'; // 'work' | 'short_break' | 'long_break'
 let focusWorkDurationMin = 25;
 let focusBreakDurationMin = 5;
+let focusGoalTag = 'Deep Work';
 let focusRemainingSec = 25 * 60;
 let focusRunning = false;
 let focusLastTick = null;
 let focusSessionsCompleted = 0;
+let islandOpacity = 0.95;
+
+try {
+  const savedWork = localStorage.getItem('focus_work_min');
+  if (savedWork) {
+    const w = parseInt(savedWork, 10);
+    if (!isNaN(w) && w > 0) {
+      focusWorkDurationMin = w;
+      focusRemainingSec = w * 60;
+    }
+  }
+  const savedBreak = localStorage.getItem('focus_break_min');
+  if (savedBreak) {
+    const b = parseInt(savedBreak, 10);
+    if (!isNaN(b) && b > 0) focusBreakDurationMin = b;
+  }
+  const savedGoal = localStorage.getItem('focus_goal_tag');
+  if (savedGoal) focusGoalTag = savedGoal;
+} catch (e) {}
 
 // To-Do State
 let todoData = {
@@ -1501,10 +1521,24 @@ function handleButtonClick(id, data) {
   } else if (id === 'timer_reset') {
     timerRemainingSec = timerDurationSec;
     timerRunning = false;
+  } else if (id === 'timer_clear') {
+    timerDurationSec = 0;
+    timerRemainingSec = 0;
+    timerRunning = false;
+  } else if (id && id.startsWith('timer_inc_')) {
+    const unit = id.replace('timer_inc_', '');
+    if (unit === 'h') adjustTimerHours(1);
+    else if (unit === 'm') adjustTimerMins(1);
+    else if (unit === 's') adjustTimerSecs(1);
+  } else if (id && id.startsWith('timer_dec_')) {
+    const unit = id.replace('timer_dec_', '');
+    if (unit === 'h') adjustTimerHours(-1);
+    else if (unit === 'm') adjustTimerMins(-1);
+    else if (unit === 's') adjustTimerSecs(-1);
   } else if (id === 'timer_minus') {
-    timerRemainingSec = Math.max(30, timerRemainingSec - 60);
+    adjustTimerMins(-1);
   } else if (id === 'timer_plus') {
-    timerRemainingSec += 60;
+    adjustTimerMins(1);
   } else if (id === 'sw_start_pause') {
     stopwatchRunning = !stopwatchRunning;
     stopwatchStartTs = performance.now();
@@ -1519,11 +1553,28 @@ function handleButtonClick(id, data) {
   } else if (id === 'focus_start_pause') {
     focusRunning = !focusRunning;
     focusLastTick = performance.now();
+  } else if (id && id.startsWith('focus_goal_')) {
+    focusGoalTag = String(data);
+    try { localStorage.setItem('focus_goal_tag', focusGoalTag); } catch (e) {}
+  } else if (id && id.startsWith('focus_work_dur_')) {
+    const min = Number(data);
+    focusWorkDurationMin = min;
+    try { localStorage.setItem('focus_work_min', min); } catch (e) {}
+    if (focusMode === 'work' && !focusRunning) {
+      focusRemainingSec = min * 60;
+    }
+  } else if (id && id.startsWith('focus_break_dur_')) {
+    const min = Number(data);
+    focusBreakDurationMin = min;
+    try { localStorage.setItem('focus_break_min', min); } catch (e) {}
+    if (focusMode !== 'work' && !focusRunning) {
+      focusRemainingSec = min * 60;
+    }
   } else if (id === 'focus_skip') {
     if (focusMode === 'work') {
       focusSessionsCompleted++;
       focusMode = (focusSessionsCompleted % 4 === 0) ? 'long_break' : 'short_break';
-      focusRemainingSec = (focusMode === 'long_break') ? 15 * 60 : 5 * 60;
+      focusRemainingSec = (focusMode === 'long_break') ? 15 * 60 : focusBreakDurationMin * 60;
     } else {
       focusMode = 'work';
       focusRemainingSec = focusWorkDurationMin * 60;
@@ -1791,6 +1842,11 @@ ipcRenderer.on('album-color-gradient-toggled', (event, data) => {
     albumColorGradientEnabled = data.enabled;
   }
 });
+ipcRenderer.on('island-opacity-changed', (event, data) => {
+  if (data && typeof data.opacity === 'number') {
+    islandOpacity = Math.max(0.4, Math.min(1.0, data.opacity));
+  }
+});
 try {
   ipcRenderer.invoke('get-app-settings').then(res => {
     if (res && res.config) {
@@ -1799,6 +1855,9 @@ try {
       }
       if (typeof res.config.albumColorGradient === 'boolean') {
         albumColorGradientEnabled = res.config.albumColorGradient;
+      }
+      if (typeof res.config.islandOpacity === 'number') {
+        islandOpacity = Math.max(0.4, Math.min(1.0, res.config.islandOpacity));
       }
       if (res.config.animationSpeed) {
         const val = parseFloat(res.config.animationSpeed);
@@ -1845,7 +1904,7 @@ function animate(now) {
       if (focusMode === 'work') {
         focusSessionsCompleted++;
         focusMode = (focusSessionsCompleted % 4 === 0) ? 'long_break' : 'short_break';
-        focusRemainingSec = (focusMode === 'long_break') ? 15 * 60 : 5 * 60;
+        focusRemainingSec = (focusMode === 'long_break') ? 15 * 60 : focusBreakDurationMin * 60;
       } else {
         focusMode = 'work';
         focusRemainingSec = focusWorkDurationMin * 60;
@@ -1897,6 +1956,21 @@ window.addEventListener('wheel', (e) => {
       currentVolume = Math.max(0, Math.min(1, currentVolume + delta));
       isVolumeMuted = false;
       ipcRenderer.send('set-media-volume', { val: currentVolume, app: getMediaAppHint() });
+    }
+  } else if (currentView === 'clock' && clockSubMode === 'timer') {
+    const delta = e.deltaY < 0 ? 1 : -1;
+    if (hoveredButtonId === 'timer_col_h' || hoveredButtonId === 'timer_inc_h' || hoveredButtonId === 'timer_dec_h') {
+      e.preventDefault();
+      adjustTimerHours(delta);
+    } else if (hoveredButtonId === 'timer_col_m' || hoveredButtonId === 'timer_inc_m' || hoveredButtonId === 'timer_dec_m') {
+      e.preventDefault();
+      adjustTimerMins(delta);
+    } else if (hoveredButtonId === 'timer_col_s' || hoveredButtonId === 'timer_inc_s' || hoveredButtonId === 'timer_dec_s') {
+      e.preventDefault();
+      adjustTimerSecs(delta);
+    } else if (hoveredButtonId && hoveredButtonId.startsWith('timer_')) {
+      e.preventDefault();
+      adjustTimerMins(delta);
     }
   }
 }, { passive: false });
@@ -2174,9 +2248,9 @@ function render() {
 
     // 2. Liquid Glass OLED Black Surface
     const grad = ctx.createLinearGradient(x, y, x, y + h);
-    grad.addColorStop(0.0, '#101014');
-    grad.addColorStop(0.5, '#08080a');
-    grad.addColorStop(1.0, '#020204');
+    grad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
+    grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
+    grad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
 
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, radii);
@@ -2226,6 +2300,17 @@ function render() {
   } else if (p > 0.35) {
     const alpha = (p - 0.35) / 0.65;
     renderExpandedView(x, y, w, h, alpha);
+
+    // Inner Capsule Modal Dimmer (isolated strictly to the Island capsule)
+    if (isInlineModalOpen) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, radii);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
+      ctx.fillRect(x, y, w, h);
+      ctx.restore();
+    }
   }
 
   // 5. Game Mode Toast / Status Notification
@@ -2765,9 +2850,9 @@ function renderRightCallCapsule(cx, cy, cw, ch) {
   ctx.beginPath();
   ctx.roundRect(cx, cy, cw, ch, pillRadius);
   const callGrad = ctx.createLinearGradient(cx, cy, cx, cy + ch);
-  callGrad.addColorStop(0.0, '#101014');
-  callGrad.addColorStop(0.5, '#08080a');
-  callGrad.addColorStop(1.0, '#020204');
+  callGrad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
+  callGrad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
+  callGrad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
   ctx.fillStyle = callGrad;
   ctx.fill();
   ctx.restore();
@@ -2950,9 +3035,9 @@ function renderRestingPill(x, y, w, h, alpha) {
     ctx.beginPath();
     ctx.roundRect(mainPillX, y, mainPillW, pillH, pillRadius);
     const mainGrad = ctx.createLinearGradient(mainPillX, y, mainPillX, y + pillH);
-    mainGrad.addColorStop(0.0, '#101014');
-    mainGrad.addColorStop(0.5, '#08080a');
-    mainGrad.addColorStop(1.0, '#020204');
+    mainGrad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
+    mainGrad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
+    mainGrad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
     ctx.fillStyle = mainGrad;
     ctx.fill();
     ctx.restore();
@@ -3887,6 +3972,55 @@ function renderCalendarTabView(x, y, w, h) {
 // =============================================================
 // 2. DEDICATED CLOCK TAB VIEW (Timer Presets + Stopwatch + Focus Mode)
 // =============================================================
+function adjustTimerHours(delta) {
+  let total = Math.max(0, Math.round(timerRemainingSec));
+  let h = Math.floor(total / 3600);
+  let m = Math.floor((total % 3600) / 60);
+  let s = total % 60;
+  h = Math.max(0, Math.min(23, h + delta));
+  const newSec = h * 3600 + m * 60 + s;
+  timerDurationSec = newSec;
+  timerRemainingSec = newSec;
+}
+
+function adjustTimerMins(delta) {
+  let total = Math.max(0, Math.round(timerRemainingSec));
+  let h = Math.floor(total / 3600);
+  let m = Math.floor((total % 3600) / 60);
+  let s = total % 60;
+  m = m + delta;
+  if (m < 0) {
+    if (h > 0) { h--; m += 60; } else { m = 0; }
+  } else if (m >= 60) {
+    if (h < 23) { h++; m -= 60; } else { m = 59; }
+  }
+  const newSec = h * 3600 + m * 60 + s;
+  timerDurationSec = newSec;
+  timerRemainingSec = newSec;
+}
+
+function adjustTimerSecs(delta) {
+  let total = Math.max(0, Math.round(timerRemainingSec));
+  let h = Math.floor(total / 3600);
+  let m = Math.floor((total % 3600) / 60);
+  let s = total % 60;
+  s = s + delta;
+  if (s < 0) {
+    if (m > 0 || h > 0) {
+      if (m > 0) m--; else { h--; m = 59; }
+      s += 60;
+    } else { s = 0; }
+  } else if (s >= 60) {
+    if (m < 59 || h < 23) {
+      if (m < 59) m++; else { h++; m = 0; }
+      s -= 60;
+    } else { s = 59; }
+  }
+  const newSec = h * 3600 + m * 60 + s;
+  timerDurationSec = newSec;
+  timerRemainingSec = newSec;
+}
+
 function renderClockTabView(x, y, w, h) {
   const topY = y + 42;
   const padding = 20;
@@ -3923,13 +4057,86 @@ function renderClockTabView(x, y, w, h) {
   const stageY = topY + 34;
 
   if (clockSubMode === 'timer') {
-    // Large Digital Readout
-    const timeStr = formatTimerSeconds(timerRemainingSec);
-    ctx.font = '700 48px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = timerRunning ? '#38bdf8' : '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(timeStr, contentX + contentW / 2, stageY + 36);
+    const totalSec = Math.max(0, Math.round(timerRemainingSec));
+    const curH = Math.floor(totalSec / 3600);
+    const curM = Math.floor((totalSec % 3600) / 60);
+    const curS = totalSec % 60;
+
+    // Interactive Digit Dial Columns
+    const midX = contentX + contentW / 2;
+    const colW = 58;
+    const colH = 64;
+    const sepW = 16;
+    const totalColsW = colW * 3 + sepW * 2;
+    const startColX = midX - totalColsW / 2;
+
+    const cols = [
+      { id: 'h', val: String(curH).padStart(2, '0'), label: 'HOURS', x: startColX },
+      { id: 'm', val: String(curM).padStart(2, '0'), label: 'MINUTES', x: startColX + colW + sepW },
+      { id: 's', val: String(curS).padStart(2, '0'), label: 'SECONDS', x: startColX + (colW + sepW) * 2 }
+    ];
+
+    cols.forEach((col, idx) => {
+      const isColHov = hoveredButtonId === `timer_col_${col.id}` || hoveredButtonId === `timer_inc_${col.id}` || hoveredButtonId === `timer_dec_${col.id}`;
+
+      // Column background card
+      ctx.beginPath();
+      ctx.roundRect(col.x, stageY, colW, colH, 8);
+      ctx.fillStyle = isColHov ? 'rgba(56, 189, 248, 0.12)' : 'rgba(255, 255, 255, 0.05)';
+      ctx.strokeStyle = isColHov ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // Top Stepper [ ▲ ]
+      const isIncHov = hoveredButtonId === `timer_inc_${col.id}`;
+      ctx.beginPath();
+      ctx.roundRect(col.x + 4, stageY + 3, colW - 8, 14, 3);
+      ctx.fillStyle = isIncHov ? 'rgba(255, 255, 255, 0.18)' : 'transparent';
+      ctx.fill();
+      ctx.font = '600 9px sans-serif';
+      ctx.fillStyle = isIncHov ? '#ffffff' : '#94a3b8';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('▲', col.x + colW / 2, stageY + 10);
+      interactiveButtons.push({ id: `timer_inc_${col.id}`, data: col.id, x: col.x + 4, y: stageY + 3, w: colW - 8, h: 14 });
+
+      // Digit Value
+      ctx.font = '700 26px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = timerRunning ? '#38bdf8' : (isColHov ? '#ffffff' : '#f1f5f9');
+      ctx.fillText(col.val, col.x + colW / 2, stageY + 32);
+
+      // Bottom Stepper [ ▼ ]
+      const isDecHov = hoveredButtonId === `timer_dec_${col.id}`;
+      ctx.beginPath();
+      ctx.roundRect(col.x + 4, stageY + colH - 17, colW - 8, 14, 3);
+      ctx.fillStyle = isDecHov ? 'rgba(255, 255, 255, 0.18)' : 'transparent';
+      ctx.fill();
+      ctx.font = '600 9px sans-serif';
+      ctx.fillStyle = isDecHov ? '#ffffff' : '#94a3b8';
+      ctx.fillText('▼', col.x + colW / 2, stageY + colH - 10);
+      interactiveButtons.push({ id: `timer_dec_${col.id}`, data: col.id, x: col.x + 4, y: stageY + colH - 17, w: colW - 8, h: 14 });
+
+      // Interactive hit area for mouse wheel scrolling
+      interactiveButtons.push({ id: `timer_col_${col.id}`, data: col.id, x: col.x, y: stageY, w: colW, h: colH });
+
+      // Column Sub-Label
+      ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(col.label, col.x + colW / 2, stageY + colH + 9);
+
+      // Separator colon ':'
+      if (idx < 2) {
+        ctx.font = '700 22px "Segoe UI Variable Display", sans-serif';
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(':', col.x + colW + sepW / 2, stageY + 31);
+      }
+    });
+
+    // Helper hint text
+    ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#71717a';
+    ctx.fillText('Scroll mouse wheel on digits or click ▲ / ▼ to dial duration', midX, stageY + colH + 24);
 
     // Preset chips row: 1m, 5m, 15m, 25m, 45m, 60m
     const presets = [
@@ -3941,55 +4148,57 @@ function renderClockTabView(x, y, w, h) {
       { sec: 3600, label: '60m' }
     ];
     const pW = 44;
-    const pH = 22;
+    const pH = 20;
     const pSpacing = 8;
     const totalPW = presets.length * pW + (presets.length - 1) * pSpacing;
     const startPX = contentX + (contentW - totalPW) / 2;
-    const pY = stageY + 76;
+    const pY = stageY + colH + 37;
 
     presets.forEach((pr, i) => {
       const bx = startPX + i * (pW + pSpacing);
       const isHov = hoveredButtonId === `timer_preset_${pr.sec}`;
       const isMatch = timerDurationSec === pr.sec && !timerRunning;
       ctx.beginPath();
-      ctx.roundRect(bx, pY, pW, pH, 6);
+      ctx.roundRect(bx, pY, pW, pH, 5);
       ctx.fillStyle = isMatch ? 'rgba(56, 189, 248, 0.25)' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
       ctx.strokeStyle = isMatch ? '#38bdf8' : 'rgba(255, 255, 255, 0.1)';
       ctx.lineWidth = 1;
       ctx.fill();
       ctx.stroke();
 
-      ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.fillStyle = isMatch ? '#38bdf8' : (isHov ? '#ffffff' : '#cbd5e1');
       ctx.textAlign = 'center';
       ctx.fillText(pr.label, bx + pW / 2, pY + pH / 2);
       interactiveButtons.push({ id: `timer_preset_${pr.sec}`, data: pr.sec, x: bx, y: pY, w: pW, h: pH });
     });
 
-    // Control buttons: [ -1m ] [ Start / Pause ] [ Reset ] [ +1m ]
-    const btnRowY = pY + 34;
-    const ctlH = 30;
+    // Control buttons: [ Start / Pause ] [ Reset ] [ Clear ]
+    const btnRowY = pY + 28;
+    const ctlH = 28;
 
-    // Start / Pause button
     const startW = 100;
-    const startX = contentX + (contentW - startW) / 2;
+    const rstW = 64;
+    const clrW = 64;
+    const gap = 10;
+    const totalCtlW = startW + rstW + clrW + gap * 2;
+    const startX = contentX + (contentW - totalCtlW) / 2;
+
     const isStartHov = hoveredButtonId === 'timer_start_pause';
     ctx.beginPath();
-    ctx.roundRect(startX, btnRowY, startW, ctlH, 8);
+    ctx.roundRect(startX, btnRowY, startW, ctlH, 7);
     ctx.fillStyle = timerRunning ? '#ef4444' : '#2563eb';
     ctx.fill();
-    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.fillText(timerRunning ? '❚❚ Pause' : '▶ Start', startX + startW / 2, btnRowY + ctlH / 2);
     interactiveButtons.push({ id: 'timer_start_pause', x: startX, y: btnRowY, w: startW, h: ctlH });
 
-    // Reset button
-    const rstW = 68;
-    const rstX = startX + startW + 10;
+    const rstX = startX + startW + gap;
     const isRstHov = hoveredButtonId === 'timer_reset';
     ctx.beginPath();
-    ctx.roundRect(rstX, btnRowY, rstW, ctlH, 8);
+    ctx.roundRect(rstX, btnRowY, rstW, ctlH, 7);
     ctx.fillStyle = isRstHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
     ctx.fill();
     ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
@@ -3997,29 +4206,16 @@ function renderClockTabView(x, y, w, h) {
     ctx.fillText('Reset', rstX + rstW / 2, btnRowY + ctlH / 2);
     interactiveButtons.push({ id: 'timer_reset', x: rstX, y: btnRowY, w: rstW, h: ctlH });
 
-    // -1m and +1m adjustments
-    const adjW = 42;
-    const minusX = startX - adjW - 10;
-    const isMinusHov = hoveredButtonId === 'timer_minus';
+    const clrX = rstX + rstW + gap;
+    const isClrHov = hoveredButtonId === 'timer_clear';
     ctx.beginPath();
-    ctx.roundRect(minusX, btnRowY, adjW, ctlH, 8);
-    ctx.fillStyle = isMinusHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.roundRect(clrX, btnRowY, clrW, ctlH, 7);
+    ctx.fillStyle = isClrHov ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255, 255, 255, 0.06)';
     ctx.fill();
-    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = isMinusHov ? '#ffffff' : '#cbd5e1';
-    ctx.fillText('-1m', minusX + adjW / 2, btnRowY + ctlH / 2);
-    interactiveButtons.push({ id: 'timer_minus', x: minusX, y: btnRowY, w: adjW, h: ctlH });
-
-    const plusX = rstX + rstW + 10;
-    const isPlusHov = hoveredButtonId === 'timer_plus';
-    ctx.beginPath();
-    ctx.roundRect(plusX, btnRowY, adjW, ctlH, 8);
-    ctx.fillStyle = isPlusHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
-    ctx.fill();
-    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = isPlusHov ? '#ffffff' : '#cbd5e1';
-    ctx.fillText('+1m', plusX + adjW / 2, btnRowY + ctlH / 2);
-    interactiveButtons.push({ id: 'timer_plus', x: plusX, y: btnRowY, w: adjW, h: ctlH });
+    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isClrHov ? '#fca5a5' : '#cbd5e1';
+    ctx.fillText('Clear', clrX + clrW / 2, btnRowY + ctlH / 2);
+    interactiveButtons.push({ id: 'timer_clear', x: clrX, y: btnRowY, w: clrW, h: ctlH });
 
   } else if (clockSubMode === 'stopwatch') {
     // Millisecond Stopwatch
@@ -4082,69 +4278,141 @@ function renderClockTabView(x, y, w, h) {
     }
 
   } else if (clockSubMode === 'focus') {
-    // Focus Mode (Pomodoro Sessions)
     const isBreak = focusMode !== 'work';
     const focusStr = formatTimerSeconds(focusRemainingSec);
+    const midX = contentX + contentW / 2;
 
-    // Mode title badge
-    ctx.font = '600 12px "Segoe UI Variable Text", Inter, sans-serif';
+    // 1. Goal Tags Row (Deep Work, Coding, Study, Writing, Reading)
+    const goalTags = ['Deep Work', 'Coding', 'Study', 'Writing', 'Reading'];
+    const tagH = 20;
+    const tagW = 68;
+    const tagSpacing = 6;
+    const totalTagsW = goalTags.length * tagW + (goalTags.length - 1) * tagSpacing;
+    let tagCurX = contentX + (contentW - totalTagsW) / 2;
+
+    goalTags.forEach(gt => {
+      const isSel = focusGoalTag === gt;
+      const isHov = hoveredButtonId === `focus_goal_${gt}`;
+      ctx.beginPath();
+      ctx.roundRect(tagCurX, stageY, tagW, tagH, 5);
+      ctx.fillStyle = isSel ? 'rgba(56, 189, 248, 0.25)' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+      ctx.strokeStyle = isSel ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = isSel ? '#38bdf8' : (isHov ? '#ffffff' : '#94a3b8');
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(gt, tagCurX + tagW / 2, stageY + tagH / 2);
+      interactiveButtons.push({ id: `focus_goal_${gt}`, data: gt, x: tagCurX, y: stageY, w: tagW, h: tagH });
+      tagCurX += tagW + tagSpacing;
+    });
+
+    // 2. Mode Title & Countdown Readout
+    ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = isBreak ? '#10b981' : '#f59e0b';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(isBreak ? '☕ Short Break' : '🎯 Deep Focus Session', contentX + contentW / 2, stageY + 12);
+    ctx.fillText(isBreak ? `☕ Break (${focusBreakDurationMin}m)` : `🎯 ${focusGoalTag} (${focusWorkDurationMin}m)`, midX, stageY + 31);
 
-    // Large Countdown
-    ctx.font = '700 48px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(focusStr, contentX + contentW / 2, stageY + 48);
+    ctx.font = '700 42px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = focusRunning ? (isBreak ? '#34d399' : '#38bdf8') : '#ffffff';
+    ctx.fillText(focusStr, midX, stageY + 62);
 
-    // Session progress dots (Session 1 of 4)
-    ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText(`Session ${(focusSessionsCompleted % 4) + 1} of 4 • Total Finished: ${focusSessionsCompleted}`, contentX + contentW / 2, stageY + 86);
+    // 3. Customizable Duration Selector Rows (Work & Break Pills)
+    const workPills = [15, 20, 25, 30, 45, 60];
+    const breakPills = [3, 5, 10];
+    const rowY = stageY + 89;
+    const pillH = 18;
 
-    // Controls: [ Start / Pause ] [ Skip ] [ Reset ]
-    const btnRowY = stageY + 104;
-    const ctlH = 28;
+    // Label: Focus Duration
+    ctx.font = '500 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'right';
+    ctx.fillText('Focus:', midX - 90, rowY + pillH / 2);
 
-    const startW = 100;
-    const startX = contentX + (contentW - (startW + 74 + 74 + 16)) / 2;
+    let wCurX = midX - 82;
+    workPills.forEach(wp => {
+      const isCur = focusWorkDurationMin === wp;
+      const isHov = hoveredButtonId === `focus_work_dur_${wp}`;
+      ctx.beginPath();
+      ctx.roundRect(wCurX, rowY, 30, pillH, 4);
+      ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+      ctx.fill();
+      ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#ffffff' : '#cbd5e1');
+      ctx.textAlign = 'center';
+      ctx.fillText(`${wp}m`, wCurX + 15, rowY + pillH / 2);
+      interactiveButtons.push({ id: `focus_work_dur_${wp}`, data: wp, x: wCurX, y: rowY, w: 30, h: pillH });
+      wCurX += 30 + 4;
+    });
+
+    // Label: Break Duration
+    ctx.font = '500 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'right';
+    ctx.fillText('Break:', midX + 140, rowY + pillH / 2);
+
+    let bCurX = midX + 148;
+    breakPills.forEach(bp => {
+      const isCur = focusBreakDurationMin === bp;
+      const isHov = hoveredButtonId === `focus_break_dur_${bp}`;
+      ctx.beginPath();
+      ctx.roundRect(bCurX, rowY, 28, pillH, 4);
+      ctx.fillStyle = isCur ? '#10b981' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+      ctx.fill();
+      ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#ffffff' : '#cbd5e1');
+      ctx.textAlign = 'center';
+      ctx.fillText(`${bp}m`, bCurX + 14, rowY + pillH / 2);
+      interactiveButtons.push({ id: `focus_break_dur_${bp}`, data: bp, x: bCurX, y: rowY, w: 28, h: pillH });
+      bCurX += 28 + 4;
+    });
+
+    // 4. Session count & Controls row
+    const btnRowY = stageY + 115;
+    const ctlH = 26;
+    const startW = 110;
+    const skpW = 68;
+    const rstW = 64;
+    const gap = 8;
+    const totalCtlW = startW + skpW + rstW + gap * 2;
+    const startX = contentX + (contentW - totalCtlW) / 2;
+
     const isStartHov = hoveredButtonId === 'focus_start_pause';
     ctx.beginPath();
-    ctx.roundRect(startX, btnRowY, startW, ctlH, 8);
+    ctx.roundRect(startX, btnRowY, startW, ctlH, 6);
     ctx.fillStyle = focusRunning ? '#ef4444' : '#2563eb';
     ctx.fill();
-    ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
     ctx.fillText(focusRunning ? '❚❚ Pause' : '▶ Start Focus', startX + startW / 2, btnRowY + ctlH / 2);
     interactiveButtons.push({ id: 'focus_start_pause', x: startX, y: btnRowY, w: startW, h: ctlH });
 
-    // Skip button
-    const skpW = 74;
-    const skpX = startX + startW + 8;
+    const skpX = startX + startW + gap;
     const isSkpHov = hoveredButtonId === 'focus_skip';
     ctx.beginPath();
-    ctx.roundRect(skpX, btnRowY, skpW, ctlH, 8);
+    ctx.roundRect(skpX, btnRowY, skpW, ctlH, 6);
     ctx.fillStyle = isSkpHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
     ctx.fill();
-    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = isSkpHov ? '#ffffff' : '#cbd5e1';
     ctx.fillText('Skip ➔', skpX + skpW / 2, btnRowY + ctlH / 2);
     interactiveButtons.push({ id: 'focus_skip', x: skpX, y: btnRowY, w: skpW, h: ctlH });
 
-    // Reset button
-    const rstW = 74;
-    const rstX = skpX + skpW + 8;
+    const rstX = skpX + skpW + gap;
     const isRstHov = hoveredButtonId === 'focus_reset';
     ctx.beginPath();
-    ctx.roundRect(rstX, btnRowY, rstW, ctlH, 8);
+    ctx.roundRect(rstX, btnRowY, rstW, ctlH, 6);
     ctx.fillStyle = isRstHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
     ctx.fill();
-    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = isRstHov ? '#ffffff' : '#cbd5e1';
     ctx.fillText('Reset', rstX + rstW / 2, btnRowY + ctlH / 2);
     interactiveButtons.push({ id: 'focus_reset', x: rstX, y: btnRowY, w: rstW, h: ctlH });
-  }
 }
 
 // =============================================================

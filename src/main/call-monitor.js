@@ -269,9 +269,10 @@ class CallMonitor extends EventEmitter {
         return;
       }
 
-      // If Discord is the active call app, try connecting to Discord RPC if not already connected
-      if (detectedApp.appId === 'discord' && !this.rpcConnected) {
-        this.tryConnectDiscordRpc();
+      // Proactively connect to Discord RPC if not connected
+      if (!this.rpcConnected && (!this.lastRpcTry || Date.now() - this.lastRpcTry > 3000)) {
+        this.lastRpcTry = Date.now();
+        this.tryConnectDiscordRpc(0);
       }
 
       const selfDeafened = Boolean(audio.outMuted) || Boolean(this.rpcSelfVoiceSettings.deaf);
@@ -528,11 +529,12 @@ class CallMonitor extends EventEmitter {
   }
 
   // -------------------------------------------------------------
-  // Discord Local IPC (\\.\pipe\discord-ipc-0) Protocol Support
+  // Discord Local IPC (\\.\pipe\discord-ipc-0..9) Protocol Support
   // -------------------------------------------------------------
-  tryConnectDiscordRpc() {
+  tryConnectDiscordRpc(pipeIndex = 0) {
     if (this.rpcSocket || this.rpcConnected) return;
-    const pipePath = '\\\\?\\pipe\\discord-ipc-0';
+    if (pipeIndex > 9) return;
+    const pipePath = `\\\\?\\pipe\\discord-ipc-${pipeIndex}`;
     try {
       const sock = net.createConnection(pipePath, () => {
         this.rpcSocket = sock;
@@ -559,6 +561,9 @@ class CallMonitor extends EventEmitter {
 
       sock.on('error', () => {
         this.disconnectRpc();
+        if (pipeIndex < 9) {
+          this.tryConnectDiscordRpc(pipeIndex + 1);
+        }
       });
       sock.on('close', () => {
         this.disconnectRpc();
@@ -566,6 +571,9 @@ class CallMonitor extends EventEmitter {
       if (sock.unref) sock.unref();
     } catch {
       this.disconnectRpc();
+      if (pipeIndex < 9) {
+        this.tryConnectDiscordRpc(pipeIndex + 1);
+      }
     }
   }
 
@@ -593,6 +601,10 @@ class CallMonitor extends EventEmitter {
   handleRpcMessage(op, msg) {
     if (!msg) return;
     if (msg.cmd === 'DISPATCH' && msg.evt === 'READY') {
+      this.sendRpcCommand('GET_VOICE_SETTINGS', {});
+      this.sendRpcCommand('GET_SELECTED_VOICE_CHANNEL', {});
+      this.sendRpcCommand('SUBSCRIBE', {}, 'VOICE_CHANNEL_SELECT');
+      this.sendRpcCommand('SUBSCRIBE', {}, 'VOICE_SETTINGS_UPDATE');
       if (this.accessToken) {
         this.sendRpcCommand('AUTHENTICATE', { access_token: this.accessToken });
       }

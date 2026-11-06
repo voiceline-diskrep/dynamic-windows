@@ -146,6 +146,30 @@
       font-weight: 600;
     }
 
+    .btn-opacity {
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #d4d4d8;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-opacity:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+    }
+
+    .btn-opacity.active {
+      background: #2563eb;
+      color: #ffffff;
+      border-color: #3b82f6;
+      font-weight: 600;
+    }
+
     /* Main Content Area */
     .content-area {
       flex: 1;
@@ -450,6 +474,32 @@
       </div>
 
             <div class="card">
+        <div class="card-header">Appearance & Transparency</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Island Background Opacity</span>
+            <span class="setting-desc">Control the glass opacity and transparency of the Dynamic Island and Notch capsule.</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <input type="range" id="setting-islandOpacity" min="40" max="100" step="5" value="95" style="width: 140px; accent-color: #2563eb; cursor: pointer;">
+            <span id="opacity-value-badge" style="font-size: 13px; font-weight: 700; color: #ffffff; background: rgba(37,99,235,0.25); border: 1px solid rgba(37,99,235,0.5); padding: 3px 8px; border-radius: 6px; width: 48px; text-align: center;">95%</span>
+          </div>
+        </div>
+        <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
+          <div class="setting-info">
+            <span class="setting-label">Opacity Presets</span>
+            <span class="setting-desc">Quickly apply glass transparency profiles.</span>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button class="btn-opacity" data-opacity="65">Glass (65%)</button>
+            <button class="btn-opacity" data-opacity="85">Frosted (85%)</button>
+            <button class="btn-opacity" data-opacity="95">Subtle (95%)</button>
+            <button class="btn-opacity" data-opacity="100">OLED Solid (100%)</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-header">Animation & Transition Speed</div>
         <div class="setting-row">
           <div class="setting-info">
@@ -762,6 +812,13 @@
         if (speedBadge) speedBadge.textContent = curSpeed.toFixed(1) + 'x';
         updateSpeedPresetButtons(curSpeed);
 
+        const curOpacityPct = Math.round(((cfg.islandOpacity !== undefined ? cfg.islandOpacity : 0.95)) * 100);
+        const opacitySlider = document.getElementById('setting-islandOpacity');
+        const opacityBadge = document.getElementById('opacity-value-badge');
+        if (opacitySlider) opacitySlider.value = curOpacityPct;
+        if (opacityBadge) opacityBadge.textContent = curOpacityPct + '%';
+        updateOpacityPresetButtons(curOpacityPct);
+
         // General
         const elStartup = document.getElementById('setting-startup');
         if (elStartup) elStartup.checked = !!cfg.startup;
@@ -791,7 +848,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.5';
+        const currentVer = data.version || '1.4.6';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');

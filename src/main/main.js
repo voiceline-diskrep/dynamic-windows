@@ -738,6 +738,13 @@ function sendAlbumColorGradient() {
   }
 }
 
+function sendIslandOpacity() {
+  const op = typeof configManager.get('islandOpacity') === 'number' ? configManager.get('islandOpacity') : 0.95;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('island-opacity-changed', { opacity: op });
+  }
+}
+
 function setupTray() {
   try {
     const iconPath = path.join(__dirname, '..', '..', 'app_icon.ico');

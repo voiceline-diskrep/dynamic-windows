@@ -251,8 +251,49 @@ namespace DynamicWindowsTools {
             return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", " ").Replace("\n", " ").Trim();
         }
 
-        static List<string> GetActiveMicApps() {
+        static List<string> GetLiveCaptureApps() {
             var list = new List<string>();
+            try {
+                var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+                IMMDevice micDev = null;
+                int hr = enumerator.GetDefaultAudioEndpoint(1, 2, out micDev);
+                if (hr != 0 || micDev == null) {
+                    enumerator.GetDefaultAudioEndpoint(1, 1, out micDev);
+                }
+                if (micDev != null) {
+                    var iid = typeof(IAudioSessionManager2).GUID;
+                    object mgrObj;
+                    micDev.Activate(ref iid, 23, IntPtr.Zero, out mgrObj);
+                    var mgr = (IAudioSessionManager2)mgrObj;
+                    IAudioSessionEnumerator sessionEnum;
+                    if (mgr != null && mgr.GetSessionEnumerator(out sessionEnum) == 0 && sessionEnum != null) {
+                        int count;
+                        sessionEnum.GetCount(out count);
+                        for (int i = 0; i < count; i++) {
+                            IAudioSessionControl ctl;
+                            sessionEnum.GetSession(i, out ctl);
+                            var ctl2 = ctl as IAudioSessionControl2;
+                            if (ctl2 != null) {
+                                uint pid = 0;
+                                ctl2.GetProcessId(out pid);
+                                if (pid > 0) {
+                                    try {
+                                        string pName = Process.GetProcessById((int)pid).ProcessName;
+                                        if (!string.IsNullOrEmpty(pName) && !pName.Equals("audiodg", StringComparison.OrdinalIgnoreCase)) {
+                                            if (!list.Contains(pName)) list.Add(pName);
+                                        }
+                                    } catch { }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch { }
+            return list;
+        }
+
+        static List<string> GetActiveMicApps() {
+            var list = GetLiveCaptureApps();
             try {
                 using (var baseKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone")) {
                     if (baseKey == null) return list;
@@ -267,7 +308,7 @@ namespace DynamicWindowsTools {
                                                 object stopObj = appKey.GetValue("LastUsedTimeStop");
                                                 long start = startObj != null ? Convert.ToInt64(startObj) : 0;
                                                 long stop = stopObj != null ? Convert.ToInt64(stopObj) : 1;
-                                                if (start > 0 && stop == 0) {
+                                                if (start > 0 && stop == 0 && !list.Contains(appKeyName)) {
                                                     list.Add(appKeyName);
                                                 }
                                             }
@@ -282,7 +323,7 @@ namespace DynamicWindowsTools {
                                     object stopObj = pkgKey.GetValue("LastUsedTimeStop");
                                     long start = startObj != null ? Convert.ToInt64(startObj) : 0;
                                     long stop = stopObj != null ? Convert.ToInt64(stopObj) : 1;
-                                    if (start > 0 && stop == 0) {
+                                    if (start > 0 && stop == 0 && !list.Contains(subName)) {
                                         list.Add(subName);
                                     }
                                 }
@@ -297,7 +338,7 @@ namespace DynamicWindowsTools {
         static Dictionary<string, string> GetAppWindowTitles() {
             var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var pidToName = new Dictionary<uint, string>();
-            string[] targets = new string[] { "Discord", "DiscordPTB", "DiscordCanary", "WhatsApp", "Zoom", "Teams", "ms-teams", "Telegram" };
+            string[] targets = new string[] { "Discord", "DiscordPTB", "DiscordCanary", "WhatsApp", "WhatsApp.Root", "Zoom", "Teams", "ms-teams", "Telegram" };
             foreach (var t in targets) {
                 try {
                     foreach (var p in Process.GetProcessesByName(t)) {
