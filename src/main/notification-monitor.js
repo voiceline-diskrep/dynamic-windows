@@ -75,7 +75,8 @@ class NotificationMonitor extends EventEmitter {
         for (const item of items) {
           if (!item || !item.id) continue;
           const appName = (item.app || 'Windows').trim();
-          if (appName.toLowerCase().includes('antigravity')) continue;
+          const checkText = `${appName} ${item.title || ''} ${item.body || ''}`.toLowerCase();
+          if (checkText.includes('antigravity')) continue;
 
           const idStr = `win_${item.id}`;
           const isNew = !this.knownIds.has(idStr);
@@ -113,7 +114,8 @@ class NotificationMonitor extends EventEmitter {
   addNotification(entry) {
     if (!entry) return null;
     const app = (entry.app || 'Dynamic Windows').trim();
-    if (app.toLowerCase().includes('antigravity')) return null;
+    const checkText = `${app} ${entry.title || ''} ${entry.body || ''}`.toLowerCase();
+    if (checkText.includes('antigravity')) return null;
 
     const notif = {
       id: entry.id || `app_${Date.now()}_${Math.floor(Math.random() * 1000)}`,

@@ -1,5 +1,5 @@
 #define MyAppName "Dynamic Windows"
-#define MyAppVersion "1.4.9"
+#define MyAppVersion "1.4.10"
 #define MyAppPublisher "voiceline-diskrep"
 #define MyAppURL "https://github.com/voiceline-diskrep/dynamic-windows"
 #define MyAppExeName "DynamicWindows.exe"
@@ -15,7 +15,9 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={userappdata}\Programs\{#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 OutputDir=installer_output
-OutputBaseFilename=DynamicWindows-Setup-v1.4.7
+OutputBaseFilename=DynamicWindows-Setup-v{#MyAppVersion}
+CloseApplications=yes
+RestartApplications=no
 SetupIconFile=app_icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

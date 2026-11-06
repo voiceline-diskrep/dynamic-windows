@@ -1237,7 +1237,9 @@ canvas.addEventListener('mousemove', (e) => {
   const isNotch = displayMode === 'notch';
   const curY = isNotch ? 0 : 8;
 
-  const isOverIsland = pointInRect(mouseX, mouseY, curX - 8, Math.max(0, curY - 4), curW + 16, curH + 16);
+  const hasTimerPill = (curP < 0.28 && (timerRunning || focusRunning || stopwatchRunning));
+  const timerPillSpan = hasTimerPill ? 110 : 0;
+  const isOverIsland = pointInRect(mouseX, mouseY, curX - 8, Math.max(0, curY - 4), curW + 16 + timerPillSpan, curH + 16);
 
   if (isOverIsland) {
     if (songPopupProgress > 0.05 || songPopupActiveUntil > performance.now()) {
@@ -1250,23 +1252,11 @@ canvas.addEventListener('mousemove', (e) => {
     if (!isHovered) {
       isHovered = true;
       if (curP < 0.25) {
-        let aiW = 0;
-        if (hasActiveAgent()) {
-          const projs = getActiveProjects();
-          const active = projs.find(pr => ['running', 'thinking', 'waiting'].includes(pr.status)) || projs[0];
-          const cleanLabel = ((active && active.project) ? String(active.project) : 'Island').replace(/[\r\n\t\\]+/g, ' ').trim() || 'Island';
-          ctx.save();
-          ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
-          const labelW = ctx.measureText(cleanLabel).width;
-          ctx.restore();
-          aiW = Math.max(88, Math.min(130, Math.round(58 + labelW)));
-        }
-        const callW = hasActiveCall() ? getCallCapsuleWidth() : 0;
-
-        if (hasActiveAgent() && mouseX <= curX + aiW + 4) {
-          currentView = 'agent';
-        } else if (hasActiveCall() && mouseX >= curX + curW - callW - 4) {
-          currentView = 'call';
+        if (hasTimerPill && mouseX >= curX + curW) {
+          currentView = 'clock';
+          if (focusRunning) clockSubMode = 'focus';
+          else if (stopwatchRunning) clockSubMode = 'stopwatch';
+          else if (timerRunning) clockSubMode = 'timer';
         } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
           currentView = 'media';
         } else {
@@ -2132,10 +2122,7 @@ function getTargetRestingWidth() {
   let mainPillW = UI.REST_W;
   const MAX_LYRIC_PILL_W = 520;
 
-  if (timerRunning || focusRunning || stopwatchRunning) {
-    mainPillW = Math.max(mainPillW, 196);
-  }
-
+  // Active timer renders in a detached right island, so the main clock pill stays compact
   if (hasMedia) {
     const roll = getPillRollingLyric();
     let textToMeasure = '';
@@ -2181,30 +2168,8 @@ function getTargetRestingWidth() {
     mainPillW = UI.REST_W;
   }
 
-  let totalW = mainPillW;
-  const gap = 8;
-
-  if (hasActiveAgent()) {
-    const projs = getActiveProjects();
-    const active = projs.find(p => ['running', 'thinking', 'waiting'].includes(p.status)) || projs[0];
-    const rawLabel = (active && active.project) ? String(active.project) : 'Island';
-    const cleanLabel = rawLabel.replace(/[\r\n\t\\]+/g, ' ').trim() || 'Island';
-
-    ctx.save();
-    ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
-    const labelW = ctx.measureText(cleanLabel).width;
-    ctx.restore();
-
-    const aiPillW = Math.max(88, Math.min(130, Math.round(58 + labelW)));
-    totalW += aiPillW + gap;
-  }
-
-  if (hasActiveCall()) {
-    const callPillW = getCallCapsuleWidth();
-    totalW += callPillW + gap;
-  }
-
-  return Math.max(mainPillW, Math.min(860, totalW));
+  // Main resting pill stays strictly centered without displacement
+  return Math.max(UI.REST_W, Math.min(860, mainPillW));
 }
 
 function getRestingWidth() {
@@ -2324,9 +2289,9 @@ function render() {
   const radius = UI.COMPACT_RADIUS + (UI.EXPANDED_RADIUS - UI.COMPACT_RADIUS) * p;
   const radii = isNotch ? [0, 0, radius, radius] : radius;
 
-  // Split resting pill check: when AI or Call is active at rest, draw separate detached capsules
-  const isSplitResting = (p < 0.28 && (hasActiveAgent() || hasActiveCall()) && songPopupProgress <= 0.05);
-  const unifiedAlpha = isSplitResting ? (p / 0.28) : 1.0;
+  // Main resting pill stays strictly centered
+  const isSplitResting = false;
+  const unifiedAlpha = 1.0;
 
   if (unifiedAlpha > 0.02) {
     ctx.save();
@@ -2389,21 +2354,25 @@ function render() {
     ctx.restore();
   }
 
-  // 4. Render Views with Master Rounded Rect Clipping (fixes picture lagging & overflow)
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radii);
-  ctx.clip();
-
+  // 4. Render Views (with individual clipping for expanded view & song announcement)
   if (p < 0.32) {
     if (songPopupProgress > 0.05) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, radii);
+      ctx.clip();
       const popAlpha = Math.max(0, (0.32 - p) / 0.32);
       renderSongAnnouncementPopup(x, y, w, h, popAlpha);
+      ctx.restore();
     } else {
       renderRestingPill(x, y, w, h, Math.max(0, (0.32 - p) / 0.32));
     }
   }
   if (p > 0.15) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, radii);
+    ctx.clip();
     const alpha = Math.max(0, Math.min(1.0, (p - 0.15) / 0.85));
     renderExpandedView(x, y, w, h, alpha);
 
@@ -2412,8 +2381,8 @@ function render() {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
       ctx.fillRect(x, y, w, h);
     }
+    ctx.restore();
   }
-  ctx.restore();
 
   // 5. Game Mode Toast / Status Notification
   if (gameModeToastUntil > performance.now() && gameModeToastText) {
@@ -3038,8 +3007,8 @@ function renderRestingPill(x, y, w, h, alpha) {
 
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const hasAI = hasActiveAgent();
-  const hasCall = hasActiveCall();
+  const hasAI = false; // Always keep the main island centered on screen
+  const hasCall = false;
 
   if (hasAI || hasCall) {
     // Split Resting Pill Architecture: [ Left AI Capsule ] + [ Center Main Pill ] + [ Right Call Capsule ]
@@ -3321,39 +3290,75 @@ function renderRestingPill(x, y, w, h, alpha) {
     }
     ctx.restore();
   } else {
-    // Pure minimalist clock or active timer badge
-    if (timerRunning || focusRunning || stopwatchRunning) {
-      ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
-      ctx.fillStyle = '#e4e4e7';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(timeStr, x + 12, y + h / 2);
+    // Pure minimalist centered clock
+    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#f4f4f5';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(timeStr, x + w / 2, y + h / 2);
+    interactiveButtons.push({ id: 'nav_home', x, y, w, h });
+  }
 
-      let badgeStr = '';
-      let badgeCol = '#38bdf8';
-      if (timerRunning) {
-        badgeStr = `⏱️ ${formatTimerSeconds(timerRemainingSec)}`;
-        badgeCol = '#38bdf8';
-      } else if (focusRunning) {
-        badgeStr = `🎯 Focus ${formatTimerSeconds(focusRemainingSec)}`;
-        badgeCol = '#10b981';
-      } else if (stopwatchRunning) {
-        badgeStr = `⏱️ ${formatStopwatchMs(stopwatchElapsedMs)}`;
-        badgeCol = '#22c55e';
-      }
-      ctx.font = '700 11px "Segoe UI Variable Display", Inter, sans-serif';
-      ctx.fillStyle = badgeCol;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(badgeStr, x + w - 12, y + h / 2);
-    } else {
-      ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
-      ctx.fillStyle = '#f4f4f5';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(timeStr, x + w / 2, y + h / 2);
-      interactiveButtons.push({ id: 'nav_home', x, y, w, h });
+  // Small Detached Island on Right Side for Timer / Focus / Stopwatch
+  if (timerRunning || focusRunning || stopwatchRunning) {
+    let badgeText = '';
+    let badgeCol = '#38bdf8';
+    let badgeGlow = 'rgba(56, 189, 248, 0.45)';
+
+    if (timerRunning) {
+      badgeText = `⏱️ ${formatTimerSeconds(timerRemainingSec)}`;
+      badgeCol = '#38bdf8';
+      badgeGlow = 'rgba(56, 189, 248, 0.45)';
+    } else if (focusRunning) {
+      badgeText = `🎯 ${formatTimerSeconds(focusRemainingSec)}`;
+      badgeCol = '#10b981';
+      badgeGlow = 'rgba(16, 185, 129, 0.45)';
+    } else if (stopwatchRunning) {
+      badgeText = `⏱️ ${formatStopwatchMs(stopwatchElapsedMs)}`;
+      badgeCol = '#22c55e';
+      badgeGlow = 'rgba(34, 197, 94, 0.45)';
     }
+
+    ctx.save();
+    ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
+    const textW = ctx.measureText(badgeText).width;
+    const timerW = Math.max(76, Math.round(textW + 18));
+    const timerH = h;
+    const timerGap = 8;
+    const timerX = x + w + timerGap;
+    const timerR = UI.COMPACT_RADIUS;
+
+    // Drop Shadow
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 4;
+
+    // OLED Black Glass Surface
+    ctx.beginPath();
+    ctx.roundRect(timerX, y, timerW, timerH, timerR);
+    const timerGrad = ctx.createLinearGradient(timerX, y, timerX, y + timerH);
+    timerGrad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
+    timerGrad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
+    timerGrad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
+    ctx.fillStyle = timerGrad;
+    ctx.fill();
+
+    // Specular Border Rim
+    ctx.shadowColor = 'transparent';
+    ctx.beginPath();
+    ctx.roundRect(timerX, y, timerW, timerH, timerR);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = badgeGlow;
+    ctx.stroke();
+
+    // Centered Timer Text
+    ctx.fillStyle = badgeCol;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(badgeText, timerX + timerW / 2, y + timerH / 2);
+    ctx.restore();
+
+    interactiveButtons.push({ id: 'nav_clock', x: timerX, y: y, w: timerW, h: timerH });
   }
 
   ctx.restore();

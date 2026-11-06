@@ -414,6 +414,11 @@ function createIslandWindow() {
       }
     } catch (e) {}
     try {
+      if (notificationMonitor && typeof notificationMonitor.stop === 'function') {
+        notificationMonitor.stop();
+      }
+    } catch (e) {}
+    try {
       const wins = BrowserWindow.getAllWindows();
       for (const win of wins) {
         if (!win.isDestroyed()) {
@@ -422,10 +427,16 @@ function createIslandWindow() {
       }
     } catch (e) {}
     try {
+      app.quit();
+    } catch (e) {}
+    try {
       app.exit(0);
     } catch (e) {
       process.exit(0);
     }
+    setTimeout(() => {
+      try { process.exit(0); } catch (e) {}
+    }, 150).unref?.();
   }
 
   ipcMain.on('exit-app', () => {
