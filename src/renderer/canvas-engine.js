@@ -4539,6 +4539,7 @@ function renderClockTabView(x, y, w, h) {
     ctx.fillStyle = isRstHov ? '#ffffff' : '#cbd5e1';
     ctx.fillText('Reset', rstX + rstW / 2, btnRowY + ctlH / 2);
     interactiveButtons.push({ id: 'focus_reset', x: rstX, y: btnRowY, w: rstW, h: ctlH });
+  }
 }
 
 // =============================================================
