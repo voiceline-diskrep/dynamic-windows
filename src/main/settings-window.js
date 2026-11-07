@@ -200,6 +200,16 @@ function registerSettingsIPC(dropZoneInstance) {
         }
       });
     }
+    if (newSettings && ('soundEffects' in newSettings || 'soundVolume' in newSettings)) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('sound-effects-config', {
+            enabled: configManager.get('soundEffects') !== false,
+            volume: typeof configManager.get('soundVolume') === 'number' ? configManager.get('soundVolume') : 0.7
+          });
+        }
+      });
+    }
     if (newSettings && 'reserveTopBezel' in newSettings) {
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {

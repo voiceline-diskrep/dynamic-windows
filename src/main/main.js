@@ -698,6 +698,8 @@ function createIslandWindow() {
     sendAnimationSpeed();
     sendDynamicLyrics();
     sendAlbumColorGradient();
+    sendIslandOpacity();
+    sendSoundEffectsConfig();
     sendNotifications();
   });
 }
@@ -776,6 +778,14 @@ function sendIslandOpacity() {
   const op = typeof configManager.get('islandOpacity') === 'number' ? configManager.get('islandOpacity') : 0.95;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('island-opacity-changed', { opacity: op });
+  }
+}
+
+function sendSoundEffectsConfig() {
+  const enabled = configManager.get('soundEffects') !== false;
+  const volume = typeof configManager.get('soundVolume') === 'number' ? configManager.get('soundVolume') : 0.7;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sound-effects-config', { enabled, volume });
   }
 }
 
