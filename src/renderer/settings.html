@@ -846,6 +846,19 @@
         const elLyrics = document.getElementById('setting-dynamicLyrics');
         if (elLyrics) elLyrics.checked = cfg.dynamicLyrics !== false;
 
+        // Sound Effects
+        const isSoundEnabled = cfg.soundEffects !== false;
+        if (soundToggleEl) soundToggleEl.checked = isSoundEnabled;
+        const curSoundVol = typeof cfg.soundVolume === 'number' ? cfg.soundVolume : 0.7;
+        const curSoundPct = Math.round(curSoundVol * 100);
+        if (soundVolEl) soundVolEl.value = curSoundPct;
+        if (soundVolBadgeEl) soundVolBadgeEl.textContent = curSoundPct + '%';
+        if (typeof soundFX !== 'undefined') {
+          soundFX.setEnabled(isSoundEnabled);
+          soundFX.setVolume(curSoundVol);
+        }
+        syncSoundControlsUI(isSoundEnabled);
+
         // Antigravity
         const elAntigravity = document.getElementById('setting-antigravityMonitor');
         if (elAntigravity) elAntigravity.checked = !!cfg.antigravityMonitor;
@@ -863,7 +876,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.12';
+        const currentVer = data.version || '1.4.13';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');
@@ -921,8 +934,17 @@
     const soundVolBadgeEl = document.getElementById('sound-volume-badge');
     const btnTestSound = document.getElementById('btn-test-sound');
 
+    function syncSoundControlsUI(enabled) {
+      const row = document.getElementById('sound-volume-row');
+      if (row) {
+        row.style.opacity = enabled ? '1' : '0.4';
+        row.style.pointerEvents = enabled ? 'auto' : 'none';
+      }
+    }
+
     soundToggleEl?.addEventListener('change', async () => {
       const isEnabled = soundToggleEl.checked;
+      syncSoundControlsUI(isEnabled);
       if (typeof soundFX !== 'undefined') {
         soundFX.setEnabled(isEnabled);
         if (isEnabled) soundFX.play('tap', true);
@@ -938,14 +960,8 @@
       if (typeof soundFX !== 'undefined') {
         soundFX.setVolume(vol);
       }
-      let payload = { soundVolume: vol };
-      if (soundToggleEl && !soundToggleEl.checked && pct > 0) {
-        soundToggleEl.checked = true;
-        payload.soundEffects = true;
-        if (typeof soundFX !== 'undefined') soundFX.setEnabled(true);
-      }
-      await ipcRenderer.invoke('save-app-settings', payload);
-      if (playFeedback && typeof soundFX !== 'undefined') {
+      await ipcRenderer.invoke('save-app-settings', { soundVolume: vol });
+      if (playFeedback && typeof soundFX !== 'undefined' && soundToggleEl && soundToggleEl.checked) {
         soundFX.play('notification', true);
       }
     };
@@ -953,9 +969,11 @@
     soundVolEl?.addEventListener('input', () => {
       const pct = parseInt(soundVolEl.value, 10) || 70;
       if (soundVolBadgeEl) soundVolBadgeEl.textContent = pct + '%';
+      const vol = pct / 100;
       if (typeof soundFX !== 'undefined') {
-        soundFX.setVolume(pct / 100);
+        soundFX.setVolume(vol);
       }
+      ipcRenderer.invoke('save-app-settings', { soundVolume: vol });
     });
 
     soundVolEl?.addEventListener('change', () => {

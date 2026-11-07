@@ -1899,6 +1899,16 @@ ipcRenderer.on('island-opacity-changed', (event, data) => {
     islandOpacity = Math.max(0.4, Math.min(1.0, data.opacity));
   }
 });
+ipcRenderer.on('sound-effects-config', (event, data) => {
+  if (data) {
+    if (typeof data.enabled === 'boolean') {
+      soundFX.setEnabled(data.enabled);
+    }
+    if (typeof data.volume === 'number') {
+      soundFX.setVolume(data.volume);
+    }
+  }
+});
 try {
   ipcRenderer.invoke('get-app-settings').then(res => {
     if (res && res.config) {
@@ -1910,6 +1920,12 @@ try {
       }
       if (typeof res.config.islandOpacity === 'number') {
         islandOpacity = Math.max(0.4, Math.min(1.0, res.config.islandOpacity));
+      }
+      if (typeof res.config.soundEffects === 'boolean') {
+        soundFX.setEnabled(res.config.soundEffects);
+      }
+      if (typeof res.config.soundVolume === 'number') {
+        soundFX.setVolume(res.config.soundVolume);
       }
       if (res.config.animationSpeed) {
         const val = parseFloat(res.config.animationSpeed);
