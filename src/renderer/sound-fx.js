@@ -309,6 +309,11 @@ class SoundFXManager {
 
 const soundFX = new SoundFXManager();
 
+if (typeof window !== 'undefined') {
+  window.soundFX = soundFX;
+  window.SoundFXManager = SoundFXManager;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { SoundFXManager, soundFX };
 }
