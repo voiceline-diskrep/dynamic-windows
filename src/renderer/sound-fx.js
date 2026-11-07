@@ -65,9 +65,11 @@ class SoundFXManager {
     // Rate limit rapid repetitive sounds (e.g. rapid taps within 45ms)
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const last = this._lastPlayTimes[soundType] || 0;
-    if (soundType === 'tap' && now - last < 45) return;
-    if (soundType === 'expand' && now - last < 250) return;
-    if (soundType === 'collapse' && now - last < 250) return;
+    if (last > 0) {
+      if (soundType === 'tap' && now - last < 45) return;
+      if (soundType === 'expand' && now - last < 250) return;
+      if (soundType === 'collapse' && now - last < 250) return;
+    }
     this._lastPlayTimes[soundType] = now;
 
     const ctx = this.ensureReady();

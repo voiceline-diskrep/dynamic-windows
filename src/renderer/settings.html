@@ -489,6 +489,30 @@
       </div>
 
       <div class="card">
+        <div class="card-header">Sound Effects & Feedback</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">UI Sound Effects</span>
+            <span class="setting-desc">Tactile sound effects on expand, collapse, clicks, and alerts.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-soundEffects">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row" id="sound-volume-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
+          <div class="setting-info">
+            <span class="setting-label">Sound Effects Volume</span>
+            <span class="setting-desc">Adjust tactile sound effects volume.</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <input type="range" id="setting-soundVolume" min="5" max="100" step="5" value="70" style="width: 140px; accent-color: #2563eb; cursor: pointer;">
+            <span id="sound-volume-badge" style="font-size: 13px; font-weight: 700; color: #ffffff; background: rgba(37,99,235,0.25); border: 1px solid rgba(37,99,235,0.5); padding: 3px 8px; border-radius: 6px; width: 48px; text-align: center;">70%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-header">Animation & Transition Speed</div>
         <div class="setting-row">
           <div class="setting-info">
@@ -765,6 +789,7 @@
 
   </div>
 
+  <script src="sound-fx.js"></script>
   <script>
     const { ipcRenderer } = require('electron');
 
@@ -889,6 +914,28 @@
     bindSettingChange('setting-clock24h', 'clock24h');
     bindSettingChange('setting-showSeconds', 'showSeconds');
     bindSettingChange('setting-dynamicLyrics', 'dynamicLyrics');
+    bindSettingChange('setting-soundEffects', 'soundEffects');
+
+    const soundToggleEl = document.getElementById('setting-soundEffects');
+    soundToggleEl?.addEventListener('change', () => {
+      if (typeof soundFX !== 'undefined') {
+        soundFX.setEnabled(soundToggleEl.checked);
+        if (soundToggleEl.checked) soundFX.play('tap');
+      }
+    });
+
+    const soundVolEl = document.getElementById('setting-soundVolume');
+    const soundVolBadgeEl = document.getElementById('sound-volume-badge');
+    soundVolEl?.addEventListener('input', () => {
+      const pct = parseInt(soundVolEl.value, 10) || 70;
+      if (soundVolBadgeEl) soundVolBadgeEl.textContent = pct + '%';
+      if (typeof soundFX !== 'undefined') soundFX.setVolume(pct / 100);
+    });
+    soundVolEl?.addEventListener('change', async () => {
+      const pct = parseInt(soundVolEl.value, 10) || 70;
+      await ipcRenderer.invoke('save-app-settings', { soundVolume: pct / 100 });
+      if (typeof soundFX !== 'undefined') soundFX.play('notification');
+    });
     bindSettingChange('setting-albumColorGradient', 'albumColorGradient');
     bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');
     bindSettingChange('setting-autoFocusAntigravity', 'autoFocusAntigravity');
