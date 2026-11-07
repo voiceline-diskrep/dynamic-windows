@@ -22,6 +22,7 @@ window.addEventListener('unhandledrejection', (e) => {
 'use strict';
 
 const { ipcRenderer, webUtils } = require('electron');
+const { soundFX } = require('./sound-fx');
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -276,6 +277,7 @@ let displayMode = 'island'; // 'island' | 'notch'
 let animProgress = 0.0; // 0.0 = resting, 1.0 = expanded
 let animSpeedMultiplier = 1.0; // User-controlled opening/closing speed multiplier
 let targetProgress = 0.0;
+let lastAnimState = 'resting';
 let isHovered = false;
 let currentView = 'home'; // 'home' | 'agent' | 'media' | 'dropzone' | 'clipboard' | 'prompt'
 let leaveTimer = null;
@@ -1173,6 +1175,7 @@ window.addEventListener('drop', (e) => {
   e.preventDefault();
   e.stopPropagation();
   isDraggingOver = false;
+  soundFX.play('drop');
   const isOneTime = e.clientX < (window.innerWidth / 2);
   if (e.dataTransfer) {
     const fileList = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
@@ -1423,6 +1426,7 @@ canvas.addEventListener('click', (e) => {
 
   for (const btn of interactiveButtons) {
     if (pointInRect(cx, cy, btn.x, btn.y, btn.w, btn.h)) {
+      soundFX.play('tap');
       handleButtonClick(btn.id, btn.data);
       return;
     }
@@ -1924,6 +1928,7 @@ ipcRenderer.on('notification-received', (event, notif) => {
   if (notif && !String(notif.app || '').toLowerCase().includes('antigravity')) {
     activeNotification = notif;
     notificationBannerUntil = performance.now() + 4000;
+    soundFX.play('notification');
     if (animProgress < 0.25) {
       currentView = 'notification_banner';
       targetProgress = 1.0;
@@ -1964,6 +1969,7 @@ function animate(now) {
     if (timerRemainingSec <= 0) {
       timerRemainingSec = 0;
       timerRunning = false;
+      soundFX.play('timer_done');
     }
   }
   if (stopwatchRunning) {
@@ -1986,6 +1992,15 @@ function animate(now) {
   // Fluid Spring / Lerp towards targetProgress
   const speed = (targetProgress > animProgress ? 8.5 : 9.5) * animSpeedMultiplier;
   animProgress += (targetProgress - animProgress) * Math.min(1.0, dt * speed);
+
+  // Sound FX expansion state tracking
+  if (lastAnimState === 'resting' && targetProgress > 0.4 && animProgress > 0.06) {
+    lastAnimState = 'expanded';
+    soundFX.play('expand');
+  } else if (lastAnimState === 'expanded' && targetProgress < 0.2 && animProgress < 0.28) {
+    lastAnimState = 'resting';
+    soundFX.play('collapse');
+  }
 
   // Smooth Dynamic Spring transition for resting pill width
   const targetRestW = getTargetRestingWidth();
