@@ -9,4 +9,5 @@ dist/
 build/
 installer_output/
 *.log
+src-tauri/target/
 
