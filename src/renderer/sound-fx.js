@@ -59,13 +59,13 @@ class SoundFXManager {
     this.enabled = Boolean(val);
   }
 
-  play(soundType) {
-    if (!this.enabled || this.volume <= 0.005) return;
+  play(soundType, force = false) {
+    if ((!this.enabled && !force) || this.volume <= 0.005) return;
 
     // Rate limit rapid repetitive sounds (e.g. rapid taps within 45ms)
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const last = this._lastPlayTimes[soundType] || 0;
-    if (last > 0) {
+    if (last > 0 && !force) {
       if (soundType === 'tap' && now - last < 45) return;
       if (soundType === 'expand' && now - last < 250) return;
       if (soundType === 'collapse' && now - last < 250) return;
@@ -75,35 +75,43 @@ class SoundFXManager {
     const ctx = this.ensureReady();
     if (!ctx) return;
 
-    try {
-      switch (soundType) {
-        case 'expand':
-          this._playExpand(ctx);
-          break;
-        case 'collapse':
-          this._playCollapse(ctx);
-          break;
-        case 'tap':
-          this._playTap(ctx);
-          break;
-        case 'notification':
-          this._playNotification(ctx);
-          break;
-        case 'timer_done':
-          this._playTimerDone(ctx);
-          break;
-        case 'drop':
-          this._playDrop(ctx);
-          break;
-        case 'switch':
-          this._playSwitch(ctx);
-          break;
-        default:
-          this._playTap(ctx);
-          break;
+    const doPlay = () => {
+      try {
+        switch (soundType) {
+          case 'expand':
+            this._playExpand(ctx);
+            break;
+          case 'collapse':
+            this._playCollapse(ctx);
+            break;
+          case 'tap':
+            this._playTap(ctx);
+            break;
+          case 'notification':
+            this._playNotification(ctx);
+            break;
+          case 'timer_done':
+            this._playTimerDone(ctx);
+            break;
+          case 'drop':
+            this._playDrop(ctx);
+            break;
+          case 'switch':
+            this._playSwitch(ctx);
+            break;
+          default:
+            this._playTap(ctx);
+            break;
+        }
+      } catch (e) {
+        // Audio errors are non-critical
       }
-    } catch (e) {
-      // Audio errors are non-critical
+    };
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(doPlay).catch(doPlay);
+    } else {
+      doPlay();
     }
   }
 

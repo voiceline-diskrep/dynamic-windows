@@ -508,6 +508,7 @@
           <div style="display: flex; align-items: center; gap: 12px;">
             <input type="range" id="setting-soundVolume" min="5" max="100" step="5" value="70" style="width: 140px; accent-color: #2563eb; cursor: pointer;">
             <span id="sound-volume-badge" style="font-size: 13px; font-weight: 700; color: #ffffff; background: rgba(37,99,235,0.25); border: 1px solid rgba(37,99,235,0.5); padding: 3px 8px; border-radius: 6px; width: 48px; text-align: center;">70%</span>
+            <button class="btn" id="btn-test-sound" type="button" style="padding: 4px 10px; font-size: 12px; font-weight: 600;">Play Test</button>
           </div>
         </div>
       </div>
@@ -862,7 +863,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.11';
+        const currentVer = data.version || '1.4.12';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');
@@ -914,27 +915,60 @@
     bindSettingChange('setting-clock24h', 'clock24h');
     bindSettingChange('setting-showSeconds', 'showSeconds');
     bindSettingChange('setting-dynamicLyrics', 'dynamicLyrics');
-    bindSettingChange('setting-soundEffects', 'soundEffects');
-
+    // Sound Effects & Volume Controls
     const soundToggleEl = document.getElementById('setting-soundEffects');
-    soundToggleEl?.addEventListener('change', () => {
-      if (typeof soundFX !== 'undefined') {
-        soundFX.setEnabled(soundToggleEl.checked);
-        if (soundToggleEl.checked) soundFX.play('tap');
-      }
-    });
-
     const soundVolEl = document.getElementById('setting-soundVolume');
     const soundVolBadgeEl = document.getElementById('sound-volume-badge');
+    const btnTestSound = document.getElementById('btn-test-sound');
+
+    soundToggleEl?.addEventListener('change', async () => {
+      const isEnabled = soundToggleEl.checked;
+      if (typeof soundFX !== 'undefined') {
+        soundFX.setEnabled(isEnabled);
+        if (isEnabled) soundFX.play('tap', true);
+      }
+      await ipcRenderer.invoke('save-app-settings', { soundEffects: isEnabled });
+    });
+
+    const applySoundVolume = async (playFeedback = false) => {
+      if (!soundVolEl) return;
+      const pct = parseInt(soundVolEl.value, 10) || 70;
+      const vol = pct / 100;
+      if (soundVolBadgeEl) soundVolBadgeEl.textContent = pct + '%';
+      if (typeof soundFX !== 'undefined') {
+        soundFX.setVolume(vol);
+      }
+      let payload = { soundVolume: vol };
+      if (soundToggleEl && !soundToggleEl.checked && pct > 0) {
+        soundToggleEl.checked = true;
+        payload.soundEffects = true;
+        if (typeof soundFX !== 'undefined') soundFX.setEnabled(true);
+      }
+      await ipcRenderer.invoke('save-app-settings', payload);
+      if (playFeedback && typeof soundFX !== 'undefined') {
+        soundFX.play('notification', true);
+      }
+    };
+
     soundVolEl?.addEventListener('input', () => {
       const pct = parseInt(soundVolEl.value, 10) || 70;
       if (soundVolBadgeEl) soundVolBadgeEl.textContent = pct + '%';
-      if (typeof soundFX !== 'undefined') soundFX.setVolume(pct / 100);
+      if (typeof soundFX !== 'undefined') {
+        soundFX.setVolume(pct / 100);
+      }
     });
-    soundVolEl?.addEventListener('change', async () => {
-      const pct = parseInt(soundVolEl.value, 10) || 70;
-      await ipcRenderer.invoke('save-app-settings', { soundVolume: pct / 100 });
-      if (typeof soundFX !== 'undefined') soundFX.play('notification');
+
+    soundVolEl?.addEventListener('change', () => {
+      applySoundVolume(true);
+    });
+
+    btnTestSound?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const pct = parseInt(soundVolEl ? soundVolEl.value : 70, 10) || 70;
+      if (typeof soundFX !== 'undefined') {
+        soundFX.setVolume(pct / 100);
+        soundFX.play('notification', true);
+      }
     });
     bindSettingChange('setting-albumColorGradient', 'albumColorGradient');
     bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');

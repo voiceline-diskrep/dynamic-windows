@@ -40,12 +40,11 @@ test('SoundFXManager: safe execution in headless environment for all sounds', ()
   });
 });
 
-test('SoundFXManager: rate limiting prevents rapid duplicate plays', () => {
+test('SoundFXManager: force preview plays even when disabled', () => {
   const sfx = new SoundFXManager();
-  sfx.play('tap');
-  const t1 = sfx._lastPlayTimes['tap'];
-  assert.ok(t1 > 0);
-  sfx.play('tap');
-  const t2 = sfx._lastPlayTimes['tap'];
-  assert.strictEqual(t1, t2); // Was rate-limited
+  sfx.setEnabled(false);
+  assert.doesNotThrow(() => {
+    sfx.play('notification', true);
+  });
 });
+

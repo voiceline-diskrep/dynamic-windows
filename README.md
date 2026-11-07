@@ -1,14 +1,14 @@
-# 🏝️ Dynamic Windows (v1.4.11)
+# 🏝️ Dynamic Windows (v1.4.12)
 
 A fluid, Apple-style **Dynamic Island & Dynamic Notch** desktop environment built for Windows, powered by high-performance hardware-accelerated Canvas rendering with **Tactile Web Audio UI Sound Effects & Feedback Engine**, a **Strictly Centered Resting Island**, **Detached Right-Side Timer / Focus Island**, a **Notification Center (Windows Apps & System Alerts)**, **Home Clock Notification Preview Card**, **4-Second Auto-Expanding Notification Banners**, a **Slim 80px Idle Resting Pill**, **Strict Master Capsule Clipping for Animations**, **Adjustable Island Opacity Slider**, **Automatic Dynamic Island Enlargement on Incoming Calls with Pick Up & Decline**, an **Interactive Timer Scroll Dial with Mouse Wheel**, **Customizable Focus Mode**, **Calendar with Recurring Notes**, **To-Do with Custom Categories**, **Dual-Zone Drop Shelf**, **Dynamic Album Cover Color Gradients**, real-time **Liner Synced Lyrics**, **Customizable Animation Speed**, **Clipboard History Manager**, and **Game Mode**.
 
-[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.11.exe)
+[![Download Dynamic Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.12.exe)
 
 ---
 
 ## 📥 Download & Install
 
-👉 **[Download DynamicWindows-Setup-v1.4.11.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.11.exe)**
+👉 **[Download DynamicWindows-Setup-v1.4.12.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.12.exe)**
 
 - **Single-File Standalone Setup**: Self-contained installer compiled with native C# (`.NET`).
 - **Zero Admin Rights Required**: Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` without UAC prompts.
