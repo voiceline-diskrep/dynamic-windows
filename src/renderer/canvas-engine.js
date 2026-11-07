@@ -3202,10 +3202,20 @@ function renderRestingPill(x, y, w, h, alpha) {
         ctx.fillText(timeStr, mainPillX + 12, y + pillH / 2);
         ctx.restore();
 
-        const rightPillText = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-        const rightPillColor = '#a1a1aa';
+        let rightPillText = now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+        let rightPillColor = '#a1a1aa';
+        if (timerRunning) {
+          rightPillText = `⏱️ ${formatTimerSeconds(timerRemainingSec)}`;
+          rightPillColor = '#38bdf8';
+        } else if (focusRunning) {
+          rightPillText = `🎯 Focus ${formatTimerSeconds(focusRemainingSec)}`;
+          rightPillColor = '#10b981';
+        } else if (stopwatchRunning) {
+          rightPillText = `⏱️ ${formatStopwatchMs(stopwatchElapsedMs)}`;
+          rightPillColor = '#22c55e';
+        }
         ctx.save();
-        ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.font = (timerRunning || focusRunning || stopwatchRunning) ? '700 11px "Segoe UI Variable Display", Inter, sans-serif' : '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
         ctx.fillStyle = rightPillColor;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
@@ -6173,21 +6183,16 @@ function renderNotificationCenterView(x, y, w, h) {
   const contentH = h - 54;
 
   // Header row: "Notification Center" on left, "Clear All" on right
-  const cleanList = notificationList.filter(n => {
-    if (!n) return false;
-    const txt = `${n.app || ''} ${n.title || ''} ${n.body || ''}`.toLowerCase();
-    return !txt.includes('antigravity');
-  });
   ctx.font = '700 16px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  const unreadCount = cleanList.filter(n => !n.read).length;
+  const unreadCount = notificationList.filter(n => !n.read).length;
   const headerText = unreadCount > 0 ? `Notification Center (${unreadCount} new)` : 'Notification Center';
   ctx.fillText(headerText, contentX, contentY + 12);
 
   // Clear All button
-  if (cleanList.length > 0) {
+  if (notificationList.length > 0) {
     const clrW = 74;
     const clrH = 24;
     const clrX = contentX + contentW - clrW;
@@ -6218,7 +6223,7 @@ function renderNotificationCenterView(x, y, w, h) {
   const itemH = 52;
   const gap = 8;
   const maxVisible = 3;
-  const itemsToShow = cleanList.slice(0, maxVisible);
+  const itemsToShow = notificationList.slice(0, maxVisible);
 
   if (itemsToShow.length === 0) {
     ctx.save();

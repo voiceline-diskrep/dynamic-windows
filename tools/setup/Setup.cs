@@ -264,13 +264,17 @@ static class Installer {
             if (t == null) return;
             dynamic shell = Activator.CreateInstance(t);
 
+            string iconPath = Path.Combine(Path.GetDirectoryName(targetExe), "app_icon.ico");
             foreach (var folder in new[] { desktop, startMenu }) {
                 if (!Directory.Exists(folder)) continue;
                 string linkPath = Path.Combine(folder, "Dynamic Windows.lnk");
                 var shortcut = shell.CreateShortcut(linkPath);
                 shortcut.TargetPath = targetExe;
                 shortcut.WorkingDirectory = Path.GetDirectoryName(targetExe);
-                shortcut.Description = "Dynamic Windows + One-Shot";
+                shortcut.Description = "Dynamic Windows";
+                if (File.Exists(iconPath)) {
+                    shortcut.IconLocation = iconPath + ",0";
+                }
                 shortcut.Save();
             }
         } catch { }
