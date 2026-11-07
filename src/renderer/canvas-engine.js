@@ -3742,7 +3742,7 @@ function renderCallView(x, y, w, h) {
 }
 
 function renderTopNav(x, y, w) {
-  const hasUnreadNotifs = notificationList.some(n => !n.read);
+  const hasUnreadNotifs = notificationList.some(n => !n.read && !String(`${n.app || ''} ${n.title || ''}`).toLowerCase().includes('antigravity'));
   const navItems = [
     { id: 'nav_home', label: 'Home', w: 42 },
     { id: 'nav_notif', label: hasUnreadNotifs ? 'Notif •' : 'Notif', w: 46 },
@@ -4876,8 +4876,14 @@ function renderHomeView(x, y, w, h) {
   ctx.fill();
   ctx.stroke();
 
-  if (notificationList && notificationList.length > 0) {
-    const latestNotif = notificationList[0];
+  const validHomeNotifs = (notificationList || []).filter(n => {
+    if (!n) return false;
+    const txt = `${n.app || ''} ${n.title || ''} ${n.body || ''}`.toLowerCase();
+    return !txt.includes('antigravity');
+  });
+
+  if (validHomeNotifs.length > 0) {
+    const latestNotif = validHomeNotifs[0];
     const appIcon = latestNotif.icon || '🔔';
     const appName = latestNotif.app || 'Notification';
     const bodySnippet = latestNotif.title || latestNotif.body || 'New alert';
