@@ -789,8 +789,9 @@ function sendIslandOpacity() {
 function sendSoundEffectsConfig() {
   const enabled = configManager.get('soundEffects') !== false;
   const volume = typeof configManager.get('soundVolume') === 'number' ? configManager.get('soundVolume') : 0.7;
+  const preset = configManager.get('soundPreset') || 'modern';
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('sound-effects-config', { enabled, volume });
+    mainWindow.webContents.send('sound-effects-config', { enabled, volume, preset });
   }
 }
 

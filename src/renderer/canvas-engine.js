@@ -1917,6 +1917,9 @@ ipcRenderer.on('sound-effects-config', (event, data) => {
     if (typeof data.volume === 'number') {
       soundFX.setVolume(data.volume);
     }
+    if (typeof data.preset === 'string') {
+      soundFX.setPreset(data.preset);
+    }
   }
 });
 try {
@@ -1936,6 +1939,9 @@ try {
       }
       if (typeof res.config.soundVolume === 'number') {
         soundFX.setVolume(res.config.soundVolume);
+      }
+      if (typeof res.config.soundPreset === 'string') {
+        soundFX.setPreset(res.config.soundPreset);
       }
       if (res.config.animationSpeed) {
         const val = parseFloat(res.config.animationSpeed);

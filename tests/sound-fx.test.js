@@ -48,3 +48,26 @@ test('SoundFXManager: force preview plays even when disabled', () => {
   });
 });
 
+test('SoundFXManager: preset configuration and safe execution across all presets', () => {
+  const sfx = new SoundFXManager();
+  assert.strictEqual(sfx.getPreset(), 'modern');
+
+  const presets = ['modern', 'mechanical', 'soft', 'retro'];
+  const sounds = ['expand', 'collapse', 'tap', 'notification', 'timer_done', 'drop', 'switch'];
+
+  presets.forEach(preset => {
+    sfx.setPreset(preset);
+    assert.strictEqual(sfx.getPreset(), preset);
+
+    sounds.forEach(sound => {
+      assert.doesNotThrow(() => {
+        sfx.play(sound);
+      });
+    });
+  });
+
+  // Invalid preset should be ignored
+  sfx.setPreset('invalid_preset');
+  assert.strictEqual(sfx.getPreset(), 'retro');
+});
+

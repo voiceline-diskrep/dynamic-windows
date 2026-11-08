@@ -500,6 +500,18 @@
             <span class="slider"></span>
           </label>
         </div>
+        <div class="setting-row" id="sound-preset-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
+          <div class="setting-info">
+            <span class="setting-label">Sound Effect Style</span>
+            <span class="setting-desc">Tactile audio profile for clicks, expand, collapse, and alerts.</span>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-sound-preset btn-primary" data-preset="modern" type="button" style="padding: 5px 12px; font-size: 12px; font-weight: 600;">✨ Modern</button>
+            <button class="btn btn-sound-preset" data-preset="mechanical" type="button" style="padding: 5px 12px; font-size: 12px; font-weight: 600;">⌨️ Mechanical</button>
+            <button class="btn btn-sound-preset" data-preset="soft" type="button" style="padding: 5px 12px; font-size: 12px; font-weight: 600;">🌿 Soft</button>
+            <button class="btn btn-sound-preset" data-preset="retro" type="button" style="padding: 5px 12px; font-size: 12px; font-weight: 600;">👾 Retro</button>
+          </div>
+        </div>
         <div class="setting-row" id="sound-volume-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
           <div class="setting-info">
             <span class="setting-label">Sound Effects Volume</span>
@@ -853,9 +865,12 @@
         const curSoundPct = Math.round(curSoundVol * 100);
         if (soundVolEl) soundVolEl.value = curSoundPct;
         if (soundVolBadgeEl) soundVolBadgeEl.textContent = curSoundPct + '%';
+        const curPreset = cfg.soundPreset || 'modern';
+        updateSoundPresetButtons(curPreset);
         if (typeof soundFX !== 'undefined') {
           soundFX.setEnabled(isSoundEnabled);
           soundFX.setVolume(curSoundVol);
+          soundFX.setPreset(curPreset);
         }
         syncSoundControlsUI(isSoundEnabled);
 
@@ -876,7 +891,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.15';
+        const currentVer = data.version || '1.4.16';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');
@@ -935,12 +950,40 @@
     const btnTestSound = document.getElementById('btn-test-sound');
 
     function syncSoundControlsUI(enabled) {
-      const row = document.getElementById('sound-volume-row');
-      if (row) {
-        row.style.opacity = enabled ? '1' : '0.4';
-        row.style.pointerEvents = enabled ? 'auto' : 'none';
+      const volRow = document.getElementById('sound-volume-row');
+      if (volRow) {
+        volRow.style.opacity = enabled ? '1' : '0.4';
+        volRow.style.pointerEvents = enabled ? 'auto' : 'none';
+      }
+      const presetRow = document.getElementById('sound-preset-row');
+      if (presetRow) {
+        presetRow.style.opacity = enabled ? '1' : '0.4';
+        presetRow.style.pointerEvents = enabled ? 'auto' : 'none';
       }
     }
+
+    function updateSoundPresetButtons(activePreset) {
+      document.querySelectorAll('.btn-sound-preset').forEach(btn => {
+        if (btn.dataset.preset === activePreset) {
+          btn.classList.add('btn-primary');
+        } else {
+          btn.classList.remove('btn-primary');
+        }
+      });
+    }
+
+    document.querySelectorAll('.btn-sound-preset').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const preset = btn.dataset.preset;
+        if (!preset) return;
+        updateSoundPresetButtons(preset);
+        if (typeof soundFX !== 'undefined') {
+          soundFX.setPreset(preset);
+          soundFX.play('tap', true);
+        }
+        await ipcRenderer.invoke('save-app-settings', { soundPreset: preset });
+      });
+    });
 
     soundToggleEl?.addEventListener('change', async () => {
       const isEnabled = soundToggleEl.checked;

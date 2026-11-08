@@ -15,7 +15,7 @@ const CONFIG_DIR = path.join(
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.4.15',
+  version: '1.4.16',
   animationSpeed: 1.0,
   islandOpacity: 0.95, // 0.40 to 1.00 frosted glass opacity
   displayMode: 'island', // 'island' | 'notch'
@@ -24,6 +24,7 @@ const DEFAULT_CONFIG = {
   gameMode: true, // Auto-hide in full-screen games (default on)
   soundEffects: true, // Tactical Web Audio UI sound effects
   soundVolume: 0.7, // 0.05 to 1.00 volume
+  soundPreset: 'modern', // 'modern' | 'mechanical' | 'soft' | 'retro'
   startup: false,
   startupTakeover: false,
   clock24h: false,
