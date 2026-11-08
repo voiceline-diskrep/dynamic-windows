@@ -687,6 +687,11 @@ function createIslandWindow() {
   ipcMain.on('mark-notifications-read', () => {
     if (notificationMonitor) notificationMonitor.markAllRead();
   });
+  ipcMain.on('focus-app', (event, appName) => {
+    if (appName && sysHelper && typeof sysHelper.focusProcess === 'function') {
+      sysHelper.focusProcess(appName);
+    }
+  });
 
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {

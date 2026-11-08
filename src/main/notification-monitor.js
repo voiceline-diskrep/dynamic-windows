@@ -1,6 +1,50 @@
 const EventEmitter = require('events');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
+
+const PS_NOTIFICATION_SCRIPT = `
+$ProgressPreference = 'SilentlyContinue'
+try {
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+  $asTaskGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' } | Select-Object -First 1
+  [Windows.UI.Notifications.Management.UserNotificationListener, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
+  $listener = [Windows.UI.Notifications.Management.UserNotificationListener]::Current
+  $asyncOp = $listener.GetNotificationsAsync([Windows.UI.Notifications.NotificationKinds]::Toast)
+  $netTask = $asTaskGeneric.MakeGenericMethod([System.Collections.Generic.IReadOnlyList[Windows.UI.Notifications.UserNotification]]).Invoke($null, @($asyncOp))
+  if ($netTask.Wait(3500)) {
+    $notifs = $netTask.Result
+    $list = @()
+    foreach ($n in $notifs) {
+      $app = ''
+      try { $app = ($n.AppInfo.DisplayInfo.DisplayName -replace '[\\p{Cc}]+', ' ').Trim() } catch {}
+      $binding = $n.Notification.Visual.GetBinding([Windows.UI.Notifications.KnownNotificationBindings]::ToastGeneric)
+      $texts = @()
+      if ($binding) {
+        foreach ($t in $binding.GetTextElements()) {
+          if ($t.Text) {
+            $cleaned = ($t.Text -replace '[\\p{Cc}]+', ' ').Trim()
+            if ($cleaned) { $texts += $cleaned }
+          }
+        }
+      }
+      $title = if ($texts.Count -gt 0) { $texts[0] } else { '' }
+      $body = if ($texts.Count -gt 1) { ($texts[1..($texts.Count-1)]) -join ' ' } else { '' }
+      $list += [PSCustomObject]@{
+        id = $n.Id
+        app = $app
+        title = $title
+        body = $body
+        creationTime = $n.CreationTime.ToString('o')
+      }
+    }
+    $list | ConvertTo-Json -Compress
+  }
+} catch {
+  [Console]::Error.WriteLine($_.Exception.ToString())
+}
+`;
+
+const PS_ENCODED = Buffer.from(PS_NOTIFICATION_SCRIPT, 'utf16le').toString('base64');
 
 class NotificationMonitor extends EventEmitter {
   constructor(options = {}) {
@@ -29,86 +73,82 @@ class NotificationMonitor extends EventEmitter {
     if (this.isPolling) return;
     this.isPolling = true;
 
-    const psCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "& {
-      try {
-        Add-Type -AssemblyName System.Runtime.WindowsRuntime
-        $asTaskGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' } | Select-Object -First 1
-        [Windows.UI.Notifications.Management.UserNotificationListener, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
-        $listener = [Windows.UI.Notifications.Management.UserNotificationListener]::Current
-        $asyncOp = $listener.GetNotificationsAsync([Windows.UI.Notifications.NotificationKinds]::Toast)
-        $netTask = $asTaskGeneric.MakeGenericMethod([System.Collections.Generic.IReadOnlyList[Windows.UI.Notifications.UserNotification]]).Invoke($null, @($asyncOp))
-        if ($netTask.Wait(2000)) {
-          $notifs = $netTask.Result
-          $list = @()
-          foreach ($n in $notifs) {
-            $app = $n.AppInfo.DisplayInfo.DisplayName
-            $binding = $n.Notification.Visual.GetBinding([Windows.UI.Notifications.KnownNotificationBindings]::ToastGeneric)
-            $texts = @()
-            if ($binding) {
-              foreach ($t in $binding.GetTextElements()) { $texts += $t.Text }
-            }
-            $title = if ($texts.Count -gt 0) { $texts[0] } else { '' }
-            $body = if ($texts.Count -gt 1) { ($texts[1..($texts.Count-1)]) -join ' ' } else { '' }
-            $list += [PSCustomObject]@{
-              id = $n.Id
-              app = $app
-              title = $title
-              body = $body
-              creationTime = $n.CreationTime.ToString('o')
-            }
-          }
-          $list | ConvertTo-Json -Compress
-        }
-      } catch {}
-    }"`;
+    try {
+      const child = spawn('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-EncodedCommand', PS_ENCODED
+      ], { windowsHide: true });
 
-    exec(psCommand, { windowsHide: true, timeout: 4000 }, (err, stdout) => {
+      let stdout = '';
+      const timer = setTimeout(() => {
+        try { child.kill(); } catch (e) {}
+      }, 5500);
+
+      child.stdout.on('data', (d) => { stdout += d.toString(); });
+
+      child.on('close', () => {
+        clearTimeout(timer);
+        this.isPolling = false;
+        this.processRawOutput(stdout);
+      });
+
+      child.on('error', () => {
+        clearTimeout(timer);
+        this.isPolling = false;
+      });
+    } catch (err) {
       this.isPolling = false;
-      if (err || !stdout) return;
+    }
+  }
 
-      try {
-        const raw = stdout.trim();
-        if (!raw || raw === 'null') return;
-        let items = JSON.parse(raw);
-        if (!Array.isArray(items)) items = [items];
+  processRawOutput(rawOutput) {
+    if (!rawOutput) return;
+    try {
+      const sanitized = rawOutput.replace(/[\x00-\x1F\x7F]/g, ' ').trim();
+      if (!sanitized || sanitized === 'null') return;
+      let items = JSON.parse(sanitized);
+      if (!Array.isArray(items)) items = [items];
 
-        for (const item of items) {
-          if (!item || !item.id) continue;
-          const appName = (item.app || 'Windows').trim();
-          const checkText = `${appName} ${item.title || ''} ${item.body || ''}`.toLowerCase();
-          if (checkText.includes('antigravity')) continue;
+      let anyNew = false;
+      for (const item of items) {
+        if (!item || !item.id) continue;
+        const appName = (item.app || 'Windows').trim();
+        const checkText = `${appName} ${item.title || ''} ${item.body || ''}`.toLowerCase();
+        if (checkText.includes('antigravity')) continue;
 
-          const idStr = `win_${item.id}`;
-          const isNew = !this.knownIds.has(idStr);
-          this.knownIds.add(idStr);
+        const idStr = `win_${item.id}`;
+        const isNew = !this.knownIds.has(idStr);
+        this.knownIds.add(idStr);
 
-          const notif = {
-            id: idStr,
-            app: appName,
-            title: (item.title || '').trim(),
-            body: (item.body || '').trim(),
-            timestamp: item.creationTime ? new Date(item.creationTime).getTime() : Date.now(),
-            icon: this.getIconForApp(appName),
-            read: !isNew || !this.initialized
-          };
+        const notif = {
+          id: idStr,
+          app: appName,
+          title: (item.title || '').trim(),
+          body: (item.body || '').trim(),
+          timestamp: item.creationTime ? new Date(item.creationTime).getTime() : Date.now(),
+          icon: this.getIconForApp(appName),
+          read: !isNew || !this.initialized
+        };
 
-          if (isNew) {
-            this.notifications.unshift(notif);
-            if (this.notifications.length > 50) this.notifications.pop();
+        if (isNew) {
+          anyNew = true;
+          this.notifications.unshift(notif);
+          if (this.notifications.length > 50) this.notifications.pop();
 
-            // Only fire new notification alerts if we have finished the initial baseline scan
-            if (this.initialized) {
-              this.emit('new-notification', notif);
-            }
+          // Only fire new notification alerts if we have finished the initial baseline scan
+          if (this.initialized) {
+            this.emit('new-notification', notif);
           }
         }
+      }
 
-        if (!this.initialized) {
-          this.initialized = true;
-          this.emit('notifications-updated', this.notifications);
-        }
-      } catch (e) {}
-    });
+      if (!this.initialized || anyNew) {
+        this.initialized = true;
+        this.emit('notifications-updated', this.notifications);
+      }
+    } catch (e) {}
   }
 
   addNotification(entry) {

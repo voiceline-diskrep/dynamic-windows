@@ -78,3 +78,35 @@ test('NotificationMonitor: getIconForApp mappings', () => {
   assert.strictEqual(nm.getIconForApp('Snipping Tool'), '✂️');
   assert.strictEqual(nm.getIconForApp('Unknown App'), '🔔');
 });
+
+test('NotificationMonitor: processRawOutput safely handles dirty JSON with ASCII control characters', () => {
+  const nm = new NotificationMonitor({ pollIntervalMs: 60000 });
+  let updatedList = null;
+  nm.on('notifications-updated', (list) => { updatedList = list; });
+
+  // Simulate PowerShell output containing unescaped ASCII control char 0x1A and tabs
+  const dirtyOutput = '[{"id":123,"app":"TwoCode","title":"Shortcut in use","body":"Settings \x1A Shortcuts","creationTime":"2026-11-08T10:00:00Z"},{"id":124,"app":"Antigravity","title":"Done","body":"Task complete"}]';
+
+  nm.processRawOutput(dirtyOutput);
+  assert.strictEqual(nm.initialized, true);
+  assert.ok(updatedList);
+  assert.strictEqual(updatedList.length, 1);
+  assert.strictEqual(updatedList[0].app, 'TwoCode');
+  assert.strictEqual(updatedList[0].title, 'Shortcut in use');
+  assert.strictEqual(updatedList[0].body, 'Settings   Shortcuts');
+});
+
+test('NotificationMonitor: processRawOutput emits new-notification for new items after initialization', () => {
+  const nm = new NotificationMonitor({ pollIntervalMs: 60000 });
+  nm.processRawOutput('[{"id":100,"app":"Slack","title":"Meeting","body":"Starts in 5m"}]');
+  assert.strictEqual(nm.getNotifications().length, 1);
+
+  let newNotif = null;
+  nm.on('new-notification', (notif) => { newNotif = notif; });
+
+  nm.processRawOutput('[{"id":100,"app":"Slack","title":"Meeting","body":"Starts in 5m"},{"id":101,"app":"Discord","title":"Voice","body":"User joined"}]');
+  assert.ok(newNotif);
+  assert.strictEqual(newNotif.id, 'win_101');
+  assert.strictEqual(newNotif.app, 'Discord');
+  assert.strictEqual(nm.getNotifications().length, 2);
+});

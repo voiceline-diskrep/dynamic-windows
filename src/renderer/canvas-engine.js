@@ -1487,6 +1487,16 @@ function handleButtonClick(id, data) {
     const notifId = id.replace('notif_dismiss_', '');
     ipcRenderer.send('dismiss-notification', notifId);
     notificationList = notificationList.filter(n => n.id !== notifId);
+  } else if (id && id.startsWith('notif_item_')) {
+    const notifId = id.replace('notif_item_', '');
+    const found = notificationList.find(n => n.id === notifId);
+    if (found) {
+      found.read = true;
+      ipcRenderer.send('mark-notifications-read');
+      if (found.app) {
+        ipcRenderer.send('focus-app', found.app);
+      }
+    }
   } else if (id === 'notif_banner_dismiss') {
     notificationBannerUntil = 0;
     targetProgress = 0.0;
@@ -3438,12 +3448,21 @@ function renderExpandedView(x, y, w, h, alpha) {
   ctx.save();
   ctx.globalAlpha = alpha;
 
+  // Auto-expanding notification banner alert
+  if (currentView === 'notification_banner') {
+    renderNotificationBannerView(x, y, w, h);
+    ctx.restore();
+    return;
+  }
+
   // Navigation Pills at Top
   renderTopNav(x, y, w);
 
   // View Body
   if (currentView === 'home') {
     renderHomeView(x, y, w, h);
+  } else if (currentView === 'notifications') {
+    renderNotificationCenterView(x, y, w, h);
   } else if (currentView === 'calendar') {
     renderCalendarTabView(x, y, w, h);
   } else if (currentView === 'clock') {
@@ -3801,7 +3820,7 @@ function renderTopNav(x, y, w) {
     const px = curX;
     const pillW = item.w;
     curX += pillW + spacing;
-    const isCur = currentView === item.id.replace('nav_', '');
+    const isCur = currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif');
     const isHov = hoveredButtonId === item.id;
 
     ctx.beginPath();
