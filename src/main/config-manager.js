@@ -15,7 +15,7 @@ const CONFIG_DIR = path.join(
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.4.14',
+  version: '1.4.15',
   animationSpeed: 1.0,
   islandOpacity: 0.95, // 0.40 to 1.00 frosted glass opacity
   displayMode: 'island', // 'island' | 'notch'

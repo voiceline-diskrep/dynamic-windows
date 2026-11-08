@@ -2234,15 +2234,8 @@ function getTargetHeight(p) {
   }
 
   const projs = getActiveProjects();
-  const activeProjs = projs.filter(pr => ['running', 'thinking', 'waiting'].includes(pr.status));
-  const stackCount = Math.max(1, Math.min(4, activeProjs.length));
-
   let restH = UI.BAR_H;
-  if (hasActiveAgent()) {
-    restH = UI.ACTIVE_BAR_H + (stackCount - 1) * 37;
-  } else if (hasActiveCall()) {
-    restH = UI.ACTIVE_BAR_H;
-  } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
+  if (hasActiveAgent() || hasActiveCall() || (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing')) {
     restH = UI.ACTIVE_BAR_H;
   }
 
