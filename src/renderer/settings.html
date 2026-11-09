@@ -484,6 +484,20 @@
         </div>
       </div>
 
+      <div class="card">
+        <div class="card-header">Personalization & Identity</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Your Name</span>
+            <span class="setting-desc">Personalizes greetings and Dynamic Island interactions.</span>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="setting-userName" placeholder="Enter your name..." style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 8px; color: #ffffff; padding: 7px 12px; font-size: 13px; width: 170px; outline: none;">
+            <button class="btn btn-primary" id="btn-save-userName" style="padding: 7px 14px; font-size: 12px;">Save</button>
+          </div>
+        </div>
+      </div>
+
             <div class="card">
         <div class="card-header">Appearance & Transparency</div>
         <div class="setting-row">
@@ -894,6 +908,8 @@
         
 
         // General
+        const elUserName = document.getElementById('setting-userName');
+        if (elUserName) elUserName.value = cfg.userName || '';
         const elStartup = document.getElementById('setting-startup');
         if (elStartup) elStartup.checked = !!cfg.startup;
         const elGameMode = document.getElementById('setting-gameMode');
@@ -942,7 +958,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.20';
+        const currentVer = data.version || '1.4.21';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');
@@ -994,6 +1010,25 @@
     bindSettingChange('setting-clock24h', 'clock24h');
     bindSettingChange('setting-showSeconds', 'showSeconds');
     bindSettingChange('setting-dynamicLyrics', 'dynamicLyrics');
+    bindSettingChange('setting-userName', 'userName');
+    const btnSaveUser = document.getElementById('btn-save-userName');
+    const inputUser = document.getElementById('setting-userName');
+    if (btnSaveUser && inputUser) {
+      btnSaveUser.addEventListener('click', async () => {
+        const val = inputUser.value.trim();
+        await ipcRenderer.invoke('save-app-settings', { userName: val });
+        btnSaveUser.textContent = 'Saved!';
+        setTimeout(() => { btnSaveUser.textContent = 'Save'; }, 1500);
+      });
+      inputUser.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') {
+          const val = inputUser.value.trim();
+          await ipcRenderer.invoke('save-app-settings', { userName: val });
+          btnSaveUser.textContent = 'Saved!';
+          setTimeout(() => { btnSaveUser.textContent = 'Save'; }, 1500);
+        }
+      });
+    }
     // Sound Effects & Volume Controls
     const soundToggleEl = document.getElementById('setting-soundEffects');
     const soundVolEl = document.getElementById('setting-soundVolume');

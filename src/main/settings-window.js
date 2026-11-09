@@ -218,6 +218,13 @@ function registerSettingsIPC(dropZoneInstance) {
         }
       });
     }
+    if (newSettings && 'userName' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('user-name-changed', { userName: newSettings.userName });
+        }
+      });
+    }
     if (newSettings && 'reserveTopBezel' in newSettings) {
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {

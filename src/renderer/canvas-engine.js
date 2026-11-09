@@ -178,6 +178,91 @@ function hideInlineModal() {
   }, 100);
 }
 
+// -------------------------------------------------------------
+// Personalization Engine: First-Time Onboarding & 9-Greeting Cycler
+// -------------------------------------------------------------
+let currentUserName = '';
+let activeGreeting = '';
+let greetingCycleIndex = 0;
+let hasPromptedForUserName = false;
+
+function getEligibleGreetingsList(userName, date = new Date()) {
+  const safeName = (userName && userName.trim()) ? userName.trim() : 'User';
+  const hour = date.getHours();
+
+  const isMorning = hour >= 5 && hour < 12;
+  const isAfternoon = hour >= 12 && hour < 18;
+  const isStayingUp = hour >= 1 && hour < 4;
+  const isNight = hour >= 18 || hour === 0 || hour === 4;
+
+  const list = [];
+  // 1. Welcome Back <name>
+  list.push(`Welcome Back ${safeName}`);
+  // 2. Good morning <name> (if morning)
+  if (isMorning) list.push(`Good morning ${safeName}`);
+  // 3. Good Afternoon <name> (if afternoon)
+  if (isAfternoon) list.push(`Good Afternoon ${safeName}`);
+  // 4. Good night <name> (if night)
+  if (isNight) list.push(`Good night ${safeName}`);
+  // 5. staying up? (if the user opens this on 1am-3am)
+  if (isStayingUp) list.push('staying up?');
+  // 6. What to do?
+  list.push('What to do?');
+  // 7. Lets go!
+  list.push('Lets go!');
+  // 8. Hello <name>
+  list.push(`Hello ${safeName}`);
+  // 9. im always here
+  list.push('im always here');
+
+  return list;
+}
+
+function getNextPersonalizedGreeting(userName, date = new Date()) {
+  const eligible = getEligibleGreetingsList(userName, date);
+  if (!eligible || eligible.length === 0) return `Hello ${userName || 'User'}`;
+  const greeting = eligible[greetingCycleIndex % eligible.length];
+  greetingCycleIndex = (greetingCycleIndex + 1) % eligible.length;
+  return greeting;
+}
+
+function promptForUserName(isFirstTime = false) {
+  showInlineModal(
+    isFirstTime ? 'Welcome to Dynamic Windows! What is your name?' : 'Personalize Your Name',
+    'Enter your name...',
+    null,
+    (name) => {
+      const clean = (name || '').trim();
+      if (!clean) return;
+      currentUserName = clean;
+      ipcRenderer.send('set-user-name', clean);
+      if (isFirstTime) {
+        activeGreeting = `hello ${clean}!`;
+        showPersonalizedBanner(`hello ${clean}!`, 'Personalized Dynamic Island');
+      } else {
+        activeGreeting = `Welcome Back ${clean}`;
+        showPersonalizedBanner(activeGreeting, 'Name updated');
+      }
+    }
+  );
+}
+
+function showPersonalizedBanner(title, body = 'Dynamic Windows', icon = '👋') {
+  activeNotification = {
+    app: 'Dynamic Windows',
+    title: title,
+    body: body,
+    icon: icon
+  };
+  notificationBannerUntil = performance.now() + 4500;
+  if (soundFX && typeof soundFX.play === 'function') {
+    soundFX.play('notification');
+  }
+  currentView = 'notification_banner';
+  targetProgress = 1.0;
+  ipcRenderer.send('set-ignore-mouse-events', false);
+}
+
 // Modal and Backdrop Interactive Event Wiring
 const inlineModalEl = document.getElementById('inline-modal');
 const inlineModalBackdropEl = document.getElementById('inline-modal-backdrop');
@@ -1612,8 +1697,18 @@ function handleButtonClick(id, data) {
     targetProgress = 0.0;
     currentView = 'home';
   } else if (id === 'notif_banner_click') {
-    currentView = 'notifications';
-    ipcRenderer.send('mark-notifications-read');
+    if (activeNotification && activeNotification.app === 'Dynamic Windows' && activeNotification.icon === '👋') {
+      currentView = 'home';
+      activeNotification = null;
+      notificationBannerUntil = 0;
+    } else {
+      currentView = 'notifications';
+      ipcRenderer.send('mark-notifications-read');
+    }
+  } else if (id === 'btn_edit_user_name') {
+    promptForUserName(false);
+  } else if (id === 'btn_cycle_greeting') {
+    activeGreeting = getNextPersonalizedGreeting(currentUserName);
   } else if (id === 'nav_calendar') {
     currentView = 'calendar';
   } else if (id === 'cal_prev_month') {
@@ -2079,6 +2174,14 @@ ipcRenderer.on('sound-effects-config', (event, data) => {
     }
   }
 });
+ipcRenderer.on('user-name-changed', (event, data) => {
+  if (data && typeof data.userName === 'string') {
+    currentUserName = data.userName.trim();
+    if (currentUserName && !activeGreeting) {
+      activeGreeting = getNextPersonalizedGreeting(currentUserName);
+    }
+  }
+});
 try {
   ipcRenderer.invoke('get-app-settings').then(res => {
     if (res && res.config) {
@@ -2099,6 +2202,20 @@ try {
       }
       if (typeof res.config.soundPreset === 'string') {
         soundFX.setPreset(res.config.soundPreset);
+      }
+      if (typeof res.config.userName === 'string') {
+        currentUserName = res.config.userName.trim();
+      }
+      if (!currentUserName && !hasPromptedForUserName) {
+        hasPromptedForUserName = true;
+        setTimeout(() => {
+          promptForUserName(true);
+        }, 650);
+      } else if (currentUserName) {
+        activeGreeting = getNextPersonalizedGreeting(currentUserName);
+        setTimeout(() => {
+          showPersonalizedBanner(activeGreeting, 'Personalized Dynamic Island');
+        }, 500);
       }
       if (res.config.animationSpeed) {
         const val = parseFloat(res.config.animationSpeed);
@@ -5280,23 +5397,61 @@ function renderHomeView(x, y, w, h) {
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
   const dateStr = now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
-  // 1. Digital Clock on Left (Clean typography, aligned horizontally with cards)
+  // 0. Personalized Greeting & Name pill above Digital Clock
   const clockX = x + 20;
-  ctx.font = '700 29px "Segoe UI Variable Display", Inter, sans-serif';
+  const greetingText = activeGreeting || (currentUserName ? `Welcome Back ${currentUserName}` : 'Welcome Back');
+
+  ctx.save();
+  ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+  const greetTextW = ctx.measureText(greetingText).width;
+  const greetW = Math.min(136, greetTextW + 24);
+  const greetH = 18;
+  const greetY = y + 40;
+  const isGreetHov = hoveredButtonId === 'btn_edit_user_name';
+
+  ctx.beginPath();
+  ctx.roundRect(clockX, greetY, greetW, greetH, 6);
+  ctx.fillStyle = isGreetHov ? 'rgba(56, 189, 248, 0.22)' : 'rgba(56, 189, 248, 0.1)';
+  ctx.strokeStyle = isGreetHov ? '#38bdf8' : 'rgba(56, 189, 248, 0.25)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#38bdf8';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(truncateToWidth(greetingText, greetW - 20, ctx.font), clockX + 6, greetY + greetH / 2);
+
+  ctx.font = '9px "Segoe UI Symbol", sans-serif';
+  ctx.fillStyle = isGreetHov ? '#ffffff' : '#7dd3fc';
+  ctx.textAlign = 'right';
+  ctx.fillText('✎', clockX + greetW - 5, greetY + greetH / 2);
+  ctx.restore();
+
+  interactiveButtons.push({
+    id: 'btn_edit_user_name',
+    x: clockX,
+    y: greetY,
+    w: greetW,
+    h: greetH
+  });
+
+  // 1. Digital Clock on Left (Clean typography, aligned horizontally with cards)
+  ctx.font = '700 27px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(timeStr, clockX, y + 46);
+  ctx.fillText(timeStr, clockX, y + 62);
 
-  ctx.font = '500 12px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = '#94a3b8';
-  ctx.fillText(dateStr, clockX, y + 84);
+  ctx.fillText(dateStr, clockX, y + 93);
 
   // 1b. Latest Notification Card below Digital Clock
   const notifCardX = clockX;
-  const notifCardY = y + 104;
+  const notifCardY = y + 110;
   const notifCardW = 132;
-  const notifCardH = 48;
+  const notifCardH = 42;
   const isNotifHov = hoveredButtonId === 'nav_notif_card';
 
   ctx.save();
@@ -6842,6 +6997,8 @@ function renderNotificationBannerView(x, y, w, h) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    computeAccentColorFromPixels
+    computeAccentColorFromPixels,
+    getEligibleGreetingsList,
+    getNextPersonalizedGreeting
   };
 }

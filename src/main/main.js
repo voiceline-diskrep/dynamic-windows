@@ -745,6 +745,16 @@ function createIslandWindow() {
     return configManager.get('fontFamily') || 'Theater';
   });
 
+  ipcMain.on('set-user-name', (event, name) => {
+    if (typeof name === 'string') {
+      configManager.set('userName', name.trim());
+      sendUserName();
+    }
+  });
+  ipcMain.handle('get-user-name', () => {
+    return configManager.get('userName') || '';
+  });
+
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
@@ -758,6 +768,7 @@ function createIslandWindow() {
     sendIslandOpacity();
     sendSoundEffectsConfig();
     sendFontFamily();
+    sendUserName();
     sendNotifications();
   });
 }
@@ -853,6 +864,15 @@ function sendFontFamily() {
   BrowserWindow.getAllWindows().forEach(w => {
     if (!w.isDestroyed()) {
       w.webContents.send('font-family-changed', { fontFamily: font });
+    }
+  });
+}
+
+function sendUserName() {
+  const name = configManager.get('userName') || '';
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('user-name-changed', { userName: name });
     }
   });
 }

@@ -15,7 +15,7 @@ const CONFIG_DIR = process.platform === 'darwin'
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.4.20',
+  version: '1.4.21',
   animationSpeed: 1.0,
   islandOpacity: 0.95, // 0.40 to 1.00 frosted glass opacity
   displayMode: 'island', // 'island' | 'notch'
@@ -26,6 +26,7 @@ const DEFAULT_CONFIG = {
   soundVolume: 0.7, // 0.05 to 1.00 volume
   soundPreset: 'modern', // 'modern' | 'mechanical' | 'soft' | 'retro'
   fontFamily: 'Theater', // App-wide typography: 'Theater' | 'Segoe UI Variable Text' | 'Inter' | custom
+  userName: '', // Personalized user name for greetings and dynamic island interactions
   startup: false,
   startupTakeover: false,
   clock24h: false,
