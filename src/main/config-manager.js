@@ -15,7 +15,7 @@ const CONFIG_DIR = path.join(
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.4.18',
+  version: '1.4.19',
   animationSpeed: 1.0,
   islandOpacity: 0.95, // 0.40 to 1.00 frosted glass opacity
   displayMode: 'island', // 'island' | 'notch'
@@ -108,4 +108,6 @@ class ConfigManager {
   }
 }
 
-module.exports = new ConfigManager();
+const configManagerInstance = new ConfigManager();
+configManagerInstance.DEFAULT_CONFIG = DEFAULT_CONFIG;
+module.exports = configManagerInstance;

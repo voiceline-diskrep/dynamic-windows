@@ -10,11 +10,11 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Dynamic Windows Setup")]
 [assembly: AssemblyProduct("Dynamic Windows")]
 [assembly: AssemblyCompany("voiceline-diskrep")]
-[assembly: AssemblyVersion("1.4.18.0")]
-[assembly: AssemblyFileVersion("1.4.18.0")]
+[assembly: AssemblyVersion("1.4.19.0")]
+[assembly: AssemblyFileVersion("1.4.19.0")]
 
 static class Setup {
-    public const string VERSION = "1.4.18";
+    public const string VERSION = "1.4.19";
     public static string Home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "DynamicWindows");
     public static bool NoStart, Quiet;
 

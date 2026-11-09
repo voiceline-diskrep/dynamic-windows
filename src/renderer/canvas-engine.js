@@ -578,14 +578,38 @@ let albumImageForUrl = '';
 let albumAccentColor = '#22c55e';
 let tintK = 0;
 
+function computeAccentColorFromPixels(d) {
+  let r = 0, g = 0, b = 0, totalW = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const pr = d[i], pg = d[i + 1], pb = d[i + 2];
+    const max = Math.max(pr, pg, pb);
+    const min = Math.min(pr, pg, pb);
+    const sat = max - min;
+    const weight = (sat > 15 ? (sat / 10) : 0.2) * (max > 25 && max < 245 ? 1.5 : 0.4);
+    r += pr * weight;
+    g += pg * weight;
+    b += pb * weight;
+    totalW += weight;
+  }
+  if (totalW > 0) {
+    r /= totalW; g /= totalW; b /= totalW;
+  } else {
+    return '#e4e4e7';
+  }
+  const actualMax = Math.max(r, g, b);
+  const minVal = Math.min(r, g, b);
+  // Monochrome/grayscale or near-black artwork (e.g. Arctic Monkeys AM, White Album): sleek silver/white neutral accent
+  if (actualMax < 35 || (actualMax - minVal < 26)) {
+    return '#e4e4e7';
+  }
+  const boost = 220 / Math.max(actualMax, 40);
+  return `rgb(${[r, g, b].map(v => Math.min(255, Math.max(0, Math.round(v * boost)))).join(',')})`;
+}
+
 function updateAlbumArt(url) {
   if (!url) {
     albumImageForUrl = '';
-    const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Island');
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i);
-    const hue = Math.abs(hash) % 360;
-    albumAccentColor = `hsl(${hue}, 85%, 60%)`;
+    albumAccentColor = '#e4e4e7';
     return;
   }
   if (url === albumImageForUrl) return;
@@ -598,50 +622,13 @@ function updateAlbumArt(url) {
       const x = c.getContext('2d');
       x.drawImage(albumImage, 0, 0, 16, 16);
       const d = x.getImageData(0, 0, 16, 16).data;
-      let r = 0, g = 0, b = 0, totalW = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        const pr = d[i], pg = d[i + 1], pb = d[i + 2];
-        const max = Math.max(pr, pg, pb);
-        const min = Math.min(pr, pg, pb);
-        const sat = max - min;
-        const weight = (sat > 15 ? (sat / 10) : 0.2) * (max > 25 && max < 245 ? 1.5 : 0.4);
-        r += pr * weight;
-        g += pg * weight;
-        b += pb * weight;
-        totalW += weight;
-      }
-      if (totalW > 0) {
-        r /= totalW; g /= totalW; b /= totalW;
-      } else {
-        r = 56; g = 189; b = 248;
-      }
-      const maxVal = Math.max(r, g, b, 40);
-      const minVal = Math.min(r, g, b);
-      // If the artwork is monochrome/grayscale, generate a vivid harmonic hue so music always produces a vibrant Apple-grade glow
-      if (maxVal - minVal < 26) {
-        const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Music');
-        let hash = 0;
-        for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i);
-        const hue = Math.abs(hash) % 360;
-        albumAccentColor = `hsl(${hue}, 85%, 62%)`;
-      } else {
-        const boost = 220 / maxVal;
-        albumAccentColor = `rgb(${[r, g, b].map(v => Math.min(255, Math.max(0, Math.round(v * boost)))).join(',')})`;
-      }
+      albumAccentColor = computeAccentColorFromPixels(d);
     } catch (e) {
-      const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Music');
-      let hash = 0;
-      for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i);
-      const hue = Math.abs(hash) % 360;
-      albumAccentColor = `hsl(${hue}, 85%, 60%)`;
+      albumAccentColor = '#e4e4e7';
     }
   };
   albumImage.onerror = () => {
-    const seed = (mediaState.track ? ((mediaState.track.title || '') + (mediaState.track.artist || '')) : 'Music');
-    let hash = 0;
-    for (let i = 0; i < seed.length; i++) hash = (hash << 5) - hash + seed.charCodeAt(i);
-    const hue = Math.abs(hash) % 360;
-    albumAccentColor = `hsl(${hue}, 85%, 60%)`;
+    albumAccentColor = '#e4e4e7';
   };
   albumImage.src = url;
 }
@@ -2554,7 +2541,7 @@ function render() {
     }
     ctx.shadowOffsetY = 6 + 6 * p;
 
-    // 2. Liquid Glass OLED Black Surface
+    // 2. Liquid Glass OLED Black Surface (Always true OLED dark grey/black)
     const grad = ctx.createLinearGradient(x, y, x, y + h);
     grad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
     grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
@@ -2564,22 +2551,6 @@ function render() {
     ctx.roundRect(x, y, w, h, radii);
     ctx.fillStyle = grad;
     ctx.fill();
-
-    // 2b. Dynamic Island Album Cover Ambient Fade Gradient Glow
-    if (tintK > 0.01 && albumAccentColor) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.roundRect(x, y, w, h, radii);
-      ctx.clip();
-      const tintGrad = ctx.createLinearGradient(x, y + h, x, y);
-      tintGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.65 * tintK));
-      tintGrad.addColorStop(0.45, colorWithAlpha(albumAccentColor, 0.28 * tintK));
-      tintGrad.addColorStop(0.85, colorWithAlpha(albumAccentColor, 0.08 * tintK));
-      tintGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = tintGrad;
-      ctx.fillRect(x, y, w, h);
-      ctx.restore();
-    }
 
     // 3. Specular Border Rim (illuminated with album accent when active)
     ctx.beginPath();
@@ -2661,7 +2632,7 @@ function render() {
 }
 
 // -------------------------------------------------------------
-// TwoCode Connected Downward Song Change Announcement Popup
+// Connected Downward Song Change Announcement Popup
 // -------------------------------------------------------------
 function renderSongAnnouncementPopup(x, y, w, h, popAlpha) {
   ctx.save();
@@ -2671,18 +2642,20 @@ function renderSongAnnouncementPopup(x, y, w, h, popAlpha) {
   const cornerR = UI.COMPACT_RADIUS + 8;
   const radii = isNotch ? [0, 0, cornerR, cornerR] : cornerR;
 
-  // 1. Ambient Backlight Radial Glow bleeding from Album Accent Colors
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radii);
-  ctx.clip();
-  const glowGrad = ctx.createRadialGradient(x + 55, y + 68, 5, x + 55, y + 68, 140);
-  glowGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.35 * popAlpha));
-  glowGrad.addColorStop(0.45, colorWithAlpha(albumAccentColor, 0.12 * popAlpha));
-  glowGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = glowGrad;
-  ctx.fillRect(x, y, w, h);
-  ctx.restore();
+  // 1. Subtle Ambient Radial Halo around Album Art
+  if (albumAccentColor && albumAccentColor !== '#e4e4e7') {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, radii);
+    ctx.clip();
+    const glowGrad = ctx.createRadialGradient(x + 55, y + 68, 5, x + 55, y + 68, 90);
+    glowGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.12 * popAlpha));
+    glowGrad.addColorStop(0.6, colorWithAlpha(albumAccentColor, 0.02 * popAlpha));
+    glowGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = glowGrad;
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+  }
 
   // 2. Connected Top Bar (0 to 34px)
   const topH = 34;
@@ -5679,7 +5652,7 @@ function renderAgentView(x, y, w, h) {
 }
 
 // -------------------------------------------------------------
-// TwoCode Media View: Album Art, Equalizer, 3-Line Lyrics, Scrubber & Vector Transport
+// Dynamic Windows Media View: Album Art, Equalizer, 3-Line Lyrics, Scrubber & Vector Transport
 // -------------------------------------------------------------
 function renderMediaView(x, y, w, h) {
   const topY = y + 40;
@@ -6865,4 +6838,10 @@ function renderNotificationBannerView(x, y, w, h) {
 
   interactiveButtons.push({ id: 'notif_banner_dismiss', x: dsmX, y: dsmY, w: dsmSize, h: dsmSize });
   interactiveButtons.push({ id: 'notif_banner_click', x: x, y: y, w: w - dsmSize - 20, h: h });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    computeAccentColorFromPixels
+  };
 }

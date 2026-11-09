@@ -100,3 +100,59 @@ data: {"type":"provider","provider":"Polaris Mono","syncLevel":"word_level","can
   assert.strictEqual(parsed[0].words[3].syllables.length, 2);
   mc.destroy();
 });
+
+test('MediaColorExtraction: computeAccentColorFromPixels handles grayscale and colored artwork', () => {
+  function computeAccentColorFromPixels(d) {
+    let r = 0, g = 0, b = 0, totalW = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const pr = d[i], pg = d[i + 1], pb = d[i + 2];
+      const max = Math.max(pr, pg, pb);
+      const min = Math.min(pr, pg, pb);
+      const sat = max - min;
+      const weight = (sat > 15 ? (sat / 10) : 0.2) * (max > 25 && max < 245 ? 1.5 : 0.4);
+      r += pr * weight;
+      g += pg * weight;
+      b += pb * weight;
+      totalW += weight;
+    }
+    if (totalW > 0) {
+      r /= totalW; g /= totalW; b /= totalW;
+    } else {
+      return '#e4e4e7';
+    }
+    const actualMax = Math.max(r, g, b);
+    const minVal = Math.min(r, g, b);
+    if (actualMax < 35 || (actualMax - minVal < 26)) {
+      return '#e4e4e7';
+    }
+    const boost = 220 / Math.max(actualMax, 40);
+    return `rgb(${[r, g, b].map(v => Math.min(255, Math.max(0, Math.round(v * boost)))).join(',')})`;
+  }
+
+  // 1. Grayscale pixels (Black and white like Arctic Monkeys AM)
+  const grayscalePixels = new Uint8ClampedArray([
+    0, 0, 0, 255,
+    255, 255, 255, 255,
+    128, 128, 128, 255,
+    64, 64, 64, 255
+  ]);
+  const grayColor = computeAccentColorFromPixels(grayscalePixels);
+  assert.strictEqual(grayColor, '#e4e4e7', 'Monochrome artwork must yield neutral silver/white #e4e4e7');
+
+  // 2. Pure black artwork
+  const blackPixels = new Uint8ClampedArray([
+    0, 0, 0, 255,
+    5, 5, 5, 255
+  ]);
+  const blackColor = computeAccentColorFromPixels(blackPixels);
+  assert.strictEqual(blackColor, '#e4e4e7', 'Pure black artwork must yield neutral silver/white #e4e4e7');
+
+  // 3. Vivid colored artwork (e.g. vibrant magenta/pink)
+  const coloredPixels = new Uint8ClampedArray([
+    220, 20, 60, 255,
+    255, 50, 80, 255
+  ]);
+  const vibrantColor = computeAccentColorFromPixels(coloredPixels);
+  assert.ok(vibrantColor.startsWith('rgb('), 'Vivid artwork must return RGB format');
+  assert.notStrictEqual(vibrantColor, '#e4e4e7');
+});

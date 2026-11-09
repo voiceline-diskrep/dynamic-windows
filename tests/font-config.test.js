@@ -6,20 +6,22 @@ const fs = require('fs');
 const configManager = require('../src/main/config-manager');
 
 test('FontConfig: default font family is Theater', () => {
+  assert.strictEqual(configManager.DEFAULT_CONFIG.fontFamily, 'Theater');
   const font = configManager.get('fontFamily');
-  assert.strictEqual(font, 'Theater');
+  assert.ok(typeof font === 'string' && font.length > 0);
 });
 
 test('FontConfig: can update and persist custom font family', () => {
-  configManager.set('fontFamily', 'Inter');
-  assert.strictEqual(configManager.get('fontFamily'), 'Inter');
+  const initial = configManager.get('fontFamily');
+  try {
+    configManager.set('fontFamily', 'Inter');
+    assert.strictEqual(configManager.get('fontFamily'), 'Inter');
 
-  configManager.set('fontFamily', 'Consolas');
-  assert.strictEqual(configManager.get('fontFamily'), 'Consolas');
-
-  // Reset back to Theater
-  configManager.set('fontFamily', 'Theater');
-  assert.strictEqual(configManager.get('fontFamily'), 'Theater');
+    configManager.set('fontFamily', 'Consolas');
+    assert.strictEqual(configManager.get('fontFamily'), 'Consolas');
+  } finally {
+    configManager.set('fontFamily', initial);
+  }
 });
 
 test('FontConfig: Theater font asset exists in repository bundle', () => {
