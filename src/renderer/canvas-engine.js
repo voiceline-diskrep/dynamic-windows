@@ -27,6 +27,56 @@ const { soundFX } = require('./sound-fx');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
+// -------------------------------------------------------------
+// Typography & Custom Font Management (Theater default)
+// -------------------------------------------------------------
+let appFontFamily = 'Theater';
+try {
+  const savedFont = localStorage.getItem('app_font_family');
+  if (savedFont) appFontFamily = savedFont;
+} catch (e) {}
+
+function applyFontFamily(font) {
+  if (!font || typeof font !== 'string') return;
+  appFontFamily = font.trim();
+  try { localStorage.setItem('app_font_family', appFontFamily); } catch (e) {}
+  document.documentElement.style.setProperty('--app-font-family', `"${appFontFamily}", 'Segoe UI Variable Text', -apple-system, sans-serif`);
+}
+
+// Global Canvas font setter interception for dynamic typography
+const proto = CanvasRenderingContext2D.prototype;
+const origFontDesc = Object.getOwnPropertyDescriptor(proto, 'font');
+if (origFontDesc && origFontDesc.set) {
+  Object.defineProperty(proto, 'font', {
+    get() {
+      return origFontDesc.get.call(this);
+    },
+    set(val) {
+      if (typeof val === 'string' && appFontFamily && appFontFamily !== 'Default') {
+        if (!val.includes(`"${appFontFamily}"`) && !val.includes(`'${appFontFamily}'`)) {
+          const replaced = val.replace(/"Segoe UI Variable (?:Text|Display)"|'Segoe UI Variable (?:Text|Display)'|Inter/g, `"${appFontFamily}", "Segoe UI Variable Text"`);
+          if (replaced !== val) {
+            origFontDesc.set.call(this, replaced);
+            return;
+          }
+        }
+      }
+      origFontDesc.set.call(this, val);
+    },
+    configurable: true,
+    enumerable: true
+  });
+}
+
+ipcRenderer.on('font-family-changed', (event, data) => {
+  if (data && data.fontFamily) {
+    applyFontFamily(data.fontFamily);
+  }
+});
+ipcRenderer.invoke('get-font-family').then(font => {
+  if (font) applyFontFamily(font);
+}).catch(() => {});
+
 
 // -------------------------------------------------------------
 // Interactive Inline Modal Support (Calendar Notes, To-Do Tasks, Categories)
@@ -293,7 +343,7 @@ let calendarViewYear = new Date().getFullYear();
 let calendarViewMonth = new Date().getMonth(); // 0-11
 
 // Clock & Timer State
-let clockSubMode = 'timer'; // 'timer' | 'stopwatch' | 'focus'
+let clockSubMode = 'timer'; // 'timer' | 'stopwatch' | 'focus' | 'alarm'
 let timerDurationSec = 300;
 let timerRemainingSec = 300;
 let timerRunning = false;
@@ -312,6 +362,77 @@ let focusRemainingSec = 25 * 60;
 let focusRunning = false;
 let focusLastTick = null;
 let focusSessionsCompleted = 0;
+
+// Alarm State
+let alarmsList = [];
+try {
+  const saved = localStorage.getItem('saved_alarms');
+  if (saved) alarmsList = JSON.parse(saved);
+} catch (e) { alarmsList = []; }
+
+function saveAlarms() {
+  try { localStorage.setItem('saved_alarms', JSON.stringify(alarmsList)); } catch (e) {}
+}
+
+let alarmPickerHour = 7;
+let alarmPickerMinute = 0;
+let alarmPickerAmPm = 'AM';
+let activeAlarmRinging = null;
+let alarmChimeInterval = null;
+
+function triggerAlarm(alarm) {
+  const timeStr = `${String(alarm.hour).padStart(2, '0')}:${String(alarm.minute).padStart(2, '0')} ${alarm.ampm}`;
+  activeAlarmRinging = {
+    alarmId: alarm.id,
+    timeStr: timeStr,
+    label: alarm.label || 'Alarm',
+    triggeredAt: Date.now()
+  };
+  currentView = 'clock';
+  clockSubMode = 'alarm';
+  targetProgress = 1.0;
+  soundFX.play('alarm', true);
+  if (alarmChimeInterval) clearInterval(alarmChimeInterval);
+  alarmChimeInterval = setInterval(() => {
+    if (activeAlarmRinging) {
+      soundFX.play('alarm', true);
+    } else {
+      clearInterval(alarmChimeInterval);
+      alarmChimeInterval = null;
+    }
+  }, 2400);
+}
+
+function dismissActiveAlarm() {
+  activeAlarmRinging = null;
+  if (alarmChimeInterval) {
+    clearInterval(alarmChimeInterval);
+    alarmChimeInterval = null;
+  }
+}
+
+function snoozeActiveAlarm() {
+  if (!activeAlarmRinging) return;
+  const now = new Date();
+  const snoozeTime = new Date(now.getTime() + 5 * 60 * 1000);
+  let sh = snoozeTime.getHours();
+  const sm = snoozeTime.getMinutes();
+  const sampm = sh >= 12 ? 'PM' : 'AM';
+  sh = sh % 12 || 12;
+
+  const snoozeAlarm = {
+    id: 'snooze_' + Date.now(),
+    hour: sh,
+    minute: sm,
+    ampm: sampm,
+    label: 'Snoozed (+5m)',
+    enabled: true,
+    lastTriggeredDate: null
+  };
+  alarmsList.push(snoozeAlarm);
+  saveAlarms();
+  dismissActiveAlarm();
+}
 let islandOpacity = 0.95;
 
 try {
@@ -1625,6 +1746,48 @@ function handleButtonClick(id, data) {
     focusRunning = false;
     focusMode = 'work';
     focusRemainingSec = focusWorkDurationMin * 60;
+  } else if (id === 'alarm_hour_inc') {
+    alarmPickerHour = (alarmPickerHour % 12) + 1;
+  } else if (id === 'alarm_hour_dec') {
+    alarmPickerHour = ((alarmPickerHour - 2 + 12) % 12) + 1;
+  } else if (id === 'alarm_min_inc') {
+    alarmPickerMinute = (alarmPickerMinute + 1) % 60;
+  } else if (id === 'alarm_min_dec') {
+    alarmPickerMinute = (alarmPickerMinute - 1 + 60) % 60;
+  } else if (id === 'alarm_toggle_ampm') {
+    alarmPickerAmPm = alarmPickerAmPm === 'AM' ? 'PM' : 'AM';
+  } else if (id === 'alarm_add_btn') {
+    const newAlarm = {
+      id: 'alarm_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      hour: alarmPickerHour,
+      minute: alarmPickerMinute,
+      ampm: alarmPickerAmPm,
+      label: 'Alarm',
+      enabled: true,
+      lastTriggeredDate: null
+    };
+    alarmsList.push(newAlarm);
+    saveAlarms();
+    soundFX.play('switch');
+  } else if (id && id.startsWith('alarm_toggle_')) {
+    const alId = id.replace('alarm_toggle_', '');
+    const found = alarmsList.find(a => a.id === alId);
+    if (found) {
+      found.enabled = !found.enabled;
+      saveAlarms();
+      soundFX.play('switch');
+    }
+  } else if (id && id.startsWith('alarm_del_')) {
+    const alId = id.replace('alarm_del_', '');
+    alarmsList = alarmsList.filter(a => a.id !== alId);
+    saveAlarms();
+    soundFX.play('tap');
+  } else if (id === 'alarm_snooze') {
+    snoozeActiveAlarm();
+    soundFX.play('switch');
+  } else if (id === 'alarm_dismiss') {
+    dismissActiveAlarm();
+    soundFX.play('tap');
   } else if (id === 'nav_todo') {
     currentView = 'todo';
   } else if (id && id.startsWith('todo_cat_')) {
@@ -2028,6 +2191,28 @@ function animate(now) {
     }
   }
 
+  // Real-time Alarm Check
+  const currentDate = new Date();
+  const curHours = currentDate.getHours();
+  const curMins = currentDate.getMinutes();
+  const curSecs = currentDate.getSeconds();
+  const todayKey = currentDate.toISOString().slice(0, 10);
+
+  if (curSecs === 0 && alarmsList && alarmsList.length > 0 && !activeAlarmRinging) {
+    for (let i = 0; i < alarmsList.length; i++) {
+      const al = alarmsList[i];
+      if (!al.enabled) continue;
+      let alHour24 = al.hour % 12;
+      if (al.ampm === 'PM') alHour24 += 12;
+      if (curHours === alHour24 && curMins === al.minute && al.lastTriggeredDate !== todayKey) {
+        al.lastTriggeredDate = todayKey;
+        saveAlarms();
+        triggerAlarm(al);
+        break;
+      }
+    }
+  }
+
   // Fluid Spring / Lerp towards targetProgress
   const speed = (targetProgress > animProgress ? 8.5 : 9.5) * animSpeedMultiplier;
   animProgress += (targetProgress - animProgress) * Math.min(1.0, dt * speed);
@@ -2111,6 +2296,17 @@ window.addEventListener('wheel', (e) => {
     } else if (hoveredButtonId && hoveredButtonId.startsWith('timer_')) {
       e.preventDefault();
       adjustTimerMins(delta);
+    }
+  } else if (currentView === 'clock' && clockSubMode === 'alarm') {
+    const delta = e.deltaY < 0 ? 1 : -1;
+    if (hoveredButtonId === 'alarm_col_h' || hoveredButtonId === 'alarm_inc_h' || hoveredButtonId === 'alarm_dec_h') {
+      e.preventDefault();
+      alarmPickerHour = ((alarmPickerHour - 1 + delta + 12) % 12) + 1;
+      soundFX.play('tap');
+    } else if (hoveredButtonId === 'alarm_col_m' || hoveredButtonId === 'alarm_inc_m' || hoveredButtonId === 'alarm_dec_m') {
+      e.preventDefault();
+      alarmPickerMinute = (alarmPickerMinute + delta + 60) % 60;
+      soundFX.play('tap');
     }
   }
 }, { passive: false });
@@ -2256,7 +2452,7 @@ function getTargetHeight(p) {
   if (currentView === 'calendar') {
     expH = UI.CALENDAR_H;
   } else if (currentView === 'clock') {
-    expH = UI.CLOCK_H;
+    expH = activeAlarmRinging ? 280 : ((clockSubMode === 'alarm' && alarmsList.length > 1) ? 290 : UI.CLOCK_H);
   } else if (currentView === 'todo') {
     expH = UI.TODO_H;
   } else if (currentView === 'agent') {
@@ -4177,11 +4373,12 @@ function renderClockTabView(x, y, w, h) {
   const contentW = w - padding * 2;
   const contentX = x + padding;
 
-  // Sub-mode switcher pills at top: [ Timer ] [ Stopwatch ] [ Focus Mode ]
+  // Sub-mode switcher pills at top: [ Timer ] [ Stopwatch ] [ Focus Mode ] [ Alarm ]
   const modes = [
-    { id: 'timer', label: '⏳ Timer', w: 84 },
-    { id: 'stopwatch', label: '⏱️ Stopwatch', w: 96 },
-    { id: 'focus', label: '🎯 Focus Mode', w: 104 }
+    { id: 'timer', label: '⏳ Timer', w: 80 },
+    { id: 'stopwatch', label: '⏱️ Stopwatch', w: 92 },
+    { id: 'focus', label: '🎯 Focus Mode', w: 98 },
+    { id: 'alarm', label: '⏰ Alarm', w: 82 }
   ];
   const modeH = 22;
   let curX = contentX;
@@ -4563,6 +4760,328 @@ function renderClockTabView(x, y, w, h) {
     ctx.fillStyle = isRstHov ? '#ffffff' : '#cbd5e1';
     ctx.fillText('Reset', rstX + rstW / 2, btnRowY + ctlH / 2);
     interactiveButtons.push({ id: 'focus_reset', x: rstX, y: btnRowY, w: rstW, h: ctlH });
+  } else if (clockSubMode === 'alarm') {
+    // ---------------------------------------------------------
+    // 4. CLOCK SUB-MODE: ALARM
+    // ---------------------------------------------------------
+    if (activeAlarmRinging) {
+      // Ringing Alert Banner (pulsing red/amber glow)
+      const bannerW = contentW;
+      const bannerH = 140;
+      const bannerX = contentX;
+      const bannerY = stageY + 6;
+
+      const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 150);
+      ctx.save();
+      ctx.shadowColor = `rgba(239, 68, 68, ${0.4 + 0.3 * pulse})`;
+      ctx.shadowBlur = 18;
+      ctx.beginPath();
+      ctx.roundRect(bannerX, bannerY, bannerW, bannerH, 12);
+      const ringGrad = ctx.createLinearGradient(bannerX, bannerY, bannerX, bannerY + bannerH);
+      ringGrad.addColorStop(0.0, 'rgba(185, 28, 28, 0.45)');
+      ringGrad.addColorStop(0.5, 'rgba(153, 27, 27, 0.35)');
+      ringGrad.addColorStop(1.0, 'rgba(69, 10, 10, 0.45)');
+      ctx.fillStyle = ringGrad;
+      ctx.fill();
+
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = `rgba(248, 113, 113, ${0.6 + 0.3 * pulse})`;
+      ctx.stroke();
+      ctx.restore();
+
+      // Pulsing Icon & Alarm Title
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#fca5a5';
+      ctx.fillText('⏰ ALARM RINGING', bannerX + bannerW / 2, bannerY + 28);
+
+      ctx.font = '700 36px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(activeAlarmRinging.timeStr, bannerX + bannerW / 2, bannerY + 65);
+      ctx.restore();
+
+      // Action Buttons: Snooze (+5m) & Dismiss
+      const btnH = 32;
+      const snzW = 130;
+      const dsmW = 110;
+      const btnGap = 12;
+      const totalBtnW = snzW + dsmW + btnGap;
+      const snzX = bannerX + (bannerW - totalBtnW) / 2;
+      const dsmX = snzX + snzW + btnGap;
+      const btnY = bannerY + 98;
+
+      const isSnzHov = hoveredButtonId === 'alarm_snooze';
+      ctx.beginPath();
+      ctx.roundRect(snzX, btnY, snzW, btnH, 8);
+      ctx.fillStyle = isSnzHov ? '#d97706' : '#f59e0b';
+      ctx.fill();
+      ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('💤 Snooze (+5m)', snzX + snzW / 2, btnY + btnH / 2);
+      interactiveButtons.push({ id: 'alarm_snooze', x: snzX, y: btnY, w: snzW, h: btnH });
+
+      const isDsmHov = hoveredButtonId === 'alarm_dismiss';
+      ctx.beginPath();
+      ctx.roundRect(dsmX, btnY, dsmW, btnH, 8);
+      ctx.fillStyle = isDsmHov ? '#dc2626' : '#ef4444';
+      ctx.fill();
+      ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✕ Dismiss', dsmX + dsmW / 2, btnY + btnH / 2);
+      interactiveButtons.push({ id: 'alarm_dismiss', x: dsmX, y: btnY, w: dsmW, h: btnH });
+
+    } else {
+      // Normal Alarm View: [ Left Dial Picker ] + [ Right Saved Alarms List ]
+      const dialCardW = 210;
+      const dialCardH = 154;
+      const dialCardX = contentX;
+      const dialCardY = stageY + 2;
+
+      // --- Left Card: Digital Dial Picker ---
+      ctx.beginPath();
+      ctx.roundRect(dialCardX, dialCardY, dialCardW, dialCardH, 10);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.save();
+      ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Set Alarm Time', dialCardX + 14, dialCardY + 18);
+      ctx.restore();
+
+      // Hour Column
+      const colW = 46;
+      const colH = 58;
+      const colY = dialCardY + 34;
+      const hColX = dialCardX + 16;
+
+      const isHColHov = hoveredButtonId === 'alarm_col_h' || hoveredButtonId === 'alarm_inc_h' || hoveredButtonId === 'alarm_dec_h';
+      ctx.beginPath();
+      ctx.roundRect(hColX, colY, colW, colH, 8);
+      ctx.fillStyle = isHColHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.04)';
+      ctx.strokeStyle = isHColHov ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // Up arrow
+      ctx.font = '600 9px sans-serif';
+      ctx.fillStyle = hoveredButtonId === 'alarm_inc_h' ? '#38bdf8' : '#71717a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('▲', hColX + colW / 2, colY + 9);
+      interactiveButtons.push({ id: 'alarm_inc_h', x: hColX, y: colY, w: colW, h: 16 });
+
+      // Hour digit
+      ctx.font = '700 22px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(alarmPickerHour).padStart(2, '0'), hColX + colW / 2, colY + colH / 2 + 1);
+
+      // Down arrow
+      ctx.font = '600 9px sans-serif';
+      ctx.fillStyle = hoveredButtonId === 'alarm_dec_h' ? '#38bdf8' : '#71717a';
+      ctx.fillText('▼', hColX + colW / 2, colY + colH - 9);
+      interactiveButtons.push({ id: 'alarm_dec_h', x: hColX, y: colY + colH - 16, w: colW, h: 16 });
+      interactiveButtons.push({ id: 'alarm_col_h', x: hColX, y: colY + 16, w: colW, h: colH - 32 });
+
+      // Colon ':'
+      ctx.font = '700 20px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#71717a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(':', hColX + colW + 5, colY + colH / 2);
+
+      // Minute Column
+      const mColX = hColX + colW + 11;
+      const isMColHov = hoveredButtonId === 'alarm_col_m' || hoveredButtonId === 'alarm_inc_m' || hoveredButtonId === 'alarm_dec_m';
+      ctx.beginPath();
+      ctx.roundRect(mColX, colY, colW, colH, 8);
+      ctx.fillStyle = isMColHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.04)';
+      ctx.strokeStyle = isMColHov ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      // Minute Up arrow
+      ctx.font = '600 9px sans-serif';
+      ctx.fillStyle = hoveredButtonId === 'alarm_inc_m' ? '#38bdf8' : '#71717a';
+      ctx.fillText('▲', mColX + colW / 2, colY + 9);
+      interactiveButtons.push({ id: 'alarm_inc_m', x: mColX, y: colY, w: colW, h: 16 });
+
+      // Minute digit
+      ctx.font = '700 22px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(alarmPickerMinute).padStart(2, '0'), mColX + colW / 2, colY + colH / 2 + 1);
+
+      // Minute Down arrow
+      ctx.font = '600 9px sans-serif';
+      ctx.fillStyle = hoveredButtonId === 'alarm_dec_m' ? '#38bdf8' : '#71717a';
+      ctx.fillText('▼', mColX + colW / 2, colY + colH - 9);
+      interactiveButtons.push({ id: 'alarm_dec_m', x: mColX, y: colY + colH - 16, w: colW, h: 16 });
+      interactiveButtons.push({ id: 'alarm_col_m', x: mColX, y: colY + 16, w: colW, h: colH - 32 });
+
+      // AM / PM Toggle Capsule
+      const ampmX = mColX + colW + 10;
+      const ampmW = 48;
+      const ampmH = 42;
+      const ampmY = colY + (colH - ampmH) / 2;
+      const isAmpmHov = hoveredButtonId === 'alarm_toggle_ampm';
+
+      ctx.beginPath();
+      ctx.roundRect(ampmX, ampmY, ampmW, ampmH, 8);
+      ctx.fillStyle = isAmpmHov ? '#1d4ed8' : '#2563eb';
+      ctx.strokeStyle = isAmpmHov ? '#60a5fa' : '#3b82f6';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = '700 13.5px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(alarmPickerAmPm, ampmX + ampmW / 2, ampmY + ampmH / 2);
+      interactiveButtons.push({ id: 'alarm_toggle_ampm', x: ampmX, y: ampmY, w: ampmW, h: ampmH });
+
+      // [ + Set Alarm ] Button
+      const addBtnW = dialCardW - 32;
+      const addBtnH = 28;
+      const addBtnX = dialCardX + 16;
+      const addBtnY = dialCardY + dialCardH - addBtnH - 14;
+      const isAddHov = hoveredButtonId === 'alarm_add_btn';
+
+      ctx.beginPath();
+      ctx.roundRect(addBtnX, addBtnY, addBtnW, addBtnH, 6);
+      ctx.fillStyle = isAddHov ? '#16a34a' : '#22c55e';
+      ctx.fill();
+
+      ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('+ Set Alarm', addBtnX + addBtnW / 2, addBtnY + addBtnH / 2);
+      interactiveButtons.push({ id: 'alarm_add_btn', x: addBtnX, y: addBtnY, w: addBtnW, h: addBtnH });
+
+      // --- Right Card: Saved Alarms List ---
+      const listCardX = dialCardX + dialCardW + 12;
+      const listCardW = contentW - dialCardW - 12;
+      const listCardH = dialCardH;
+      const listCardY = dialCardY;
+
+      ctx.beginPath();
+      ctx.roundRect(listCardX, listCardY, listCardW, listCardH, 10);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.save();
+      ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`Scheduled Alarms (${alarmsList.length})`, listCardX + 14, listCardY + 18);
+      ctx.restore();
+
+      if (alarmsList.length === 0) {
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '22px "Segoe UI Emoji", sans-serif';
+        ctx.fillText('⏰', listCardX + listCardW / 2, listCardY + 62);
+
+        ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText('No alarms scheduled', listCardX + listCardW / 2, listCardY + 92);
+
+        ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = '#64748b';
+        ctx.fillText('Use the dial on the left to set one', listCardX + listCardW / 2, listCardY + 112);
+        ctx.restore();
+      } else {
+        const rowH = 32;
+        const rowGap = 6;
+        const maxRows = Math.min(alarmsList.length, 3);
+        const startRowY = listCardY + 34;
+
+        for (let i = 0; i < maxRows; i++) {
+          const al = alarmsList[i];
+          const ry = startRowY + i * (rowH + rowGap);
+          const isRowHov = hoveredButtonId === `alarm_row_${al.id}`;
+
+          ctx.beginPath();
+          ctx.roundRect(listCardX + 10, ry, listCardW - 20, rowH, 7);
+          ctx.fillStyle = isRowHov ? 'rgba(255, 255, 255, 0.07)' : 'rgba(255, 255, 255, 0.03)';
+          ctx.strokeStyle = isRowHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)';
+          ctx.lineWidth = 1;
+          ctx.fill();
+          ctx.stroke();
+
+          // Alarm Icon & Time Text
+          ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+          ctx.fillStyle = al.enabled ? '#ffffff' : '#71717a';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          const timeText = `${String(al.hour).padStart(2, '0')}:${String(al.minute).padStart(2, '0')} ${al.ampm}`;
+          ctx.fillText(`⏰ ${timeText}`, listCardX + 20, ry + rowH / 2);
+
+          // Status label
+          ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
+          ctx.fillStyle = al.enabled ? '#38bdf8' : '#52525b';
+          ctx.fillText(al.enabled ? 'Active' : 'Off', listCardX + 115, ry + rowH / 2);
+
+          // Toggle Switch Capsule
+          const swW = 34;
+          const swH = 18;
+          const swX = listCardX + listCardW - 20 - swW - 28;
+          const swY = ry + (rowH - swH) / 2;
+
+          ctx.beginPath();
+          ctx.roundRect(swX, swY, swW, swH, 9);
+          ctx.fillStyle = al.enabled ? '#22c55e' : 'rgba(255, 255, 255, 0.12)';
+          ctx.fill();
+
+          // Toggle Knob
+          const knobR = 6.5;
+          const knobX = al.enabled ? (swX + swW - knobR - 2.5) : (swX + knobR + 2.5);
+          ctx.beginPath();
+          ctx.arc(knobX, swY + swH / 2, knobR, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+          interactiveButtons.push({ id: `alarm_toggle_${al.id}`, x: swX, y: swY, w: swW, h: swH });
+
+          // Delete Button ✕
+          const delW = 20;
+          const delH = 20;
+          const delX = listCardX + listCardW - 20 - delW;
+          const delY = ry + (rowH - delH) / 2;
+          const isDelHov = hoveredButtonId === `alarm_del_${al.id}`;
+
+          ctx.beginPath();
+          ctx.roundRect(delX, delY, delW, delH, 4);
+          ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.25)' : 'transparent';
+          ctx.fill();
+
+          ctx.font = '600 10.5px sans-serif';
+          ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('✕', delX + delW / 2, delY + delH / 2);
+          interactiveButtons.push({ id: `alarm_del_${al.id}`, x: delX, y: delY, w: delW, h: delH });
+        }
+      }
+    }
   }
 }
 

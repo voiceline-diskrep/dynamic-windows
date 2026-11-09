@@ -110,6 +110,9 @@ class SoundFXManager {
           case 'timer_done':
             this._playTimerDone(ctx);
             break;
+          case 'alarm':
+            this._playAlarm(ctx);
+            break;
           case 'drop':
             this._playDrop(ctx);
             break;
@@ -662,6 +665,108 @@ class SoundFXManager {
       osc.connect(gain);
       gain.connect(this.masterGain);
 
+      osc.start(start);
+      osc.stop(start + n.dur + 0.02);
+    });
+  }
+
+  // =========================================================================
+  // 5b. Alarm
+  // =========================================================================
+  _playAlarm(ctx) {
+    const t0 = ctx.currentTime;
+    const preset = this.getPreset();
+
+    if (preset === 'mechanical') {
+      const notes = [
+        { freq: 880.0, delay: 0.0, dur: 0.15 },
+        { freq: 1174.66, delay: 0.12, dur: 0.15 },
+        { freq: 1479.98, delay: 0.24, dur: 0.15 },
+        { freq: 1760.0, delay: 0.36, dur: 0.35 }
+      ];
+      notes.forEach(n => {
+        const start = t0 + n.delay;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(n.freq, start);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.linearRampToValueAtTime(0.35, start + 0.005);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + n.dur);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(start);
+        osc.stop(start + n.dur + 0.01);
+      });
+      return;
+    }
+
+    if (preset === 'soft') {
+      const notes = [
+        { freq: 523.25, delay: 0.0, dur: 0.4 },
+        { freq: 659.25, delay: 0.16, dur: 0.4 },
+        { freq: 783.99, delay: 0.32, dur: 0.4 },
+        { freq: 1046.5, delay: 0.48, dur: 0.6 }
+      ];
+      notes.forEach(n => {
+        const start = t0 + n.delay;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(n.freq, start);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.linearRampToValueAtTime(0.28, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + n.dur);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(start);
+        osc.stop(start + n.dur + 0.03);
+      });
+      return;
+    }
+
+    if (preset === 'retro') {
+      const notes = [
+        { freq: 587.33, delay: 0.0, dur: 0.12 },
+        { freq: 880.0, delay: 0.10, dur: 0.12 },
+        { freq: 1174.66, delay: 0.20, dur: 0.12 },
+        { freq: 1760.0, delay: 0.30, dur: 0.28 }
+      ];
+      notes.forEach(n => {
+        const start = t0 + n.delay;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(n.freq, start);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.linearRampToValueAtTime(0.22, start + 0.005);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + n.dur);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(start);
+        osc.stop(start + n.dur + 0.01);
+      });
+      return;
+    }
+
+    // Default 'modern': Vibrant Harmonic Alarm Arpeggio
+    const notes = [
+      { freq: 659.25, delay: 0.0, dur: 0.35 },
+      { freq: 880.0, delay: 0.14, dur: 0.35 },
+      { freq: 1108.73, delay: 0.28, dur: 0.4 },
+      { freq: 1318.51, delay: 0.42, dur: 0.7 }
+    ];
+    notes.forEach(n => {
+      const start = t0 + n.delay;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(n.freq, start);
+      gain.gain.setValueAtTime(0.001, start);
+      gain.gain.linearRampToValueAtTime(0.42, start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + n.dur);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
       osc.start(start);
       osc.stop(start + n.dur + 0.02);
     });

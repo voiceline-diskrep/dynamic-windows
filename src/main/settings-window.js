@@ -211,6 +211,13 @@ function registerSettingsIPC(dropZoneInstance) {
         }
       });
     }
+    if (newSettings && 'fontFamily' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('font-family-changed', { fontFamily: newSettings.fontFamily });
+        }
+      });
+    }
     if (newSettings && 'reserveTopBezel' in newSettings) {
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {

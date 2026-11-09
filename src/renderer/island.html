@@ -4,6 +4,17 @@
   <meta charset="UTF-8">
   <title>Dynamic Windows Island</title>
   <style>
+    @font-face {
+      font-family: 'Theater';
+      src: url('assets/fonts/Theaterv04_Bold.ttf') format('truetype'),
+           local('Theater'),
+           local('Theaterv04_Bold');
+      font-weight: normal;
+      font-style: normal;
+    }
+    :root {
+      --app-font-family: 'Theater', 'Segoe UI Variable Text', -apple-system, sans-serif;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       width: 100%;
@@ -11,7 +22,7 @@
       overflow: hidden;
       background: transparent;
       user-select: none;
-      font-family: 'Segoe UI Variable Display', 'Segoe UI', Inter, -apple-system, sans-serif;
+      font-family: var(--app-font-family);
     }
     #canvas {
       position: absolute;

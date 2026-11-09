@@ -4,11 +4,22 @@
   <meta charset="UTF-8">
   <title>Settings & Preferences — Dynamic Windows</title>
   <style>
+    @font-face {
+      font-family: 'Theater';
+      src: url('assets/fonts/Theaterv04_Bold.ttf') format('truetype'),
+           local('Theater'),
+           local('Theaterv04_Bold');
+      font-weight: normal;
+      font-style: normal;
+    }
+    :root {
+      --app-font-family: 'Theater', 'Segoe UI Variable Text', -apple-system, sans-serif;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background-color: #0d0d11;
       color: #e4e4e7;
-      font-family: 'Segoe UI Variable Display', 'Segoe UI', -apple-system, sans-serif;
+      font-family: var(--app-font-family);
       user-select: none;
       display: flex;
       height: 100vh;
@@ -526,6 +537,42 @@
       </div>
 
       <div class="card">
+        <div class="card-header">Typography & App Font</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Font Family</span>
+            <span class="setting-desc">Choose a font preset or type any installed font family.</span>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;" id="font-presets-container">
+            <button class="btn btn-font-preset" data-font="Theater">🎭 Theater</button>
+            <button class="btn btn-font-preset" data-font="Segoe UI Variable Text">Segoe UI</button>
+            <button class="btn btn-font-preset" data-font="Inter">Modern Inter</button>
+            <button class="btn btn-font-preset" data-font="Impact">Impact Bold</button>
+            <button class="btn btn-font-preset" data-font="Consolas">Monospace</button>
+          </div>
+        </div>
+        <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
+          <div class="setting-info">
+            <span class="setting-label">Custom Font Name</span>
+            <span class="setting-desc">Enter any font installed on your system.</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <input type="text" id="setting-customFont" placeholder="e.g. Theater, Arial, Comic Sans MS..." style="background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; padding: 6px 12px; color: #ffffff; font-size: 13px; width: 220px; outline: none;">
+            <button class="btn" id="btn-apply-custom-font" type="button" style="padding: 6px 12px; font-size: 12px; font-weight: 600;">Apply</button>
+          </div>
+        </div>
+        <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
+          <div class="setting-info">
+            <span class="setting-label">Live Preview</span>
+            <span class="setting-desc">Real-time preview with active typography.</span>
+          </div>
+          <div id="font-preview-box" style="padding: 8px 14px; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; font-size: 15px; color: #38bdf8; letter-spacing: 0.3px;">
+            Dynamic Windows • 12:45 PM • ⏱️ 14:58
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-header">Animation & Transition Speed</div>
         <div class="setting-row">
           <div class="setting-info">
@@ -874,6 +921,10 @@
         }
         syncSoundControlsUI(isSoundEnabled);
 
+        // Typography / Font
+        const curFont = cfg.fontFamily || 'Theater';
+        updateFontUI(curFont);
+
         // Antigravity
         const elAntigravity = document.getElementById('setting-antigravityMonitor');
         if (elAntigravity) elAntigravity.checked = !!cfg.antigravityMonitor;
@@ -891,7 +942,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.17';
+        const currentVer = data.version || '1.4.18';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');
@@ -1031,6 +1082,50 @@
         soundFX.play('notification', true);
       }
     });
+
+    // Typography & Font Configuration Controls
+    function updateFontUI(font) {
+      document.documentElement.style.setProperty('--app-font-family', `"${font}", 'Segoe UI Variable Text', -apple-system, sans-serif`);
+      document.querySelectorAll('.btn-font-preset').forEach(btn => {
+        if (btn.dataset.font.toLowerCase() === font.toLowerCase()) {
+          btn.classList.add('btn-primary');
+        } else {
+          btn.classList.remove('btn-primary');
+        }
+      });
+      const customInput = document.getElementById('setting-customFont');
+      if (customInput) customInput.value = font;
+      const previewBox = document.getElementById('font-preview-box');
+      if (previewBox) {
+        previewBox.style.fontFamily = `"${font}", 'Segoe UI Variable Text', -apple-system, sans-serif`;
+      }
+    }
+
+    document.querySelectorAll('.btn-font-preset').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const font = btn.dataset.font;
+        if (!font) return;
+        updateFontUI(font);
+        if (typeof soundFX !== 'undefined') soundFX.play('tap', true);
+        await ipcRenderer.invoke('save-app-settings', { fontFamily: font });
+      });
+    });
+
+    const btnApplyCustomFont = document.getElementById('btn-apply-custom-font');
+    const customFontInput = document.getElementById('setting-customFont');
+    if (btnApplyCustomFont && customFontInput) {
+      const applyFont = async () => {
+        const val = customFontInput.value.trim();
+        if (!val) return;
+        updateFontUI(val);
+        if (typeof soundFX !== 'undefined') soundFX.play('tap', true);
+        await ipcRenderer.invoke('save-app-settings', { fontFamily: val });
+      };
+      btnApplyCustomFont.addEventListener('click', applyFont);
+      customFontInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') applyFont();
+      });
+    }
     bindSettingChange('setting-albumColorGradient', 'albumColorGradient');
     bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');
     bindSettingChange('setting-autoFocusAntigravity', 'autoFocusAntigravity');

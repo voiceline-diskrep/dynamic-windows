@@ -693,6 +693,17 @@ function createIslandWindow() {
     }
   });
 
+  // Typography / Font IPC
+  ipcMain.on('set-font-family', (event, font) => {
+    if (font && typeof font === 'string') {
+      configManager.set('fontFamily', font.trim());
+      sendFontFamily();
+    }
+  });
+  ipcMain.handle('get-font-family', () => {
+    return configManager.get('fontFamily') || 'Theater';
+  });
+
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
@@ -705,6 +716,7 @@ function createIslandWindow() {
     sendAlbumColorGradient();
     sendIslandOpacity();
     sendSoundEffectsConfig();
+    sendFontFamily();
     sendNotifications();
   });
 }
@@ -793,6 +805,15 @@ function sendSoundEffectsConfig() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('sound-effects-config', { enabled, volume, preset });
   }
+}
+
+function sendFontFamily() {
+  const font = configManager.get('fontFamily') || 'Theater';
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('font-family-changed', { fontFamily: font });
+    }
+  });
 }
 
 function setupTray() {

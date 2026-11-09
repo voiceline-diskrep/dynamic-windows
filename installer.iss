@@ -1,5 +1,5 @@
 #define MyAppName "Dynamic Windows"
-#define MyAppVersion "1.4.17"
+#define MyAppVersion "1.4.18"
 #define MyAppPublisher "voiceline-diskrep"
 #define MyAppURL "https://github.com/voiceline-diskrep/dynamic-windows"
 #define MyAppExeName "DynamicWindows.exe"
