@@ -23,6 +23,14 @@ window.addEventListener('unhandledrejection', (e) => {
 
 const { ipcRenderer, webUtils } = require('electron');
 const { soundFX } = require('./sound-fx');
+const {
+  TAB_ORDER,
+  getTabSwitchDirection,
+  getTabTransitionOffsets,
+  computeSlidingPillStep,
+  computeLiquidHeightStep,
+  getTargetExpandedHeight
+} = require('./tab-animation-engine');
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -415,6 +423,21 @@ let targetProgress = 0.0;
 let lastAnimState = 'resting';
 let isHovered = false;
 let currentView = 'home'; // 'home' | 'agent' | 'media' | 'dropzone' | 'clipboard' | 'prompt'
+let previousView = 'home';
+let tabTransitionStartTime = 0;
+let tabTransitionDirection = 1;
+let navIndicatorX = null;
+let navIndicatorW = null;
+let currentExpandedH = UI.HOME_H;
+let currentDt = 0.016;
+
+function switchTab(newView) {
+  if (!newView || newView === currentView) return;
+  tabTransitionDirection = getTabSwitchDirection(currentView, newView);
+  previousView = currentView;
+  currentView = newView;
+  tabTransitionStartTime = performance.now();
+}
 let leaveTimer = null;
 let dropZoneFiles = [];
 let isDraggingOver = false;
@@ -1453,18 +1476,23 @@ canvas.addEventListener('mousemove', (e) => {
     if (!isHovered) {
       isHovered = true;
       if (curP < 0.25) {
+        let nextV = 'home';
         if (hasAIPill && mouseX < curX) {
-          currentView = 'agent';
+          nextV = 'agent';
         } else if (hasTimerPill && mouseX >= curX + curW) {
-          currentView = 'clock';
+          nextV = 'clock';
           if (focusRunning) clockSubMode = 'focus';
           else if (stopwatchRunning) clockSubMode = 'stopwatch';
           else if (timerRunning) clockSubMode = 'timer';
         } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
-          currentView = 'media';
-        } else {
-          currentView = 'home';
+          nextV = 'media';
         }
+        currentView = nextV;
+        previousView = nextV;
+        tabTransitionStartTime = 0;
+        navIndicatorX = null;
+        navIndicatorW = null;
+        currentExpandedH = getTargetExpandedHeightForView(nextV);
       }
       targetProgress = 1.0;
       ipcRenderer.send('set-ignore-mouse-events', false);
@@ -1480,6 +1508,10 @@ canvas.addEventListener('mousemove', (e) => {
         isHovered = false;
         targetProgress = 0.0;
         currentView = 'home';
+        previousView = 'home';
+        tabTransitionStartTime = 0;
+        navIndicatorX = null;
+        navIndicatorW = null;
         ipcRenderer.send('island-hover-end');
         leaveTimer = null;
         setTimeout(() => {
@@ -1531,6 +1563,10 @@ canvas.addEventListener('mouseleave', () => {
     isHovered = false;
     targetProgress = 0.0;
     currentView = 'home';
+    previousView = 'home';
+    tabTransitionStartTime = 0;
+    navIndicatorX = null;
+    navIndicatorW = null;
     ipcRenderer.send('island-hover-end');
     leaveTimer = null;
     ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
@@ -1652,29 +1688,34 @@ canvas.addEventListener('click', (e) => {
     const hasAIPill = (activeProjsForPill.length > 0 || pendingPrompt !== null);
     const hasTimerPill = (timerRunning || focusRunning || stopwatchRunning);
 
+    let nextV = 'home';
     if (hasAIPill && cx < curX) {
-      currentView = 'agent';
+      nextV = 'agent';
     } else if (hasTimerPill && cx > curX + curW) {
-      currentView = 'clock';
+      nextV = 'clock';
       if (focusRunning) clockSubMode = 'focus';
       else if (stopwatchRunning) clockSubMode = 'stopwatch';
       else if (timerRunning) clockSubMode = 'timer';
     } else if (hasActiveCall() && cx > curX + curW) {
-      currentView = 'call';
+      nextV = 'call';
     } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
-      currentView = 'media';
-    } else {
-      currentView = 'home';
+      nextV = 'media';
     }
+    currentView = nextV;
+    previousView = nextV;
+    tabTransitionStartTime = 0;
+    navIndicatorX = null;
+    navIndicatorW = null;
+    currentExpandedH = getTargetExpandedHeightForView(nextV);
     targetProgress = 1.0;
   }
 });
 
 function handleButtonClick(id, data) {
   if (id === 'nav_home') {
-    currentView = 'home';
+    switchTab('home');
   } else if (id === 'nav_notif' || id === 'nav_notif_card') {
-    currentView = 'notifications';
+    switchTab('notifications');
     ipcRenderer.send('mark-notifications-read');
   } else if (id === 'notif_clear_all') {
     ipcRenderer.send('clear-all-notifications');
@@ -1696,14 +1737,14 @@ function handleButtonClick(id, data) {
   } else if (id === 'notif_banner_dismiss') {
     notificationBannerUntil = 0;
     targetProgress = 0.0;
-    currentView = 'home';
+    switchTab('home');
   } else if (id === 'notif_banner_click') {
     if (activeNotification && activeNotification.app === 'Dynamic Windows' && activeNotification.icon === '👋') {
-      currentView = 'home';
+      switchTab('home');
       activeNotification = null;
       notificationBannerUntil = 0;
     } else {
-      currentView = 'notifications';
+      switchTab('notifications');
       ipcRenderer.send('mark-notifications-read');
     }
   } else if (id === 'btn_edit_user_name') {
@@ -1711,7 +1752,7 @@ function handleButtonClick(id, data) {
   } else if (id === 'btn_cycle_greeting') {
     activeGreeting = getNextPersonalizedGreeting(currentUserName);
   } else if (id === 'nav_calendar') {
-    currentView = 'calendar';
+    switchTab('calendar');
   } else if (id === 'cal_prev_month') {
     calendarViewMonth--;
     if (calendarViewMonth < 0) {
@@ -1749,7 +1790,7 @@ function handleButtonClick(id, data) {
   } else if (id && id.startsWith('cal_del_')) {
     ipcRenderer.invoke('calendar-delete-note', data);
   } else if (id === 'nav_clock') {
-    currentView = 'clock';
+    switchTab('clock');
     if (focusRunning) clockSubMode = 'focus';
     else if (stopwatchRunning) clockSubMode = 'stopwatch';
     else if (timerRunning) clockSubMode = 'timer';
@@ -1872,7 +1913,7 @@ function handleButtonClick(id, data) {
     dismissActiveAlarm();
     soundFX.play('tap');
   } else if (id === 'nav_todo') {
-    currentView = 'todo';
+    switchTab('todo');
   } else if (id && id.startsWith('todo_cat_')) {
     todoSelectedCategory = data;
   } else if (id === 'todo_add_category_btn') {
@@ -1907,37 +1948,37 @@ function handleButtonClick(id, data) {
   } else if (id && id.startsWith('todo_del_')) {
     ipcRenderer.invoke('todo-delete-task', data);
   } else if (id === 'nav_agent') {
-    currentView = 'agent';
+    switchTab('agent');
     targetProgress = 1.0;
   } else if (id === 'nav_call') {
-    currentView = 'call';
+    switchTab('call');
   } else if (id === 'nav_media') {
-    currentView = 'media';
+    switchTab('media');
   } else if (id === 'call_toggle_mute') {
     ipcRenderer.send('call-action', 'toggle-mute');
   } else if (id === 'call_toggle_deafen') {
     ipcRenderer.send('call-action', 'toggle-deafen');
   } else if (id === 'call_leave') {
     ipcRenderer.send('call-action', 'leave-call');
-    currentView = 'home';
+    switchTab('home');
   } else if (id === 'call_answer') {
     ipcRenderer.send('call-action', 'answer-call');
     callState.status = 'connected';
     lastCallRinging = false;
     targetProgress = 0.0;
-    currentView = 'home';
+    switchTab('home');
   } else if (id === 'call_decline') {
     ipcRenderer.send('call-action', 'decline-call');
     callState = { inCall: false, status: 'idle', participants: [] };
     lastCallRinging = false;
     targetProgress = 0.0;
-    currentView = 'home';
+    switchTab('home');
   } else if (id === 'call_focus_app') {
     ipcRenderer.send('call-action', 'focus-app');
   } else if (id === 'nav_dropzone') {
-    currentView = 'dropzone';
+    switchTab('dropzone');
   } else if (id === 'nav_clipboard') {
-    currentView = 'clipboard';
+    switchTab('clipboard');
     ipcRenderer.send('clipboard-get');
   } else if (id === 'nav_settings') {
     ipcRenderer.send('open-settings');
@@ -1949,7 +1990,7 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('set-display-mode', displayMode);
   } else if (id === 'song_popup_open_media') {
     songPopupActiveUntil = 0;
-    currentView = 'media';
+    switchTab('media');
     targetProgress = 1.0;
   } else if (id === 'song_popup_dismiss') {
     dismissSongAnnouncement();
@@ -2269,6 +2310,7 @@ let lastTime = performance.now();
 function animate(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
+  currentDt = dt;
 
   // Clock / Timer / Stopwatch / Focus Real-Time Ticking
   if (timerRunning) {
@@ -2359,6 +2401,14 @@ function animate(now) {
       currentView = 'home';
       activeNotification = null;
     }
+  }
+
+  // Liquid spring transition for expanded view height
+  const targetExpH = getTargetExpandedHeightForView(currentView);
+  if (animProgress < 0.05) {
+    currentExpandedH = targetExpH;
+  } else {
+    currentExpandedH = computeLiquidHeightStep(currentExpandedH, targetExpH, dt, animSpeedMultiplier);
   }
 
   // Send window size updates to Electron Main
@@ -2542,43 +2592,26 @@ function getTargetWidth(p) {
   return normalW;
 }
 
+function getTargetExpandedHeightForView(view) {
+  return getTargetExpandedHeight(view, {
+    activeAlarmRinging,
+    clockSubMode,
+    alarmsCount: (alarmsList && alarmsList.length) || 0,
+    projectCount: getActiveProjects().length
+  });
+}
+
 function getTargetHeight(p) {
   if (isTucked) {
     return 14;
   }
 
-  const projs = getActiveProjects();
   let restH = UI.BAR_H;
   if (hasActiveAgent() || hasActiveCall() || (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing')) {
     restH = UI.ACTIVE_BAR_H;
   }
 
-  let expH = UI.HOME_H;
-  if (currentView === 'calendar') {
-    expH = UI.CALENDAR_H;
-  } else if (currentView === 'clock') {
-    expH = activeAlarmRinging ? 280 : ((clockSubMode === 'alarm' && alarmsList.length > 1) ? 290 : UI.CLOCK_H);
-  } else if (currentView === 'todo') {
-    expH = UI.TODO_H;
-  } else if (currentView === 'agent') {
-    const cardCount = Math.max(1, Math.min(3, projs.length));
-    expH = cardCount === 1 ? UI.AGENT_H : Math.min(340, 160 + (cardCount - 1) * 82);
-  } else if (currentView === 'call') {
-    expH = UI.CALL_H;
-  } else if (currentView === 'media') {
-    expH = UI.MEDIA_H + 34;
-  } else if (currentView === 'dropzone') {
-    expH = UI.DROPZONE_H;
-  } else if (currentView === 'clipboard') {
-    expH = UI.CLIPBOARD_H;
-  } else if (currentView === 'prompt') {
-    expH = UI.PROMPT_H;
-  } else if (currentView === 'notifications') {
-    expH = UI.NOTIF_H;
-  } else if (currentView === 'notification_banner') {
-    expH = 82;
-  }
-
+  const expH = currentExpandedH;
   const normalH = restH + (expH - restH) * easeOutQuart(p);
   if (songPopupProgress > 0.001 && p < 0.2) {
     const popK = easeOutQuart(songPopupProgress);
@@ -3682,6 +3715,32 @@ function renderTrafficLightDot(dx, dy, status) {
 // -------------------------------------------------------------
 // Expanded Island View
 // -------------------------------------------------------------
+function renderViewContent(view, x, y, w, h) {
+  if (view === 'home') {
+    renderHomeView(x, y, w, h);
+  } else if (view === 'notifications') {
+    renderNotificationCenterView(x, y, w, h);
+  } else if (view === 'calendar') {
+    renderCalendarTabView(x, y, w, h);
+  } else if (view === 'clock') {
+    renderClockTabView(x, y, w, h);
+  } else if (view === 'todo') {
+    renderTodoTabView(x, y, w, h);
+  } else if (view === 'agent') {
+    renderAgentView(x, y, w, h);
+  } else if (view === 'call') {
+    renderCallView(x, y, w, h);
+  } else if (view === 'media') {
+    renderMediaView(x, y, w, h);
+  } else if (view === 'dropzone') {
+    renderDropZoneView(x, y, w, h);
+  } else if (view === 'clipboard') {
+    renderClipboardView(x, y, w, h);
+  } else if (view === 'prompt') {
+    renderPromptView(x, y, w, h);
+  }
+}
+
 function renderExpandedView(x, y, w, h, alpha) {
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -3696,29 +3755,49 @@ function renderExpandedView(x, y, w, h, alpha) {
   // Navigation Pills at Top
   renderTopNav(x, y, w);
 
-  // View Body
-  if (currentView === 'home') {
-    renderHomeView(x, y, w, h);
-  } else if (currentView === 'notifications') {
-    renderNotificationCenterView(x, y, w, h);
-  } else if (currentView === 'calendar') {
-    renderCalendarTabView(x, y, w, h);
-  } else if (currentView === 'clock') {
-    renderClockTabView(x, y, w, h);
-  } else if (currentView === 'todo') {
-    renderTodoTabView(x, y, w, h);
-  } else if (currentView === 'agent') {
-    renderAgentView(x, y, w, h);
-  } else if (currentView === 'call') {
-    renderCallView(x, y, w, h);
-  } else if (currentView === 'media') {
-    renderMediaView(x, y, w, h);
-  } else if (currentView === 'dropzone') {
-    renderDropZoneView(x, y, w, h);
-  } else if (currentView === 'clipboard') {
-    renderClipboardView(x, y, w, h);
-  } else if (currentView === 'prompt') {
-    renderPromptView(x, y, w, h);
+  // View Body with Directional Slide & Cross-fade Transition
+  const now = performance.now();
+  const tabDuration = Math.max(120, 220 / (animSpeedMultiplier || 1.0));
+  const elapsed = now - tabTransitionStartTime;
+  const progress = tabTransitionStartTime > 0 ? Math.min(1.0, elapsed / tabDuration) : 1.0;
+  const isTransitioning = progress < 1.0 && previousView && previousView !== currentView;
+
+  if (isTransitioning) {
+    const offsets = getTabTransitionOffsets(tabTransitionDirection, progress, 26);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x - 20, y + 38, w + 40, Math.max(0, h - 38));
+    ctx.clip();
+
+    // 1. Outgoing View
+    const outAlpha = offsets.outgoingAlpha * alpha;
+    if (outAlpha > 0.01) {
+      const savedLen = interactiveButtons.length;
+      ctx.save();
+      ctx.globalAlpha = outAlpha;
+      ctx.translate(offsets.outgoingOffset, 0);
+      renderViewContent(previousView, x, y, w, h);
+      ctx.restore();
+      interactiveButtons.length = savedLen;
+    }
+
+    // 2. Incoming View
+    const inAlpha = offsets.incomingAlpha * alpha;
+    const inOffset = offsets.incomingOffset;
+    const incomingStartIndex = interactiveButtons.length;
+    ctx.save();
+    ctx.globalAlpha = inAlpha;
+    ctx.translate(inOffset, 0);
+    renderViewContent(currentView, x, y, w, h);
+    ctx.restore();
+    for (let i = incomingStartIndex; i < interactiveButtons.length; i++) {
+      interactiveButtons[i].x += inOffset;
+    }
+
+    ctx.restore();
+  } else {
+    renderViewContent(currentView, x, y, w, h);
   }
 
   ctx.restore();
@@ -4054,19 +4133,57 @@ function renderTopNav(x, y, w) {
   let curX = x + 16;
   const topY = y + 12;
 
+  let activePillX = null;
+  let activePillW = null;
+  const itemLayouts = [];
+
   navItems.forEach((item) => {
     const px = curX;
     const pillW = item.w;
     curX += pillW + spacing;
     const isCur = currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif');
-    const isHov = hoveredButtonId === item.id;
+    if (isCur) {
+      activePillX = px;
+      activePillW = pillW;
+    }
+    itemLayouts.push({ item, px, pillW, isCur });
+  });
 
+  // Smooth sliding pill interpolation
+  if (activePillX !== null) {
+    const step = computeSlidingPillStep(navIndicatorX, navIndicatorW, activePillX, activePillW, currentDt, animSpeedMultiplier);
+    navIndicatorX = step.x;
+    navIndicatorW = step.w;
+  }
+
+  // 1. Inactive pill base backgrounds
+  itemLayouts.forEach(({ item, px, pillW }) => {
+    const isHov = hoveredButtonId === item.id;
     ctx.beginPath();
     ctx.roundRect(px, topY, pillW, pillH, 11);
-    ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)';
     ctx.fill();
+  });
 
-    ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+  // 2. Smooth gliding active indicator pill
+  if (navIndicatorX !== null && navIndicatorW !== null) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(navIndicatorX, topY, navIndicatorW, pillH, 11);
+    const blueGrad = ctx.createLinearGradient(navIndicatorX, topY, navIndicatorX, topY + pillH);
+    blueGrad.addColorStop(0, '#3b82f6');
+    blueGrad.addColorStop(1, '#1d4ed8');
+    ctx.fillStyle = blueGrad;
+    ctx.shadowColor = 'rgba(37, 99, 235, 0.55)';
+    ctx.shadowBlur = 8;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 3. Tab text labels & button registration
+  itemLayouts.forEach(({ item, px, pillW, isCur }) => {
+    const isHov = hoveredButtonId === item.id;
+    ctx.font = isCur ? '700 10px "Segoe UI Variable Text", Inter, sans-serif' : '600 10px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
