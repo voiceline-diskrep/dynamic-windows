@@ -699,58 +699,6 @@
       </div>
 
       <div class="card">
-        <div class="card-header">AI Companion & Vision API Configuration</div>
-        <div class="setting-row">
-          <div class="setting-info">
-            <span class="setting-label">AI Provider</span>
-            <span class="setting-desc">Choose between Google Gemini or an OpenAI-compatible custom endpoint.</span>
-          </div>
-          <select id="setting-aiProvider" style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 6px; padding: 6px 12px; color: #ffffff; font-size: 13px; outline: none; cursor: pointer;">
-            <option value="gemini" style="background: #18181b;">Google Gemini (Fast & Multimodal Vision)</option>
-            <option value="openai" style="background: #18181b;">OpenAI-Compatible / Custom Endpoint</option>
-          </select>
-        </div>
-
-        <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
-          <div class="setting-info">
-            <span class="setting-label">API Key</span>
-            <span class="setting-desc">Enter your secret API key. Never shared or sent outside direct API requests.</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <input type="password" id="setting-aiApiKey" placeholder="AIzaSy... or sk-..." style="background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; padding: 6px 12px; color: #ffffff; font-size: 13px; width: 230px; outline: none;">
-            <button class="btn" id="btn-toggle-ai-key" type="button" style="padding: 6px 10px; font-size: 11px;">👁️</button>
-            <button class="btn btn-primary" id="btn-test-ai-key" type="button" style="padding: 6px 12px; font-size: 11px; font-weight: 600;">Test</button>
-          </div>
-        </div>
-
-        <div class="setting-row" id="row-ai-model" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
-          <div class="setting-info">
-            <span class="setting-label">Model</span>
-            <span class="setting-desc">Model for chat conversations and screen analysis.</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <select id="setting-aiModelSelect" style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 6px; padding: 6px 12px; color: #ffffff; font-size: 13px; outline: none; cursor: pointer;">
-              <option value="gemini-1.5-flash" style="background: #18181b;">gemini-1.5-flash (Fast & Lightweight)</option>
-              <option value="gemini-1.5-pro" style="background: #18181b;">gemini-1.5-pro (Deep Reasoning)</option>
-              <option value="gemini-2.0-flash" style="background: #18181b;">gemini-2.0-flash (Next-Gen)</option>
-              <option value="custom" style="background: #18181b;">Custom Model Name...</option>
-            </select>
-            <input type="text" id="setting-aiModelCustom" placeholder="e.g. gpt-4o, claude-3-5-sonnet" style="display: none; background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; padding: 6px 12px; color: #ffffff; font-size: 13px; width: 170px; outline: none;">
-          </div>
-        </div>
-
-        <div class="setting-row" id="row-ai-baseurl" style="display: none; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
-          <div class="setting-info">
-            <span class="setting-label">Custom Base URL</span>
-            <span class="setting-desc">API root for OpenAI / Ollama / Groq (default: https://api.openai.com/v1).</span>
-          </div>
-          <input type="text" id="setting-aiBaseUrl" value="https://api.openai.com/v1" style="background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; padding: 6px 12px; color: #ffffff; font-size: 13px; width: 280px; outline: none;">
-        </div>
-
-        <div id="ai-key-test-status" style="display: none; font-size: 11.5px; padding: 6px 12px; border-radius: 6px; margin-top: 8px;"></div>
-      </div>
-
-      <div class="card">
         <div class="card-header">Local Agent Hooks Server</div>
         <div class="setting-row">
           <div class="setting-info">
@@ -1001,33 +949,6 @@
         const elHooksPort = document.getElementById('setting-hooksPort');
         if (elHooksPort) elHooksPort.value = cfg.hooksPort || 47823;
 
-        // AI API Configuration
-        const aiProviderEl = document.getElementById('setting-aiProvider');
-        const aiApiKeyEl = document.getElementById('setting-aiApiKey');
-        const aiModelSelectEl = document.getElementById('setting-aiModelSelect');
-        const aiModelCustomEl = document.getElementById('setting-aiModelCustom');
-        const aiBaseUrlEl = document.getElementById('setting-aiBaseUrl');
-        const rowAiBaseUrl = document.getElementById('row-ai-baseurl');
-
-        if (aiProviderEl) aiProviderEl.value = cfg.aiProvider || 'gemini';
-        if (aiApiKeyEl) aiApiKeyEl.value = cfg.aiApiKey || '';
-        if (aiBaseUrlEl) aiBaseUrlEl.value = cfg.aiBaseUrl || 'https://api.openai.com/v1';
-
-        const curAiModel = cfg.aiModel || 'gemini-1.5-flash';
-        if (['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'].includes(curAiModel)) {
-          if (aiModelSelectEl) aiModelSelectEl.value = curAiModel;
-          if (aiModelCustomEl) aiModelCustomEl.style.display = 'none';
-        } else {
-          if (aiModelSelectEl) aiModelSelectEl.value = 'custom';
-          if (aiModelCustomEl) {
-            aiModelCustomEl.style.display = 'inline-block';
-            aiModelCustomEl.value = curAiModel;
-          }
-        }
-        if (rowAiBaseUrl) {
-          rowAiBaseUrl.style.display = (cfg.aiProvider === 'openai') ? 'flex' : 'none';
-        }
-
         // DropZone
         if (data.dropZonePath && document.getElementById('dropzone-path-text')) {
           document.getElementById('dropzone-path-text').textContent = data.dropZonePath;
@@ -1037,7 +958,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.26';
+        const currentVer = data.version || '1.4.27';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');
@@ -1245,92 +1166,6 @@
     bindSettingChange('setting-autoFocusAntigravity', 'autoFocusAntigravity');
     bindSettingChange('setting-hooksPort', 'hooksPort', true);
     bindSettingChange('setting-autoCheckUpdates', 'autoCheckUpdates');
-
-    // AI Settings Listeners
-    const aiProviderEl = document.getElementById('setting-aiProvider');
-    const aiApiKeyEl = document.getElementById('setting-aiApiKey');
-    const aiModelSelectEl = document.getElementById('setting-aiModelSelect');
-    const aiModelCustomEl = document.getElementById('setting-aiModelCustom');
-    const aiBaseUrlEl = document.getElementById('setting-aiBaseUrl');
-    const rowAiBaseUrl = document.getElementById('row-ai-baseurl');
-    const btnToggleAiKey = document.getElementById('btn-toggle-ai-key');
-    const btnTestAiKey = document.getElementById('btn-test-ai-key');
-    const aiTestStatus = document.getElementById('ai-key-test-status');
-
-    function syncAiSettings() {
-      const provider = aiProviderEl?.value || 'gemini';
-      let model = aiModelSelectEl?.value || 'gemini-1.5-flash';
-      if (model === 'custom') {
-        model = (aiModelCustomEl?.value || '').trim() || 'gpt-4o';
-      }
-      const apiKey = (aiApiKeyEl?.value || '').trim();
-      const baseUrl = (aiBaseUrlEl?.value || '').trim() || 'https://api.openai.com/v1';
-
-      if (rowAiBaseUrl) {
-        rowAiBaseUrl.style.display = provider === 'openai' ? 'flex' : 'none';
-      }
-      if (aiModelCustomEl) {
-        aiModelCustomEl.style.display = aiModelSelectEl?.value === 'custom' ? 'inline-block' : 'none';
-      }
-
-      ipcRenderer.invoke('save-app-settings', {
-        aiProvider: provider,
-        aiApiKey: apiKey,
-        aiModel: model,
-        aiBaseUrl: baseUrl
-      });
-    }
-
-    aiProviderEl?.addEventListener('change', syncAiSettings);
-    aiApiKeyEl?.addEventListener('change', syncAiSettings);
-    aiModelSelectEl?.addEventListener('change', syncAiSettings);
-    aiModelCustomEl?.addEventListener('change', syncAiSettings);
-    aiBaseUrlEl?.addEventListener('change', syncAiSettings);
-
-    btnToggleAiKey?.addEventListener('click', () => {
-      if (!aiApiKeyEl) return;
-      aiApiKeyEl.type = aiApiKeyEl.type === 'password' ? 'text' : 'password';
-    });
-
-    btnTestAiKey?.addEventListener('click', async () => {
-      syncAiSettings();
-      if (!aiApiKeyEl || !aiApiKeyEl.value.trim()) {
-        if (aiTestStatus) {
-          aiTestStatus.style.display = 'block';
-          aiTestStatus.style.background = 'rgba(239, 68, 68, 0.2)';
-          aiTestStatus.style.color = '#f87171';
-          aiTestStatus.textContent = 'Please enter an API key first.';
-        }
-        return;
-      }
-      btnTestAiKey.disabled = true;
-      btnTestAiKey.textContent = 'Testing...';
-      if (aiTestStatus) {
-        aiTestStatus.style.display = 'block';
-        aiTestStatus.style.background = 'rgba(56, 189, 248, 0.15)';
-        aiTestStatus.style.color = '#38bdf8';
-        aiTestStatus.textContent = 'Connecting to API...';
-      }
-      try {
-        const testRes = await ipcRenderer.invoke('ai-send-message', {
-          text: 'Hello, respond with: OK'
-        });
-        if (aiTestStatus) {
-          aiTestStatus.style.background = 'rgba(34, 197, 94, 0.2)';
-          aiTestStatus.style.color = '#4ade80';
-          aiTestStatus.textContent = '✓ Connected successfully! AI response: ' + (testRes.reply || 'OK');
-        }
-      } catch (err) {
-        if (aiTestStatus) {
-          aiTestStatus.style.background = 'rgba(239, 68, 68, 0.2)';
-          aiTestStatus.style.color = '#f87171';
-          aiTestStatus.textContent = '✗ Connection failed: ' + err.message;
-        }
-      } finally {
-        btnTestAiKey.disabled = false;
-        btnTestAiKey.textContent = 'Test';
-      }
-    });
 
     // Buttons
     document.getElementById('btn-open-dropzone')?.addEventListener('click', () => {

@@ -442,17 +442,8 @@ function switchTab(newView) {
 let leaveTimer = null;
 let dropZoneFiles = [];
 let isDraggingOver = false;
-let dropZoneHoverZone = 'onetime'; // 'onetime' | 'keep' | 'send_to_ai'
+let dropZoneHoverZone = 'onetime'; // 'onetime' | 'keep'
 let lastDraggedShelfCandidate = null;
-
-// AI Companion & Vision Chat State
-let aiSubMode = 'chat'; // 'chat' | 'monitor'
-let aiSessions = [];
-let aiActiveSessionId = null;
-let aiActiveSession = null;
-let aiPendingAttachments = [];
-let aiIsGenerating = false;
-let aiConfig = { aiProvider: 'gemini', aiApiKey: '', aiModel: 'gemini-1.5-flash', aiBaseUrl: 'https://api.openai.com/v1' };
 
 // Calendar State
 let calendarNotes = [];
@@ -1377,19 +1368,12 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Drag & Drop Shelf Support inside Island / Notch (3-Zone: One-Time vs Keep vs Send to AI)
+// Drag & Drop Shelf Support inside Island / Notch (Dual-Zone: One-Time vs Keep)
 window.addEventListener('dragover', (e) => {
   e.preventDefault();
   e.stopPropagation();
-  const screenW = window.innerWidth;
-  const oneThird = screenW / 3;
-  if (e.clientX < oneThird) {
-    dropZoneHoverZone = 'onetime';
-  } else if (e.clientX < oneThird * 2) {
-    dropZoneHoverZone = 'keep';
-  } else {
-    dropZoneHoverZone = 'send_to_ai';
-  }
+  const splitX = window.innerWidth / 2;
+  dropZoneHoverZone = e.clientX < splitX ? 'onetime' : 'keep';
   if (!isDraggingOver) {
     isDraggingOver = true;
     targetProgress = 1.0;
@@ -1409,16 +1393,7 @@ window.addEventListener('drop', (e) => {
   e.stopPropagation();
   isDraggingOver = false;
   soundFX.play('drop');
-
-  const screenW = window.innerWidth;
-  const oneThird = screenW / 3;
-  let targetZone = 'onetime';
-  if (e.clientX >= oneThird * 2) {
-    targetZone = 'send_to_ai';
-  } else if (e.clientX >= oneThird) {
-    targetZone = 'keep';
-  }
-
+  const isOneTime = e.clientX < (window.innerWidth / 2);
   if (e.dataTransfer) {
     const fileList = e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
     if (fileList.length === 0 && e.dataTransfer.items) {
@@ -1429,41 +1404,18 @@ window.addEventListener('drop', (e) => {
         }
       }
     }
-
-    if (targetZone === 'send_to_ai') {
-      switchTab('agent');
-      aiSubMode = 'chat';
-      for (const file of fileList) {
-        let filePath = null;
-        try {
-          if (webUtils && typeof webUtils.getPathForFile === 'function') {
-            filePath = webUtils.getPathForFile(file);
-          }
-        } catch (err) {}
-        if (!filePath && file && file.path) {
-          filePath = file.path;
+    for (const file of fileList) {
+      let filePath = null;
+      try {
+        if (webUtils && typeof webUtils.getPathForFile === 'function') {
+          filePath = webUtils.getPathForFile(file);
         }
-        if (filePath) {
-          addAiPendingAttachment(filePath);
-        }
+      } catch (err) {}
+      if (!filePath && file && file.path) {
+        filePath = file.path;
       }
-      syncAiAttachmentsTray();
-      focusAiInput();
-    } else {
-      const isOneTime = targetZone === 'onetime';
-      for (const file of fileList) {
-        let filePath = null;
-        try {
-          if (webUtils && typeof webUtils.getPathForFile === 'function') {
-            filePath = webUtils.getPathForFile(file);
-          }
-        } catch (err) {}
-        if (!filePath && file && file.path) {
-          filePath = file.path;
-        }
-        if (filePath) {
-          ipcRenderer.send('dropzone-add-file', { filePath, isOneTime });
-        }
+      if (filePath) {
+        ipcRenderer.send('dropzone-add-file', { filePath, isOneTime });
       }
     }
   }
@@ -2477,24 +2429,6 @@ function animate(now) {
     console.error('Render error:', err);
   }
 
-  // Update AI Chat Overlay DOM synchronization
-  const chatOverlay = document.getElementById('ai-chat-overlay');
-  const mcpActive = isMcpActive();
-  const showChat = (currentView === 'agent') && (!mcpActive || aiSubMode === 'chat');
-  if (chatOverlay) {
-    if (showChat && animProgress > 0.35) {
-      if (!chatOverlay.classList.contains('active')) {
-        chatOverlay.classList.add('active');
-      }
-      chatOverlay.style.width = `${Math.min(640, Math.round(currentWidth - 36))}px`;
-      chatOverlay.style.height = `${Math.max(160, Math.round(currentHeight - 46))}px`;
-    } else {
-      if (chatOverlay.classList.contains('active')) {
-        chatOverlay.classList.remove('active');
-      }
-    }
-  }
-
   requestAnimationFrame(animate);
 }
 
@@ -2568,11 +2502,6 @@ function getActiveProjects() {
 function hasActiveAgent() {
   const projs = getActiveProjects();
   return projs.some(p => ['running', 'thinking', 'waiting'].includes(p.status)) || pendingPrompt !== null;
-}
-
-function isMcpActive() {
-  const projs = getActiveProjects();
-  return projs.some(p => ['running', 'thinking', 'waiting'].includes(p.status) && p.status !== 'not_running' && p.project !== 'idle') || pendingPrompt !== null;
 }
 
 function truncateToWidth(text, maxW, font) {
@@ -2658,26 +2587,21 @@ function getRestingWidth() {
 
 function getTargetWidth(p) {
   const restW = getRestingWidth();
-  const isAiChatExpanded = (currentView === 'agent' && (!isMcpActive() || aiSubMode === 'chat'));
-  const targetExpW = isAiChatExpanded ? 680 : UI.EXPANDED_W;
-  const normalW = restW + (targetExpW - restW) * easeOutQuart(p);
+  const normalW = restW + (UI.EXPANDED_W - restW) * easeOutQuart(p);
   if (songPopupProgress > 0.001 && p < 0.2) {
     const popK = easeOutQuart(songPopupProgress);
-    const targetW = displayMode === 'notch' ? targetExpW : SONG_POPUP_WIDTH;
+    const targetW = displayMode === 'notch' ? UI.EXPANDED_W : SONG_POPUP_WIDTH;
     return normalW + (targetW - normalW) * popK;
   }
   return normalW;
 }
 
 function getTargetExpandedHeightForView(view) {
-  const isAiChat = (view === 'agent' && (!isMcpActive() || aiSubMode === 'chat'));
   return getTargetExpandedHeight(view, {
     activeAlarmRinging,
     clockSubMode,
     alarmsCount: (alarmsList && alarmsList.length) || 0,
-    projectCount: getActiveProjects().length,
-    aiSubMode: isAiChat ? 'chat' : 'monitor',
-    isAiChat
+    projectCount: getActiveProjects().length
   });
 }
 
@@ -5891,27 +5815,6 @@ function renderHomeView(x, y, w, h) {
 // Antigravity Real-Time Monitor View with 4-Segment Progress Bar
 // -------------------------------------------------------------
 function renderAgentView(x, y, w, h) {
-  const mcpActive = isMcpActive();
-  const showChat = !mcpActive || aiSubMode === 'chat';
-
-  // Toggle DOM overlay visibility
-  const chatOverlay = document.getElementById('ai-chat-overlay');
-  const modeToggleBar = document.getElementById('ai-mode-toggle-bar');
-  if (chatOverlay) {
-    if (showChat && animProgress > 0.35) {
-      if (!chatOverlay.classList.contains('active')) chatOverlay.classList.add('active');
-    } else {
-      if (chatOverlay.classList.contains('active')) chatOverlay.classList.remove('active');
-    }
-  }
-  if (modeToggleBar) {
-    modeToggleBar.style.display = mcpActive ? 'flex' : 'none';
-  }
-
-  if (showChat) {
-    return;
-  }
-
   const topY = y + 40;
   const contentW = w - 48;
   const contentX = x + 24;
@@ -6838,23 +6741,22 @@ function renderDropZoneView(x, y, w, h) {
   // Files Area
   const listY = topY + 30;
 
-  // --- 3-ZONE DRAG-IN OVERLAY (One-Time vs Keep vs Send to AI) ---
+  // --- DUAL-ZONE DRAG-IN OVERLAY (One-Time Use on Left vs Keep on Right) ---
   if (isDraggingOver) {
     const zoneH = 170;
-    const gap = 10;
-    const zoneW = (contentW - gap * 2) / 3;
-    const x1 = contentX;
-    const x2 = contentX + zoneW + gap;
-    const x3 = contentX + (zoneW + gap) * 2;
+    const gap = 12;
+    const zoneW = (contentW - gap) / 2;
+    const leftX = contentX;
+    const rightX = contentX + zoneW + gap;
 
-    // 1. Left Zone: ⚡ One-Time Use
+    // Left Zone: ⚡ One-Time Use
     const isOneTimeHover = dropZoneHoverZone === 'onetime';
     ctx.save();
     ctx.setLineDash([5, 5]);
     ctx.strokeStyle = isOneTimeHover ? '#f59e0b' : 'rgba(245, 158, 11, 0.45)';
     ctx.lineWidth = isOneTimeHover ? 2 : 1.5;
     ctx.beginPath();
-    ctx.roundRect(x1, listY, zoneW, zoneH, 12);
+    ctx.roundRect(leftX, listY, zoneW, zoneH, 12);
     ctx.fillStyle = isOneTimeHover ? 'rgba(245, 158, 11, 0.16)' : 'rgba(245, 158, 11, 0.05)';
     ctx.fill();
     ctx.stroke();
@@ -6862,25 +6764,25 @@ function renderDropZoneView(x, y, w, h) {
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '26px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('⚡', x1 + zoneW / 2, listY + zoneH / 2 - 28);
-    ctx.font = '700 12.5px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.font = '28px "Segoe UI Emoji", sans-serif';
+    ctx.fillText('⚡', leftX + zoneW / 2, listY + zoneH / 2 - 28);
+    ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = isOneTimeHover ? '#fbbf24' : '#f59e0b';
-    ctx.fillText('One-Time Use', x1 + zoneW / 2, listY + zoneH / 2 + 6);
-    ctx.font = '500 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillText('One-Time Use', leftX + zoneW / 2, listY + zoneH / 2 + 6);
+    ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.fillText('Auto-removes on drag out', x1 + zoneW / 2, listY + zoneH / 2 + 24);
+    ctx.fillText('Auto-removes once dragged out', leftX + zoneW / 2, listY + zoneH / 2 + 24);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.fillText('(WhatsApp, Discord, etc.)', x1 + zoneW / 2, listY + zoneH / 2 + 38);
+    ctx.fillText('(WhatsApp, Discord, Browser, etc.)', leftX + zoneW / 2, listY + zoneH / 2 + 38);
 
-    // 2. Middle Zone: 📌 Keep
+    // Right Zone: 📌 Keep
     const isKeepHover = dropZoneHoverZone === 'keep';
     ctx.save();
     ctx.setLineDash([5, 5]);
     ctx.strokeStyle = isKeepHover ? '#10b981' : 'rgba(16, 185, 129, 0.45)';
     ctx.lineWidth = isKeepHover ? 2 : 1.5;
     ctx.beginPath();
-    ctx.roundRect(x2, listY, zoneW, zoneH, 12);
+    ctx.roundRect(rightX, listY, zoneW, zoneH, 12);
     ctx.fillStyle = isKeepHover ? 'rgba(16, 185, 129, 0.16)' : 'rgba(16, 185, 129, 0.05)';
     ctx.fill();
     ctx.stroke();
@@ -6888,42 +6790,16 @@ function renderDropZoneView(x, y, w, h) {
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '26px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('📌', x2 + zoneW / 2, listY + zoneH / 2 - 28);
-    ctx.font = '700 12.5px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.font = '28px "Segoe UI Emoji", sans-serif';
+    ctx.fillText('📌', rightX + zoneW / 2, listY + zoneH / 2 - 28);
+    ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = isKeepHover ? '#34d399' : '#10b981';
-    ctx.fillText('Keep on Shelf', x2 + zoneW / 2, listY + zoneH / 2 + 6);
-    ctx.font = '500 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillText('Keep on Shelf', rightX + zoneW / 2, listY + zoneH / 2 + 6);
+    ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.fillText('Stays permanently on shelf', x2 + zoneW / 2, listY + zoneH / 2 + 24);
+    ctx.fillText('Stays permanently on shelf', rightX + zoneW / 2, listY + zoneH / 2 + 24);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.fillText('Until removed', x2 + zoneW / 2, listY + zoneH / 2 + 38);
-
-    // 3. Right Zone: ✨ Send to AI
-    const isAiHover = dropZoneHoverZone === 'send_to_ai';
-    ctx.save();
-    ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = isAiHover ? '#a855f7' : 'rgba(168, 85, 247, 0.45)';
-    ctx.lineWidth = isAiHover ? 2 : 1.5;
-    ctx.beginPath();
-    ctx.roundRect(x3, listY, zoneW, zoneH, 12);
-    ctx.fillStyle = isAiHover ? 'rgba(168, 85, 247, 0.2)' : 'rgba(168, 85, 247, 0.05)';
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = '26px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('✨', x3 + zoneW / 2, listY + zoneH / 2 - 28);
-    ctx.font = '700 12.5px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = isAiHover ? '#c084fc' : '#a855f7';
-    ctx.fillText('Send to AI', x3 + zoneW / 2, listY + zoneH / 2 + 6);
-    ctx.font = '500 9.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.fillText('Directly analyze with AI', x3 + zoneW / 2, listY + zoneH / 2 + 24);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.fillText('(Instant Chat Context)', x3 + zoneW / 2, listY + zoneH / 2 + 38);
+    ctx.fillText('Until you click ✖ to remove', rightX + zoneW / 2, listY + zoneH / 2 + 38);
     return;
   }
 
@@ -7333,484 +7209,6 @@ function renderNotificationBannerView(x, y, w, h) {
 
   interactiveButtons.push({ id: 'notif_banner_dismiss', x: dsmX, y: dsmY, w: dsmSize, h: dsmSize });
   interactiveButtons.push({ id: 'notif_banner_click', x: x, y: y, w: w - dsmSize - 20, h: h });
-}
-
-// -------------------------------------------------------------
-// Dynamic Windows AI Companion & Vision Chat Engine
-// -------------------------------------------------------------
-function formatAiMarkdown(text) {
-  if (!text) return '';
-  let safe = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  // Triple backticks code blocks
-  safe = safe.replace(/```([a-zA-Z0-9_\-\+]*)\n([\s\S]*?)```/g, (match, lang, code) => {
-    return `<pre><code class="lang-${lang}">${code.trim()}</code></pre>`;
-  });
-
-  // Inline backtick code
-  safe = safe.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-  // Bold text
-  safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  // Bullet points
-  safe = safe.replace(/^[\*\-] (.+)$/gm, '• $1');
-
-  // Line breaks
-  safe = safe.replace(/\n/g, '<br>');
-  return safe;
-}
-
-function renderAiMessages(session) {
-  const container = document.getElementById('ai-messages-list');
-  const emptyState = document.getElementById('ai-empty-state');
-  const indicator = document.getElementById('ai-typing-indicator');
-  if (!container) return;
-
-  const existingBubbles = container.querySelectorAll('.ai-msg');
-  existingBubbles.forEach(b => b.remove());
-
-  const msgs = (session && Array.isArray(session.messages)) ? session.messages : [];
-
-  if (msgs.length === 0) {
-    if (emptyState) emptyState.style.display = 'block';
-  } else {
-    if (emptyState) emptyState.style.display = 'none';
-
-    for (const m of msgs) {
-      const msgEl = document.createElement('div');
-      msgEl.className = `ai-msg ${m.role}` + (m.isError ? ' error' : '');
-
-      if (Array.isArray(m.images) && m.images.length > 0) {
-        const imgWrap = document.createElement('div');
-        imgWrap.className = 'ai-msg-images';
-        for (const imgUrl of m.images) {
-          const imgEl = document.createElement('img');
-          imgEl.className = 'ai-msg-thumb';
-          imgEl.src = imgUrl;
-          imgWrap.appendChild(imgEl);
-        }
-        msgEl.appendChild(imgWrap);
-      }
-
-      const bubbleEl = document.createElement('div');
-      bubbleEl.className = 'ai-bubble';
-      bubbleEl.innerHTML = formatAiMarkdown(m.content || '');
-      msgEl.appendChild(bubbleEl);
-
-      if (m.timestamp) {
-        const timeEl = document.createElement('div');
-        timeEl.className = 'ai-msg-time';
-        const d = new Date(m.timestamp);
-        timeEl.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        msgEl.appendChild(timeEl);
-      }
-
-      if (indicator) {
-        container.insertBefore(msgEl, indicator);
-      } else {
-        container.appendChild(msgEl);
-      }
-    }
-  }
-
-  setTimeout(() => {
-    container.scrollTop = container.scrollHeight;
-  }, 10);
-}
-
-function syncAiAttachmentsTray() {
-  const tray = document.getElementById('ai-attachments-tray');
-  if (!tray) return;
-
-  if (aiPendingAttachments.length === 0) {
-    tray.style.display = 'none';
-    tray.innerHTML = '';
-    return;
-  }
-
-  tray.style.display = 'flex';
-  tray.innerHTML = '';
-
-  aiPendingAttachments.forEach((item, idx) => {
-    const el = document.createElement('div');
-    el.className = 'ai-attach-item';
-
-    const isImg = typeof item === 'string' && (item.startsWith('data:image/') || /\.(png|jpe?g|webp|gif)$/i.test(item));
-    if (isImg) {
-      const thumb = document.createElement('img');
-      thumb.className = 'ai-attach-thumb';
-      thumb.src = item;
-      el.appendChild(thumb);
-    }
-
-    const nameSpan = document.createElement('span');
-    if (typeof item === 'string' && item.startsWith('data:image/')) {
-      nameSpan.textContent = 'Screenshot / Image';
-    } else {
-      const parts = String(item).split(/[/\\]/);
-      nameSpan.textContent = parts[parts.length - 1] || 'File';
-    }
-    el.appendChild(nameSpan);
-
-    const rmBtn = document.createElement('span');
-    rmBtn.className = 'ai-attach-remove';
-    rmBtn.textContent = '✕';
-    rmBtn.onclick = (e) => {
-      e.stopPropagation();
-      aiPendingAttachments.splice(idx, 1);
-      syncAiAttachmentsTray();
-    };
-    el.appendChild(rmBtn);
-
-    tray.appendChild(el);
-  });
-}
-
-function addAiPendingAttachment(fileOrDataUrl) {
-  if (!fileOrDataUrl) return;
-  aiPendingAttachments.push(fileOrDataUrl);
-  syncAiAttachmentsTray();
-}
-
-function focusAiInput() {
-  const textarea = document.getElementById('ai-chat-textarea');
-  if (textarea) {
-    setTimeout(() => textarea.focus(), 60);
-  }
-}
-
-async function loadAiSessions() {
-  try {
-    const sessions = await ipcRenderer.invoke('ai-get-sessions');
-    aiSessions = sessions || [];
-    const select = document.getElementById('ai-session-select');
-    if (select) {
-      select.innerHTML = '';
-      aiSessions.forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s.id;
-        opt.textContent = s.title || 'Chat';
-        select.appendChild(opt);
-      });
-      if (aiActiveSessionId && aiSessions.some(s => s.id === aiActiveSessionId)) {
-        select.value = aiActiveSessionId;
-      } else if (aiSessions[0]) {
-        aiActiveSessionId = aiSessions[0].id;
-        select.value = aiActiveSessionId;
-      }
-    }
-    if (aiActiveSessionId) {
-      await loadAiSession(aiActiveSessionId);
-    }
-  } catch (err) {
-    console.warn('[AI] Failed to load sessions:', err);
-  }
-}
-
-async function loadAiSession(id) {
-  try {
-    aiActiveSessionId = id;
-    const session = await ipcRenderer.invoke('ai-get-session', id);
-    aiActiveSession = session;
-    renderAiMessages(session);
-  } catch (err) {
-    console.warn('[AI] Failed to load session:', err);
-  }
-}
-
-async function aiCreateNewChat() {
-  try {
-    soundFX.play('tap');
-    const newSession = await ipcRenderer.invoke('ai-create-session', 'New Chat');
-    if (newSession) {
-      aiActiveSessionId = newSession.id;
-      aiActiveSession = newSession;
-      await loadAiSessions();
-      renderAiMessages(newSession);
-      focusAiInput();
-    }
-  } catch (err) {
-    console.error('[AI] Create chat error:', err);
-  }
-}
-
-async function aiDeleteChat() {
-  if (!aiActiveSessionId) return;
-  try {
-    soundFX.play('tap');
-    const remaining = await ipcRenderer.invoke('ai-delete-session', aiActiveSessionId);
-    aiSessions = remaining || [];
-    aiActiveSessionId = aiSessions[0] ? aiSessions[0].id : null;
-    await loadAiSessions();
-  } catch (err) {
-    console.error('[AI] Delete chat error:', err);
-  }
-}
-
-async function aiSendMessage(customText, customImages) {
-  if (aiIsGenerating) return;
-
-  const textarea = document.getElementById('ai-chat-textarea');
-  const text = (customText !== undefined ? customText : (textarea ? textarea.value : '')).trim();
-  const images = (customImages !== undefined ? customImages : [...aiPendingAttachments]);
-
-  if (!text && images.length === 0) return;
-
-  soundFX.play('tap');
-  if (textarea) {
-    textarea.value = '';
-    textarea.style.height = 'auto';
-  }
-  aiPendingAttachments = [];
-  syncAiAttachmentsTray();
-
-  aiIsGenerating = true;
-
-  const container = document.getElementById('ai-messages-list');
-  const indicator = document.getElementById('ai-typing-indicator');
-  const emptyState = document.getElementById('ai-empty-state');
-  if (emptyState) emptyState.style.display = 'none';
-
-  const userMsgEl = document.createElement('div');
-  userMsgEl.className = 'ai-msg user';
-  if (images.length > 0) {
-    const imgWrap = document.createElement('div');
-    imgWrap.className = 'ai-msg-images';
-    for (const imgUrl of images) {
-      const imgEl = document.createElement('img');
-      imgEl.className = 'ai-msg-thumb';
-      imgEl.src = imgUrl;
-      imgWrap.appendChild(imgEl);
-    }
-    userMsgEl.appendChild(imgWrap);
-  }
-  const bubble = document.createElement('div');
-  bubble.className = 'ai-bubble';
-  bubble.innerHTML = formatAiMarkdown(text || 'Analyze attached image');
-  userMsgEl.appendChild(bubble);
-
-  const timeEl = document.createElement('div');
-  timeEl.className = 'ai-msg-time';
-  timeEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  userMsgEl.appendChild(timeEl);
-
-  if (container && indicator) {
-    container.insertBefore(userMsgEl, indicator);
-    indicator.style.display = 'flex';
-    container.scrollTop = container.scrollHeight;
-  }
-
-  try {
-    const res = await ipcRenderer.invoke('ai-send-message', {
-      sessionId: aiActiveSessionId,
-      text,
-      images
-    });
-
-    if (indicator) indicator.style.display = 'none';
-
-    if (res && res.session) {
-      aiActiveSession = res.session;
-      renderAiMessages(res.session);
-      await loadAiSessions();
-    }
-  } catch (err) {
-    if (indicator) indicator.style.display = 'none';
-    const errMsgEl = document.createElement('div');
-    errMsgEl.className = 'ai-msg assistant error';
-    const errBubble = document.createElement('div');
-    errBubble.className = 'ai-bubble';
-    errBubble.textContent = `⚠️ Error: ${err.message}`;
-    errMsgEl.appendChild(errBubble);
-    if (container && indicator) {
-      container.insertBefore(errMsgEl, indicator);
-      container.scrollTop = container.scrollHeight;
-    }
-  } finally {
-    aiIsGenerating = false;
-    focusAiInput();
-  }
-}
-
-async function aiAnalyzeScreen() {
-  if (aiIsGenerating) return;
-  soundFX.play('tap');
-
-  switchTab('agent');
-  aiSubMode = 'chat';
-
-  const indicator = document.getElementById('ai-typing-indicator');
-  const container = document.getElementById('ai-messages-list');
-  const emptyState = document.getElementById('ai-empty-state');
-  if (emptyState) emptyState.style.display = 'none';
-  if (indicator) indicator.style.display = 'flex';
-  if (container) container.scrollTop = container.scrollHeight;
-
-  try {
-    const screenDataUrl = await ipcRenderer.invoke('ai-capture-screen');
-    await aiSendMessage(
-      'Analyze what is currently happening on my screen in detail. Explain active tasks, open windows, code, or context, and provide useful suggestions or explanations.',
-      [screenDataUrl]
-    );
-  } catch (err) {
-    if (indicator) indicator.style.display = 'none';
-    console.error('[AI] Screen analysis error:', err);
-    if (container) {
-      const errMsgEl = document.createElement('div');
-      errMsgEl.className = 'ai-msg assistant error';
-      errMsgEl.innerHTML = `<div class="ai-bubble">⚠️ Screen capture error: ${err.message}</div>`;
-      container.appendChild(errMsgEl);
-    }
-  }
-}
-
-function initAiChat() {
-  const overlay = document.getElementById('ai-chat-overlay');
-  if (!overlay) return;
-
-  overlay.addEventListener('mouseenter', () => {
-    if (leaveTimer) {
-      clearTimeout(leaveTimer);
-      leaveTimer = null;
-    }
-    isHovered = true;
-    ipcRenderer.send('set-ignore-mouse-events', false);
-  });
-  overlay.addEventListener('click', (e) => {
-    e.stopPropagation();
-  });
-
-  document.getElementById('btn-ai-analyze-screen')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    aiAnalyzeScreen();
-  });
-
-  const btnModeMonitor = document.getElementById('btn-ai-mode-monitor');
-  const btnModeChat = document.getElementById('btn-ai-mode-chat');
-
-  btnModeMonitor?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    aiSubMode = 'monitor';
-    btnModeMonitor.classList.add('active');
-    btnModeChat?.classList.remove('active');
-    overlay.classList.remove('active');
-  });
-
-  btnModeChat?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    aiSubMode = 'chat';
-    btnModeChat.classList.add('active');
-    btnModeMonitor?.classList.remove('active');
-    overlay.classList.add('active');
-    focusAiInput();
-  });
-
-  document.getElementById('ai-session-select')?.addEventListener('change', (e) => {
-    loadAiSession(e.target.value);
-  });
-  document.getElementById('btn-ai-new-chat')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    aiCreateNewChat();
-  });
-  document.getElementById('btn-ai-delete-chat')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    aiDeleteChat();
-  });
-
-  const filePicker = document.getElementById('ai-file-picker');
-  document.getElementById('btn-ai-attach')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (filePicker) filePicker.click();
-  });
-  filePicker?.addEventListener('change', () => {
-    if (filePicker.files) {
-      Array.from(filePicker.files).forEach(file => {
-        let filePath = null;
-        try {
-          if (webUtils && typeof webUtils.getPathForFile === 'function') {
-            filePath = webUtils.getPathForFile(file);
-          }
-        } catch (err) {}
-        if (!filePath && file.path) filePath = file.path;
-        if (filePath) {
-          addAiPendingAttachment(filePath);
-        } else {
-          const reader = new FileReader();
-          reader.onload = (ev) => addAiPendingAttachment(ev.target.result);
-          reader.readAsDataURL(file);
-        }
-      });
-      filePicker.value = '';
-    }
-  });
-
-  const textarea = document.getElementById('ai-chat-textarea');
-  textarea?.addEventListener('input', () => {
-    textarea.style.height = 'auto';
-    textarea.style.height = Math.min(80, textarea.scrollHeight) + 'px';
-  });
-  textarea?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      aiSendMessage();
-    }
-  });
-
-  document.getElementById('btn-ai-send')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    aiSendMessage();
-  });
-
-  document.querySelectorAll('.ai-chip').forEach(chip => {
-    chip.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const prompt = chip.dataset.prompt;
-      if (prompt) {
-        if (chip.textContent.includes('Analyze Screen')) {
-          aiAnalyzeScreen();
-        } else {
-          aiSendMessage(prompt);
-        }
-      }
-    });
-  });
-
-  // Clipboard Paste Image Support (Ctrl+V)
-  window.addEventListener('paste', (e) => {
-    if (currentView === 'agent') {
-      const items = (e.clipboardData || window.clipboardData)?.items;
-      if (items) {
-        for (const item of items) {
-          if (item.type && item.type.indexOf('image') !== -1) {
-            const file = item.getAsFile();
-            if (file) {
-              const reader = new FileReader();
-              reader.onload = (ev) => {
-                addAiPendingAttachment(ev.target.result);
-                soundFX.play('tap');
-              };
-              reader.readAsDataURL(file);
-              e.preventDefault();
-            }
-          }
-        }
-      }
-    }
-  });
-
-  loadAiSessions();
-}
-
-if (typeof window !== 'undefined') {
-  if (document.readyState === 'loading') {
-    window.addEventListener('DOMContentLoaded', initAiChat);
-  } else {
-    initAiChat();
-  }
 }
 
 if (typeof module !== 'undefined' && module.exports) {

@@ -4,7 +4,7 @@
  * Main Process (Electron + Node.js)
  */
 
-const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, clipboard, nativeImage, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -41,7 +41,6 @@ const CallMonitor = require('./call-monitor');
 const NotificationMonitor = require('./notification-monitor');
 const DropZone = require('./drop-zone');
 const UserDataManager = require('./user-data-manager');
-const { AiService } = require('./ai-service');
 const configManager = require('./config-manager');
 const sysHelper = require('./sys-helper');
 const { createSettingsWindow, registerSettingsIPC } = require('./settings-window');
@@ -63,7 +62,6 @@ let callMonitor = null;
 let notificationMonitor = null;
 let dropZone = null;
 let userDataManager = null;
-let aiService = null;
 let isQuitting = false;
 
 let gameModeEnabled = configManager.get('gameMode') !== false;
@@ -757,53 +755,6 @@ function createIslandWindow() {
     return configManager.get('userName') || '';
   });
 
-  // AI Chat & Multimodal IPC Handlers
-  ipcMain.handle('ai-get-config', () => {
-    return aiService ? aiService.getConfig() : {};
-  });
-  ipcMain.handle('ai-save-config', (event, cfg) => {
-    if (cfg && typeof cfg === 'object') {
-      configManager.set(cfg);
-    }
-    return aiService ? aiService.getConfig() : {};
-  });
-  ipcMain.handle('ai-get-sessions', () => {
-    return aiService ? aiService.getSessions() : [];
-  });
-  ipcMain.handle('ai-get-session', (event, id) => {
-    return aiService ? aiService.getSession(id) : null;
-  });
-  ipcMain.handle('ai-create-session', (event, title) => {
-    return aiService ? aiService.createSession(title) : null;
-  });
-  ipcMain.handle('ai-delete-session', (event, id) => {
-    return aiService ? aiService.deleteSession(id) : [];
-  });
-  ipcMain.handle('ai-set-active-session', (event, id) => {
-    return aiService ? aiService.setActiveSession(id) : null;
-  });
-  ipcMain.handle('ai-send-message', async (event, payload) => {
-    if (!aiService) throw new Error('AI Service not initialized');
-    return await aiService.sendMessage(payload);
-  });
-  ipcMain.handle('ai-capture-screen', async () => {
-    try {
-      const primaryDisplay = screen.getPrimaryDisplay();
-      const { width, height } = primaryDisplay.size;
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width, height }
-      });
-      if (!sources || sources.length === 0) {
-        throw new Error('No desktop screen capture source available');
-      }
-      return sources[0].thumbnail.toDataURL();
-    } catch (err) {
-      console.error('[AiService] Screen capture error:', err);
-      throw err;
-    }
-  });
-
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
@@ -1037,7 +988,6 @@ app.whenReady().then(() => {
   dropZone = new DropZone();
   userDataManager = new UserDataManager();
   userDataManager.registerIpc(ipcMain, () => mainWindow);
-  aiService = new AiService({ configManager });
   registerSettingsIPC(dropZone);
   startClipboardMonitor();
 

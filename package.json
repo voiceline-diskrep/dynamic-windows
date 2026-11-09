@@ -1,12 +1,12 @@
 {
   "name": "dynamic-windows",
-  "version": "1.4.26",
+  "version": "1.4.27",
   "description": "Dynamic Windows: Apple Dynamic Island & Notch for Windows with Google Antigravity & Liner Synced Lyrics",
   "main": "src/main/main.js",
   "type": "commonjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/antigravity.test.js tests/hooks.test.js tests/dropzone-config.test.js tests/mcp.test.js tests/media.test.js tests/sys-helper.test.js tests/call-monitor.test.js tests/user-data.test.js tests/notification-monitor.test.js tests/sound-fx.test.js tests/font-config.test.js tests/alarm.test.js tests/personalization.test.js tests/notch-geometry.test.js tests/tab-animation.test.js tests/rolling-number-wheel.test.js tests/ai-service.test.js tests/dropzone-3zone.test.js",
+    "test": "node --test tests/antigravity.test.js tests/hooks.test.js tests/dropzone-config.test.js tests/mcp.test.js tests/media.test.js tests/sys-helper.test.js tests/call-monitor.test.js tests/user-data.test.js tests/notification-monitor.test.js tests/sound-fx.test.js tests/font-config.test.js tests/alarm.test.js tests/personalization.test.js tests/notch-geometry.test.js tests/tab-animation.test.js tests/rolling-number-wheel.test.js",
     "build:setup": "node tools/make-setup.cjs"
   },
   "keywords": [
