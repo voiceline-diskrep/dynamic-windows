@@ -8,7 +8,9 @@ on:
 
 jobs:
   build-mac:
-    runs-on: macos-14 # Native Apple Silicon M-series runner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -31,10 +33,19 @@ jobs:
             --app-bundle-id=com.voiceline.dynamicwindows \
             --extend-info='{"LSUIElement": "1"}'
           cd dist
-          zip -r -y "DynamicWindows-macOS-arm64.zip" "Dynamic Windows-darwin-arm64"
+          mv "Dynamic Windows-darwin-arm64" "Dynamic Windows"
+          zip -r -y "DynamicWindows-macOS-arm64.zip" "Dynamic Windows"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: DynamicWindows-macOS-arm64
           path: dist/DynamicWindows-macOS-arm64.zip
+
+      - name: Attach Mac Bundle to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/DynamicWindows-macOS-arm64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
