@@ -1,8 +1,8 @@
-# 🏝️ Dynamic Windows (v1.4.21)
+# 🏝️ Dynamic Windows (v1.4.22)
 
 added personalisation
 
-[![Download for Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.21.exe)
+[![Download for Windows](https://img.shields.io/badge/Download-Windows%20Installer%20(.exe)-blue?style=for-the-badge&logo=windows)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.22.exe)
 [![Download for macOS](https://img.shields.io/badge/Download-macOS%20Apple%20Silicon%20(.zip)-black?style=for-the-badge&logo=apple)](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-macOS-arm64.zip)
 
 ---
@@ -10,7 +10,7 @@ added personalisation
 ## 📥 Download & Install
 
 ### 🪟 Windows (10 / 11)
-👉 **[Download DynamicWindows-Setup-v1.4.21.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.21.exe)**
+👉 **[Download DynamicWindows-Setup-v1.4.22.exe](https://github.com/voiceline-diskrep/dynamic-windows/releases/latest/download/DynamicWindows-Setup-v1.4.22.exe)**
 
 - **Single-File Standalone Setup**: Self-contained installer compiled with native C# (`.NET`).
 - **Zero Admin Rights Required**: Installs directly to `%LOCALAPPDATA%\Programs\DynamicWindows` without UAC prompts.

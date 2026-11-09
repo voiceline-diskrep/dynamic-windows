@@ -15,7 +15,7 @@ const CONFIG_DIR = process.platform === 'darwin'
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.4.21',
+  version: '1.4.22',
   animationSpeed: 1.0,
   islandOpacity: 0.95, // 0.40 to 1.00 frosted glass opacity
   displayMode: 'island', // 'island' | 'notch'

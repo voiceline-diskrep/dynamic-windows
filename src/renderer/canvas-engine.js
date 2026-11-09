@@ -1439,7 +1439,8 @@ canvas.addEventListener('mousemove', (e) => {
 
   const hasTimerPill = (curP < 0.28 && (timerRunning || focusRunning || stopwatchRunning));
   const timerPillSpan = hasTimerPill ? 110 : 0;
-  const isOverIsland = pointInRect(mouseX, mouseY, curX - 8 - aiPillSpan, Math.max(0, curY - 4), curW + 16 + timerPillSpan + aiPillSpan, curH + 16);
+  const notchEarMargin = isNotch ? 18 : 8;
+  const isOverIsland = pointInRect(mouseX, mouseY, curX - notchEarMargin - aiPillSpan, Math.max(0, curY - 4), curW + notchEarMargin * 2 + timerPillSpan + aiPillSpan, curH + 16);
 
   if (isOverIsland) {
     if (songPopupProgress > 0.05 || songPopupActiveUntil > performance.now()) {
@@ -2586,6 +2587,68 @@ function getTargetHeight(p) {
   return normalH;
 }
 
+// -------------------------------------------------------------
+// Organic Apple Notch & Floating Island Capsule Geometry
+// Supports authentic MacBook-style concave top fillets ("ears")
+// seamlessly merging with the physical top bezel
+// -------------------------------------------------------------
+function buildCapsulePath(c, x, y, w, h, radius, isNotch = false, topFillet = 12) {
+  c.beginPath();
+  if (isNotch && y <= 0.1) {
+    const tr = Math.min(topFillet, h * 0.45);
+    const br = Math.min(radius, Math.max(2, h - tr));
+    // 1. Start on the top edge at the outer end of the left ear
+    c.moveTo(x - tr, 0);
+    // 2. Concave arc curving smoothly into the left vertical edge:
+    //    Center at (x - tr, tr), angle -PI/2 (top) to 0 (right), clockwise
+    c.arc(x - tr, tr, tr, -Math.PI / 2, 0, false);
+    // 3. Left vertical edge
+    c.lineTo(x, h - br);
+    // 4. Bottom-left convex rounded corner
+    c.arcTo(x, h, x + br, h, br);
+    // 5. Bottom horizontal edge
+    c.lineTo(x + w - br, h);
+    // 6. Bottom-right convex rounded corner
+    c.arcTo(x + w, h, x + w, h - br, br);
+    // 7. Right vertical edge
+    c.lineTo(x + w, tr);
+    // 8. Concave arc curving smoothly out into the right ear:
+    //    Center at (x + w + tr, tr), angle PI (left) to 1.5*PI (top), clockwise
+    c.arc(x + w + tr, tr, tr, Math.PI, 1.5 * Math.PI, false);
+    // 9. Across the top bezel back to (x - tr, 0)
+    c.closePath();
+  } else {
+    c.roundRect(x, y, w, h, radius);
+  }
+}
+
+function drawCapsuleRim(c, x, y, w, h, radius, isNotch = false, topFillet = 12) {
+  c.beginPath();
+  if (isNotch && y <= 0.1) {
+    const tr = Math.min(topFillet, h * 0.45);
+    const br = Math.min(radius, Math.max(2, h - tr));
+    // Start at top-left ear
+    c.moveTo(x - tr, 0);
+    // Concave arc to left edge
+    c.arc(x - tr, tr, tr, -Math.PI / 2, 0, false);
+    // Left edge
+    c.lineTo(x, h - br);
+    // Bottom-left corner
+    c.arcTo(x, h, x + br, h, br);
+    // Bottom edge
+    c.lineTo(x + w - br, h);
+    // Bottom-right corner
+    c.arcTo(x + w, h, x + w, h - br, br);
+    // Right edge
+    c.lineTo(x + w, tr);
+    // Concave arc to top-right ear
+    c.arc(x + w + tr, tr, tr, Math.PI, 1.5 * Math.PI, false);
+    // Note: Do NOT stroke across y=0 so it remains completely flush with the physical screen bezel!
+  } else {
+    c.roundRect(x, y, w, h, radius);
+  }
+}
+
 function render() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   interactiveButtons = [];
@@ -2634,6 +2697,7 @@ function render() {
   const y = isNotch ? 0 : 8; // Flush with top for notch, floating for island
 
   const radius = UI.COMPACT_RADIUS + (UI.EXPANDED_RADIUS - UI.COMPACT_RADIUS) * p;
+  const topFillet = Math.round(10 + 4 * p);
   const radii = isNotch ? [0, 0, radius, radius] : radius;
 
   // Main resting pill stays strictly centered
@@ -2664,14 +2728,12 @@ function render() {
     grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
     grad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
 
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, radii);
+    buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
     ctx.fillStyle = grad;
     ctx.fill();
 
     // 3. Specular Border Rim (illuminated with album accent when active)
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, radii);
+    drawCapsuleRim(ctx, x, y, w, h, radius, isNotch, topFillet);
     ctx.lineWidth = 1;
     if (isDraggingOver) {
       ctx.strokeStyle = 'rgba(59, 130, 246, 0.85)';
@@ -2689,20 +2751,22 @@ function render() {
   if (p < 0.32) {
     if (songPopupProgress > 0.05) {
       ctx.save();
-      ctx.beginPath();
-      ctx.roundRect(x, y, w, h, radii);
+      buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
       ctx.clip();
       const popAlpha = Math.max(0, (0.32 - p) / 0.32);
       renderSongAnnouncementPopup(x, y, w, h, popAlpha);
       ctx.restore();
     } else {
+      ctx.save();
+      buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
+      ctx.clip();
       renderRestingPill(x, y, w, h, Math.max(0, (0.32 - p) / 0.32));
+      ctx.restore();
     }
   }
   if (p > 0.15) {
     ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, radii);
+    buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
     ctx.clip();
     const alpha = Math.max(0, Math.min(1.0, (p - 0.15) / 0.85));
     renderExpandedView(x, y, w, h, alpha);
@@ -2710,7 +2774,7 @@ function render() {
     // Inner Capsule Modal Dimmer (isolated strictly to the Island capsule)
     if (isInlineModalOpen) {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
-      ctx.fillRect(x, y, w, h);
+      ctx.fillRect(x - topFillet, y, w + topFillet * 2, h);
     }
     ctx.restore();
   }
@@ -2757,13 +2821,11 @@ function renderSongAnnouncementPopup(x, y, w, h, popAlpha) {
 
   const isNotch = displayMode === 'notch';
   const cornerR = UI.COMPACT_RADIUS + 8;
-  const radii = isNotch ? [0, 0, cornerR, cornerR] : cornerR;
 
   // 1. Subtle Ambient Radial Halo around Album Art
   if (albumAccentColor && albumAccentColor !== '#e4e4e7') {
     ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, radii);
+    buildCapsulePath(ctx, x, y, w, h, cornerR, isNotch, 12);
     ctx.clip();
     const glowGrad = ctx.createRadialGradient(x + 55, y + 68, 5, x + 55, y + 68, 90);
     glowGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.12 * popAlpha));
@@ -6914,12 +6976,10 @@ function renderNotificationBannerView(x, y, w, h) {
   const notif = activeNotification;
   const isNotch = displayMode === 'notch';
   const cornerR = UI.COMPACT_RADIUS + 8;
-  const radii = isNotch ? [0, 0, cornerR, cornerR] : cornerR;
 
   // Background glow
   ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radii);
+  buildCapsulePath(ctx, x, y, w, h, cornerR, isNotch, 12);
   ctx.clip();
   const glowGrad = ctx.createRadialGradient(x + 50, y + h / 2, 5, x + 50, y + h / 2, 120);
   glowGrad.addColorStop(0.0, 'rgba(56, 189, 248, 0.28)');
@@ -6999,6 +7059,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     computeAccentColorFromPixels,
     getEligibleGreetingsList,
-    getNextPersonalizedGreeting
+    getNextPersonalizedGreeting,
+    buildCapsulePath,
+    drawCapsuleRim
   };
 }
