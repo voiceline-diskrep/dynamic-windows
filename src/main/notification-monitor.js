@@ -70,7 +70,7 @@ class NotificationMonitor extends EventEmitter {
   }
 
   poll() {
-    if (this.isPolling) return;
+    if (this.isPolling || process.platform !== 'win32') return;
     this.isPolling = true;
 
     try {

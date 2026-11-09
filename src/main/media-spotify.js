@@ -163,12 +163,80 @@ class MediaController extends EventEmitter {
       'Cache_Data'
     );
 
-    this.startHelper();
-    // Periodic watchdog to ensure helper stays alive and lyrics stay fresh
-    this.watchdog = setInterval(() => {
-      if (!this.child) this.startHelper();
-    }, 5000);
-    if (this.watchdog.unref) this.watchdog.unref();
+    if (process.platform === 'darwin') {
+      this.startMacMedia();
+    } else {
+      this.startHelper();
+      // Periodic watchdog to ensure helper stays alive and lyrics stay fresh
+      this.watchdog = setInterval(() => {
+        if (!this.child) this.startHelper();
+      }, 5000);
+      if (this.watchdog.unref) this.watchdog.unref();
+    }
+  }
+
+  startMacMedia() {
+    if (this.macTimer || process.platform !== 'darwin') return;
+    const { execFile } = require('child_process');
+    const checkMedia = () => {
+      const script = `
+        if application "Spotify" is running then
+          tell application "Spotify"
+            return "Spotify|||" & player state & "|||" & name of current track & "|||" & artist of current track & "|||" & album of current track & "|||" & (player position as integer) & "|||" & (duration of current track as integer)
+          end tell
+        else if application "Music" is running then
+          tell application "Music"
+            return "Music|||" & player state & "|||" & name of current track & "|||" & artist of current track & "|||" & album of current track & "|||" & (player position as integer) & "|||" & (duration of current track as integer)
+          end tell
+        else
+          return "none"
+        end if
+      `;
+      execFile('/usr/bin/osascript', ['-e', script], (err, stdout) => {
+        if (err || !stdout) return;
+        const out = stdout.trim();
+        if (out === 'none') {
+          if (this.now && this.now.playing) {
+            this.now.playing = false;
+            this.emit('changed');
+          }
+          return;
+        }
+        const parts = out.split('|||');
+        if (parts.length < 5) return;
+        const appName = parts[0];
+        const state = parts[1];
+        const title = parts[2] || '';
+        const artist = parts[3] || '';
+        const album = parts[4] || '';
+        const pos = parseInt(parts[5], 10) || 0;
+        const dur = parseInt(parts[6], 10) || 0;
+        const isPlaying = state === 'playing';
+
+        const trackChanged = !this.now || this.now.title !== title || this.now.artist !== artist;
+        if (trackChanged || this.now.playing !== isPlaying) {
+          const prevLyrics = (this.now && this.now.title === title) ? this.now.lyrics : null;
+          this.now = {
+            title,
+            artist,
+            album,
+            app: appName,
+            playing: isPlaying,
+            positionMs: pos * 1000,
+            durationMs: dur > 1000 ? dur : dur * 1000,
+            lyrics: prevLyrics,
+            lyricsSource: prevLyrics ? 'cached' : 'none'
+          };
+          if (trackChanged && title) {
+            this.fetchLyrics(title, artist, album, dur);
+          }
+          this.emit('changed');
+        }
+      });
+    };
+    checkMedia();
+    this.macTimer = setInterval(checkMedia, 1500);
+    if (this.macTimer.unref) this.macTimer.unref();
   }
 
   getLyricsCacheFolder() {
@@ -783,6 +851,20 @@ class MediaController extends EventEmitter {
   }
 
   sendCommand(cmd) {
+    if (process.platform === 'darwin') {
+      const { execFile } = require('child_process');
+      const actionMap = {
+        toggle: 'playpause',
+        next: 'next track',
+        previous: 'previous track'
+      };
+      const act = actionMap[cmd];
+      if (act) {
+        const appTarget = (this.now && this.now.app === 'Music') ? 'Music' : 'Spotify';
+        execFile('/usr/bin/osascript', ['-e', `tell application "${appTarget}" to ${act}`], () => {});
+      }
+      return true;
+    }
     this.startHelper();
     try {
       this.child?.stdin.write(cmd + '\n');
@@ -930,6 +1012,7 @@ class MediaController extends EventEmitter {
   }
 
   destroy() {
+    if (this.macTimer) clearInterval(this.macTimer);
     if (this.watchdog) clearInterval(this.watchdog);
     try {
       this.child?.stdin.end();

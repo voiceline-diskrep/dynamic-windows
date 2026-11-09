@@ -549,7 +549,9 @@ class CallMonitor extends EventEmitter {
   tryConnectDiscordRpc(pipeIndex = 0) {
     if (this.rpcSocket || this.rpcConnected) return;
     if (pipeIndex > 9) return;
-    const pipePath = `\\\\?\\pipe\\discord-ipc-${pipeIndex}`;
+    const pipePath = process.platform === 'win32'
+      ? `\\\\?\\pipe\\discord-ipc-${pipeIndex}`
+      : path.join(process.env.TMPDIR || '/tmp', `discord-ipc-${pipeIndex}`);
     try {
       const sock = net.createConnection(pipePath, () => {
         this.rpcSocket = sock;

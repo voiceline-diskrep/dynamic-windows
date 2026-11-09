@@ -1,0 +1,40 @@
+name: Build macOS Apple Silicon
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-mac:
+    runs-on: macos-14 # Native Apple Silicon M-series runner
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Package Dynamic Windows for Apple Silicon
+        run: |
+          npx @electron/packager . "Dynamic Windows" \
+            --platform=darwin \
+            --arch=arm64 \
+            --out=dist \
+            --overwrite \
+            --app-bundle-id=com.voiceline.dynamicwindows \
+            --extend-info='{"LSUIElement": "1"}'
+          cd dist
+          zip -r -y "DynamicWindows-macOS-arm64.zip" "Dynamic Windows-darwin-arm64"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DynamicWindows-macOS-arm64
+          path: dist/DynamicWindows-macOS-arm64.zip

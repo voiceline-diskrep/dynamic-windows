@@ -7,19 +7,28 @@
 const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+
+function getAppLogDir() {
+  const dir = process.platform === 'darwin'
+    ? path.join(os.homedir(), 'Library', 'Logs', 'DynamicWindows')
+    : getAppLogDir();
+  if (!fs.existsSync(dir)) {
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
+  }
+  return dir;
+}
 
 process.on('uncaughtException', (err) => {
   try {
-    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const logDir = getAppLogDir();
     fs.appendFileSync(path.join(logDir, 'error.log'), `[${new Date().toISOString()}] UncaughtException: ${err.stack || err}\n`);
   } catch (e) {}
   console.error('[UNCAUGHT EXCEPTION]', err);
 });
 process.on('unhandledRejection', (reason) => {
   try {
-    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const logDir = getAppLogDir();
     fs.appendFileSync(path.join(logDir, 'error.log'), `[${new Date().toISOString()}] UnhandledRejection: ${reason && reason.stack ? reason.stack : reason}\n`);
   } catch (e) {}
   console.error('[UNHANDLED REJECTION]', reason);
@@ -68,6 +77,14 @@ function applyGameModeVisibility() {
     if (!mainWindow.isVisible()) {
       mainWindow.showInactive();
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    if (app.dock && typeof app.dock.hide === 'function') {
+      try { app.dock.hide(); } catch (e) {}
+    }
+    try {
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    } catch (e) {}
+  }
     }
   }
 }
@@ -131,7 +148,7 @@ function startClipboardMonitor() {
 // Enforce single instance
 const gotTheLock = app.requestSingleInstanceLock();
 try {
-  const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+  const logDir = getAppLogDir();
   if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
   fs.appendFileSync(path.join(logDir, 'startup.log'), `[${new Date().toISOString()}] PID ${process.pid}: gotTheLock=${gotTheLock}\n`);
 } catch (e) {}
@@ -147,6 +164,14 @@ if (!gotTheLock) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    if (app.dock && typeof app.dock.hide === 'function') {
+      try { app.dock.hide(); } catch (e) {}
+    }
+    try {
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    } catch (e) {}
+  }
       mainWindow.focus();
       try {
         mainWindow.webContents.send('untuck-island');
@@ -194,18 +219,26 @@ function createIslandWindow() {
   });
 
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    if (app.dock && typeof app.dock.hide === 'function') {
+      try { app.dock.hide(); } catch (e) {}
+    }
+    try {
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    } catch (e) {}
+  }
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'island.html'));
 
   mainWindow.webContents.on('did-fail-load', (e, code, desc) => {
     try {
-      const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+      const logDir = getAppLogDir();
       fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] did-fail-load: code=${code}, desc=${desc}\n`);
     } catch (err) {}
   });
 
   mainWindow.webContents.on('render-process-gone', (e, details) => {
     try {
-      const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+      const logDir = getAppLogDir();
       fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] render-process-gone: ${JSON.stringify(details)}\n`);
     } catch (err) {}
     if (!isQuitting) {
@@ -223,7 +256,7 @@ function createIslandWindow() {
 
   mainWindow.on('closed', () => {
     try {
-      const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+      const logDir = getAppLogDir();
       fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] mainWindow closed\n`);
     } catch (err) {}
     mainWindow = null;
@@ -341,6 +374,14 @@ function createIslandWindow() {
       if (!mainWindow.isVisible()) {
         mainWindow.showInactive();
         mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    if (app.dock && typeof app.dock.hide === 'function') {
+      try { app.dock.hide(); } catch (e) {}
+    }
+    try {
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    } catch (e) {}
+  }
       }
     }
   });
@@ -397,7 +438,7 @@ function createIslandWindow() {
   function exitApplication() {
     isQuitting = true;
     try {
-      const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+      const logDir = getAppLogDir();
       fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] exitApplication invoked\n`);
     } catch (err) {}
     try { globalShortcut.unregisterAll(); } catch (e) {}
@@ -885,6 +926,14 @@ function setupGlobalShortcuts() {
       if (!mainWindow.isVisible()) {
         mainWindow.showInactive();
         mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    if (app.dock && typeof app.dock.hide === 'function') {
+      try { app.dock.hide(); } catch (e) {}
+    }
+    try {
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    } catch (e) {}
+  }
       }
       mainWindow.focus();
       mainWindow.webContents.send('untuck-island');
@@ -997,7 +1046,7 @@ app.whenReady().then(() => {
         const { checkForGitHubUpdate } = require('./settings-window');
         const updateResult = await checkForGitHubUpdate();
         if (updateResult && updateResult.updateAvailable) {
-          const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+          const logDir = getAppLogDir();
           fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] [UpdateChecker] New update available: v${updateResult.latestVersion} (current: v${updateResult.currentVersion})\n`);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('app-update-available', updateResult);
@@ -1023,7 +1072,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', (e) => {
   try {
-    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    const logDir = getAppLogDir();
     fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] app.before-quit fired\n`);
   } catch (err) {}
   isQuitting = true;
@@ -1032,7 +1081,7 @@ app.on('before-quit', (e) => {
 app.on('will-quit', () => {
   try { sysHelper.restoreWorkArea(); } catch (e) {}
   try {
-    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    const logDir = getAppLogDir();
     fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] app.will-quit fired\n`);
   } catch (err) {}
   globalShortcut.unregisterAll();
@@ -1044,7 +1093,7 @@ app.on('will-quit', () => {
 
 app.on('window-all-closed', () => {
   try {
-    const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
+    const logDir = getAppLogDir();
     fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] app.window-all-closed fired\n`);
   } catch (err) {}
   if (process.platform !== 'darwin') {

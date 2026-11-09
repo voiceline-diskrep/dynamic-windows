@@ -7,11 +7,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
-const DATA_DIR = path.join(
-  process.env.APPDATA || path.join(process.env.USERPROFILE || 'C:\\', 'AppData', 'Roaming'),
-  'DynamicWindows'
-);
+const DATA_DIR = process.platform === 'darwin'
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'DynamicWindows')
+  : path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'DynamicWindows');
 
 const CALENDAR_FILE = path.join(DATA_DIR, 'calendar_notes.json');
 const TODOS_FILE = path.join(DATA_DIR, 'todos.json');

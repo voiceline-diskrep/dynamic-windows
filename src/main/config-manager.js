@@ -6,12 +6,12 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { app } = require('electron');
 
-const CONFIG_DIR = path.join(
-  process.env.APPDATA || path.join(process.env.USERPROFILE || 'C:\\', 'AppData', 'Roaming'),
-  'DynamicWindows'
-);
+const CONFIG_DIR = process.platform === 'darwin'
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'DynamicWindows')
+  : path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'DynamicWindows');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
