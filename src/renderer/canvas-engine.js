@@ -31,6 +31,7 @@ const {
   computeLiquidHeightStep,
   getTargetExpandedHeight
 } = require('./tab-animation-engine');
+const { drawRollingTime, triggerRollingWheelSpin } = require('./rolling-number-wheel');
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -1751,6 +1752,9 @@ function handleButtonClick(id, data) {
     promptForUserName(false);
   } else if (id === 'btn_cycle_greeting') {
     activeGreeting = getNextPersonalizedGreeting(currentUserName);
+  } else if (id === 'home_clock_display') {
+    switchTab('clock');
+    triggerRollingWheelSpin('home_digital_clock', 3);
   } else if (id === 'nav_calendar') {
     switchTab('calendar');
   } else if (id === 'cal_prev_month') {
@@ -3448,11 +3452,16 @@ function renderRestingPill(x, y, w, h, alpha) {
 
   if (hasMedia) {
     // Single Media Pill Layout: Clock + Rounded Album Art + Animated Word-by-Word Lyric / Song Title + 6-Bar Equalizer
+    const isRestingMediaHov = hoveredButtonId === 'nav_media' || isHovered;
+    drawRollingTime(ctx, 'resting_media_clock', timeStr, x + 12, y + h / 2, {
+      font: '600 11px "Segoe UI Variable Display", Inter, sans-serif',
+      fillStyle: '#e4e4e7',
+      align: 'left',
+      baseline: 'middle',
+      isHovered: isRestingMediaHov,
+      alpha
+    });
     ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#e4e4e7';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(timeStr, x + 12, y + h / 2);
     const clockW = ctx.measureText(timeStr).width;
 
     // Album Cover Thumbnail (20x20 rounded) or Music Note
@@ -3501,12 +3510,16 @@ function renderRestingPill(x, y, w, h, alpha) {
 
     interactiveButtons.push({ id: 'nav_media', x, y, w, h });
   } else {
-    // Pure minimalist centered clock (strictly centered, never crowded with timer or status)
-    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#f4f4f5';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(timeStr, x + w / 2, y + h / 2);
+    // Pure minimalist centered clock with mechanical rolling tumbler lock animation
+    const isRestingHomeHov = hoveredButtonId === 'nav_home' || isHovered;
+    drawRollingTime(ctx, 'resting_pill_clock', timeStr, x + w / 2, y + h / 2, {
+      font: '600 12px "Segoe UI Variable Display", Inter, sans-serif',
+      fillStyle: '#f4f4f5',
+      align: 'center',
+      baseline: 'middle',
+      isHovered: isRestingHomeHov,
+      alpha
+    });
     interactiveButtons.push({ id: 'nav_home', x, y, w, h });
   }
 
@@ -4717,10 +4730,17 @@ function renderClockTabView(x, y, w, h) {
       ctx.fillText('▲', col.x + colW / 2, stageY + 10);
       interactiveButtons.push({ id: `timer_inc_${col.id}`, data: col.id, x: col.x + 4, y: stageY + 3, w: colW - 8, h: 14 });
 
-      // Digit Value
-      ctx.font = '700 26px "Segoe UI Variable Display", Inter, sans-serif';
-      ctx.fillStyle = timerRunning ? '#38bdf8' : (isColHov ? '#ffffff' : '#f1f5f9');
-      ctx.fillText(col.val, col.x + colW / 2, stageY + 32);
+      // Digit Value with Rolling Tumbler Lock Wheel Animation
+      drawRollingTime(ctx, `timer_col_${col.id}`, col.val, col.x + colW / 2, stageY + 32, {
+        font: '700 26px "Segoe UI Variable Display", Inter, sans-serif',
+        fillStyle: timerRunning ? '#38bdf8' : (isColHov ? '#ffffff' : '#f1f5f9'),
+        align: 'center',
+        baseline: 'middle',
+        isHovered: isColHov,
+        onDigitChange: () => {
+          try { soundFX.play('tap'); } catch (_) {}
+        }
+      });
 
       // Bottom Stepper [ ▼ ]
       const isDecHov = hoveredButtonId === `timer_dec_${col.id}`;
@@ -5152,10 +5172,14 @@ function renderClockTabView(x, y, w, h) {
       ctx.fillText('▲', hColX + colW / 2, colY + 9);
       interactiveButtons.push({ id: 'alarm_inc_h', x: hColX, y: colY, w: colW, h: 16 });
 
-      // Hour digit
-      ctx.font = '700 22px "Segoe UI Variable Display", Inter, sans-serif';
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(String(alarmPickerHour).padStart(2, '0'), hColX + colW / 2, colY + colH / 2 + 1);
+      // Hour digit with rolling tumbler animation
+      drawRollingTime(ctx, 'alarm_picker_h', String(alarmPickerHour).padStart(2, '0'), hColX + colW / 2, colY + colH / 2 + 1, {
+        font: '700 22px "Segoe UI Variable Display", Inter, sans-serif',
+        fillStyle: '#ffffff',
+        align: 'center',
+        baseline: 'middle',
+        isHovered: isHColHov
+      });
 
       // Down arrow
       ctx.font = '600 9px sans-serif';
@@ -5188,10 +5212,14 @@ function renderClockTabView(x, y, w, h) {
       ctx.fillText('▲', mColX + colW / 2, colY + 9);
       interactiveButtons.push({ id: 'alarm_inc_m', x: mColX, y: colY, w: colW, h: 16 });
 
-      // Minute digit
-      ctx.font = '700 22px "Segoe UI Variable Display", Inter, sans-serif';
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(String(alarmPickerMinute).padStart(2, '0'), mColX + colW / 2, colY + colH / 2 + 1);
+      // Minute digit with rolling tumbler animation
+      drawRollingTime(ctx, 'alarm_picker_m', String(alarmPickerMinute).padStart(2, '0'), mColX + colW / 2, colY + colH / 2 + 1, {
+        font: '700 22px "Segoe UI Variable Display", Inter, sans-serif',
+        fillStyle: '#ffffff',
+        align: 'center',
+        baseline: 'middle',
+        isHovered: isMColHov
+      });
 
       // Minute Down arrow
       ctx.font = '600 9px sans-serif';
@@ -5615,15 +5643,32 @@ function renderHomeView(x, y, w, h) {
     h: greetH
   });
 
-  // 1. Digital Clock on Left (Clean typography, aligned horizontally with cards)
-  ctx.font = '700 27px "Segoe UI Variable Display", Inter, sans-serif';
-  ctx.fillStyle = '#ffffff';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(timeStr, clockX, y + 62);
+  // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation
+  const isHomeClockHov = hoveredButtonId === 'home_clock_display';
+  drawRollingTime(ctx, 'home_digital_clock', timeStr, clockX, y + 62, {
+    font: '700 27px "Segoe UI Variable Display", Inter, sans-serif',
+    fillStyle: isHomeClockHov ? '#38bdf8' : '#ffffff',
+    align: 'left',
+    baseline: 'top',
+    isHovered: isHomeClockHov,
+    showPlates: isHomeClockHov,
+    onDigitChange: () => {
+      try { soundFX.play('tap'); } catch (_) {}
+    }
+  });
+
+  interactiveButtons.push({
+    id: 'home_clock_display',
+    x: clockX - 4,
+    y: y + 58,
+    w: 136,
+    h: 34
+  });
 
   ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = '#94a3b8';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
   ctx.fillText(dateStr, clockX, y + 93);
 
   // 1b. Latest Notification Card below Digital Clock
