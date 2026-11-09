@@ -138,26 +138,15 @@ class RollingNumberWheel {
     }
     this.lastHover = isHovered;
 
-    // Setup typography and dimensions
+    // Setup typography and natural compact dimensions
     ctx.save();
     if (options.font) ctx.font = options.font;
     if (options.fillStyle) ctx.fillStyle = options.fillStyle;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    const digitW = Math.ceil(ctx.measureText('0').width);
-    const colonW = Math.ceil(ctx.measureText(':').width);
-    const spaceW = Math.ceil(ctx.measureText(' ').width);
-
-    // Compute column widths using tabular spacing for numeric stability
-    const colWidths = str.split('').map(ch => {
-      if (ch >= '0' && ch <= '9') return digitW + 2;
-      if (ch === ':') return colonW + 2;
-      if (ch === ' ') return spaceW;
-      return Math.ceil(ctx.measureText(ch).width) + 2;
-    });
-
-    const totalW = colWidths.reduce((a, b) => a + b, 0);
+    // Measure exact string width for natural compact typographic kerning
+    const totalW = ctx.measureText(str).width;
 
     const fontSizeMatch = (options.font || '').match(/(\d+)px/);
     const fontSize = fontSizeMatch ? parseInt(fontSizeMatch[1], 10) : 14;
@@ -165,11 +154,11 @@ class RollingNumberWheel {
 
     // Alignment handling
     const align = options.align || 'left';
-    let curX = x;
+    let startX = x;
     if (align === 'center') {
-      curX = x - totalW / 2;
+      startX = x - totalW / 2;
     } else if (align === 'right') {
-      curX = x - totalW;
+      startX = x - totalW;
     }
 
     const baseline = options.baseline || 'middle';
@@ -180,35 +169,37 @@ class RollingNumberWheel {
       centerY = y - slotH / 2;
     }
 
-    // Render each tumbler wheel column
+    // Subtle unified frosted capsule backdrop when hovered over clock
+    if (isHovered && options.showPlates) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(startX - 4, centerY - slotH / 2 - 2, totalW + 8, slotH + 4, 5);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Render each tumbler wheel character at its exact natural position
     for (let i = 0; i < str.length; i++) {
       const ch = str[i];
       const col = this.columns[i];
-      const colW = colWidths[i];
-      const colCenterX = curX + colW / 2;
       const isDigit = ch >= '0' && ch <= '9';
 
-      // 1. Draw subtle physical lock cylinder slot backdrop when hovered
-      if ((isHovered || options.showPlates) && isDigit) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.roundRect(curX + 1, centerY - slotH / 2, colW - 2, slotH, 3.5);
-        ctx.fillStyle = isHovered ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.03)';
-        ctx.fill();
-        ctx.strokeStyle = isHovered ? 'rgba(56, 189, 248, 0.35)' : 'rgba(255, 255, 255, 0.06)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.restore();
-      }
+      const prefixW = ctx.measureText(str.slice(0, i)).width;
+      const charW = ctx.measureText(ch).width;
+      const colLeft = startX + prefixW;
+      const colCenterX = colLeft + charW / 2;
 
-      // 2. Static punctuation / non-digits
+      // Static punctuation / non-digits
       if (!isDigit) {
         ctx.fillText(ch, colCenterX, centerY);
-        curX += colW;
         continue;
       }
 
-      // 3. Evaluate active roll state (multi-step spin vs. 1-step time tick)
+      // Evaluate active roll state (multi-step spin vs. 1-step time tick)
       let outgoingChar = col.current;
       let incomingChar = col.current;
       let rollProgress = 1.0;
@@ -217,7 +208,6 @@ class RollingNumberWheel {
       if (col.isSpinning) {
         const spinElapsed = now - col.spinStartTime;
         if (spinElapsed < 0) {
-          // Stagger delay waiting to spin
           outgoingChar = col.previous || col.current;
           incomingChar = col.previous || col.current;
           rollProgress = 1.0;
@@ -251,14 +241,17 @@ class RollingNumberWheel {
       // If stationary, render directly
       if (!isRolling || outgoingChar === incomingChar) {
         ctx.fillText(col.current, colCenterX, centerY);
-        curX += colW;
         continue;
       }
 
-      // 4. Draw rolling tumbler cylinder with slot clipping
+      // Draw rolling tumbler cylinder with slot clipping
+      const maxCharW = Math.max(charW, ctx.measureText(outgoingChar).width, ctx.measureText(incomingChar).width);
+      const clipLeft = colCenterX - maxCharW / 2 - 0.5;
+      const clipW = maxCharW + 1;
+
       ctx.save();
       ctx.beginPath();
-      ctx.rect(curX, centerY - slotH / 2, colW, slotH);
+      ctx.rect(clipLeft, centerY - slotH / 2, clipW, slotH);
       ctx.clip();
 
       const ease = easeOutBack(rollProgress, 1.08);
@@ -273,24 +266,22 @@ class RollingNumberWheel {
 
       // Incoming number enters from top
       const yIn = centerY - (1 - ease) * slotH;
-      const alphaIn = Math.min(1.0, rollProgress * 1.25);
+      const alphaIn = Math.min(1.0, rollProgress * 1.35);
       ctx.save();
       ctx.globalAlpha = (options.alpha || 1.0) * alphaIn;
       ctx.fillText(incomingChar, colCenterX, yIn);
       ctx.restore();
 
-      // 5. 3D cylindrical drum top & bottom shadow gradient
+      // 3D cylindrical drum subtle gradient
       const cylGrad = ctx.createLinearGradient(0, centerY - slotH / 2, 0, centerY + slotH / 2);
-      cylGrad.addColorStop(0.0, 'rgba(0, 0, 0, 0.42)');
-      cylGrad.addColorStop(0.2, 'rgba(0, 0, 0, 0.0)');
-      cylGrad.addColorStop(0.8, 'rgba(0, 0, 0, 0.0)');
-      cylGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0.42)');
+      cylGrad.addColorStop(0.0, 'rgba(0, 0, 0, 0.28)');
+      cylGrad.addColorStop(0.12, 'rgba(0, 0, 0, 0.0)');
+      cylGrad.addColorStop(0.88, 'rgba(0, 0, 0, 0.0)');
+      cylGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0.28)');
       ctx.fillStyle = cylGrad;
-      ctx.fillRect(curX, centerY - slotH / 2, colW, slotH);
+      ctx.fillRect(clipLeft, centerY - slotH / 2, clipW, slotH);
 
       ctx.restore(); // Restore clip
-
-      curX += colW;
     }
 
     ctx.restore();

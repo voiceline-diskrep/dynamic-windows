@@ -4736,10 +4736,7 @@ function renderClockTabView(x, y, w, h) {
         fillStyle: timerRunning ? '#38bdf8' : (isColHov ? '#ffffff' : '#f1f5f9'),
         align: 'center',
         baseline: 'middle',
-        isHovered: isColHov,
-        onDigitChange: () => {
-          try { soundFX.play('tap'); } catch (_) {}
-        }
+        isHovered: isColHov
       });
 
       // Bottom Stepper [ ▼ ]
@@ -5651,10 +5648,7 @@ function renderHomeView(x, y, w, h) {
     align: 'left',
     baseline: 'top',
     isHovered: isHomeClockHov,
-    showPlates: isHomeClockHov,
-    onDigitChange: () => {
-      try { soundFX.play('tap'); } catch (_) {}
-    }
+    showPlates: isHomeClockHov
   });
 
   interactiveButtons.push({

@@ -70,7 +70,11 @@ test('RollingNumberWheel: mock context rendering tracks rolling offsets and clip
     stroke: () => drawOps.push({ op: 'stroke' }),
     fillRect: (x, y, w, h) => drawOps.push({ op: 'fillRect', x, y, w, h }),
     fillText: (text, x, y) => drawOps.push({ op: 'fillText', text, x, y }),
-    measureText: (ch) => ({ width: ch === ':' ? 6 : 10 }),
+    measureText: (str) => {
+      let w = 0;
+      for (const ch of str) w += (ch === ':' ? 6 : 10);
+      return { width: w };
+    },
     createLinearGradient: () => ({ addColorStop: () => {} })
   };
 
