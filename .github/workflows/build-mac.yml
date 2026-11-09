@@ -31,7 +31,7 @@ jobs:
             --out=dist \
             --overwrite \
             --app-bundle-id=com.voiceline.dynamicwindows \
-            --extend-info=mac-info.json
+            --extend-info=mac-info.plist
           cd dist
           mv "Dynamic Windows-darwin-arm64/Dynamic Windows.app" "Dynamic Windows.app"
           zip -r -y "DynamicWindows-macOS-arm64.zip" "Dynamic Windows.app"
