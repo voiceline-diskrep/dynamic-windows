@@ -15,7 +15,7 @@ const CONFIG_DIR = process.platform === 'darwin'
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.4.25',
+  version: '1.4.26',
   animationSpeed: 1.0,
   islandOpacity: 0.95, // 0.40 to 1.00 frosted glass opacity
   displayMode: 'island', // 'island' | 'notch'
@@ -27,6 +27,11 @@ const DEFAULT_CONFIG = {
   soundPreset: 'modern', // 'modern' | 'mechanical' | 'soft' | 'retro'
   fontFamily: 'Theater', // App-wide typography: 'Theater' | 'Segoe UI Variable Text' | 'Inter' | custom
   userName: '', // Personalized user name for greetings and dynamic island interactions
+  aiProvider: 'gemini', // 'gemini' | 'openai'
+  aiApiKey: '', // User-provided API key
+  aiModel: 'gemini-1.5-flash', // Default model
+  aiBaseUrl: 'https://api.openai.com/v1', // Custom base URL for OpenAI-compatible endpoints
+  aiSubMode: 'chat', // 'chat' | 'monitor'
   startup: false,
   startupTakeover: false,
   clock24h: false,
