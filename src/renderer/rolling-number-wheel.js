@@ -308,12 +308,29 @@ function triggerRollingWheelSpin(slotId, steps = 3) {
   wheel.triggerSpin(performance.now(), steps);
 }
 
+function hasActiveTumblerRoll() {
+  const now = performance.now();
+  for (const wheel of wheelRegistry.values()) {
+    if (!wheel.columns) continue;
+    for (const col of wheel.columns) {
+      if (col.isSpinning && (now - col.spinStartTime < col.spinDuration + 100)) {
+        return true;
+      }
+      if (col.startTime > 0 && (now - col.startTime < col.duration + 100)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     RollingNumberWheel,
     getRollingWheel,
     drawRollingTime,
     triggerRollingWheelSpin,
+    hasActiveTumblerRoll,
     getTumblerCycleSequence,
     getCycleStepAtProgress,
     easeOutCubic,

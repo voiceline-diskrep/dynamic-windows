@@ -124,7 +124,7 @@ function parseCallMetadataFromWindowTitle(appId, rawTitle) {
 class CallMonitor extends EventEmitter {
   constructor(options = {}) {
     super();
-    this.pollIntervalMs = options.pollIntervalMs || 650;
+    this.pollIntervalMs = options.pollIntervalMs || 3000;
     this.clientId = options.clientId || DEFAULT_DISCORD_CLIENT_ID;
     this.accessToken = options.accessToken || null;
 
@@ -161,16 +161,28 @@ class CallMonitor extends EventEmitter {
     }
   }
 
+  scheduleNext(delayMs) {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    const delay = typeof delayMs === 'number' ? delayMs : (this.state.inCall ? 800 : this.pollIntervalMs);
+    this.timer = setTimeout(async () => {
+      this.timer = null;
+      await this.poll();
+      this.scheduleNext();
+    }, delay);
+    if (this.timer.unref) this.timer.unref();
+  }
+
   start() {
     if (this.timer) return;
-    this.poll();
-    this.timer = setInterval(() => this.poll(), this.pollIntervalMs);
-    if (this.timer.unref) this.timer.unref();
+    this.poll().finally(() => this.scheduleNext());
   }
 
   stop() {
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
     this.disconnectRpc();

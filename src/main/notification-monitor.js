@@ -49,7 +49,7 @@ const PS_ENCODED = Buffer.from(PS_NOTIFICATION_SCRIPT, 'utf16le').toString('base
 class NotificationMonitor extends EventEmitter {
   constructor(options = {}) {
     super();
-    this.pollIntervalMs = options.pollIntervalMs || 2500;
+    this.pollIntervalMs = options.pollIntervalMs || 10000;
     this.notifications = [];
     this.knownIds = new Set();
     this.isPolling = false;

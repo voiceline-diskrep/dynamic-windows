@@ -22,6 +22,17 @@ window.addEventListener('unhandledrejection', (e) => {
 'use strict';
 
 const { ipcRenderer, webUtils } = require('electron');
+if (ipcRenderer && typeof ipcRenderer.on === 'function') {
+  const origIpcOn = ipcRenderer.on.bind(ipcRenderer);
+  ipcRenderer.on = function(channel, listener) {
+    return origIpcOn(channel, function(...args) {
+      if (typeof requestFrame === 'function') {
+        requestFrame();
+      }
+      return listener.apply(this, args);
+    });
+  };
+}
 const { soundFX } = require('./sound-fx');
 const {
   TAB_ORDER,
@@ -31,7 +42,7 @@ const {
   computeLiquidHeightStep,
   getTargetExpandedHeight
 } = require('./tab-animation-engine');
-const { drawRollingTime, triggerRollingWheelSpin } = require('./rolling-number-wheel');
+const { drawRollingTime, triggerRollingWheelSpin, hasActiveTumblerRoll } = require('./rolling-number-wheel');
 const {
   getBatteryColor,
   getBatteryDisplay,
@@ -2353,11 +2364,64 @@ ipcRenderer.on('permission-prompt', (event, prompt) => {
 });
 
 // -------------------------------------------------------------
-// Render Loop (144Hz Smooth Animation)
+// Render Loop (Adaptive Smooth Animation & Power Throttling)
 // -------------------------------------------------------------
 let lastTime = performance.now();
+let animFrameRequested = false;
+let idleFrameTimeout = null;
+let lastSentW = -1;
+let lastSentH = -1;
+
+function isDynamicActive() {
+  if (isHovered || animProgress > 0.005 || targetProgress > 0.005) return true;
+
+  const targetRestW = getTargetRestingWidth();
+  if (Math.abs(targetRestW - currentRestingWidth) > 0.5) return true;
+
+  const targetExpH = getTargetExpandedHeightForView(currentView);
+  if (animProgress > 0.05 && Math.abs(targetExpH - currentExpandedH) > 0.5) return true;
+
+  if (songPopupProgress > 0.005 || songPopupActiveUntil > performance.now()) return true;
+
+  if (currentView === 'notification_banner' || notificationBannerUntil > performance.now()) return true;
+
+  if (timerRunning || stopwatchRunning || focusRunning) return true;
+
+  if (activeAlarmRinging) return true;
+
+  if (typeof hasActiveTumblerRoll === 'function' && hasActiveTumblerRoll()) return true;
+
+  if (mediaState && mediaState.isPlaying) return true;
+
+  if (callState && callState.inCall) return true;
+
+  if (antigravityState && (antigravityState.status === 'running' || antigravityState.status === 'RUNNING')) return true;
+  if (antigravityState && Array.isArray(antigravityState.activeProjects) && antigravityState.activeProjects.some(p => p.status === 'running' || p.status === 'RUNNING')) return true;
+
+  if (isDraggingOver || isDraggingVolume || shelfDragCandidate) return true;
+
+  if (isInlineModalOpen) return true;
+
+  return false;
+}
+
+function requestFrame() {
+  if (idleFrameTimeout) {
+    clearTimeout(idleFrameTimeout);
+    idleFrameTimeout = null;
+  }
+  if (!animFrameRequested) {
+    animFrameRequested = true;
+    requestAnimationFrame(animate);
+  }
+}
 
 function animate(now) {
+  animFrameRequested = false;
+  if (idleFrameTimeout) {
+    clearTimeout(idleFrameTimeout);
+    idleFrameTimeout = null;
+  }
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
   currentDt = dt;
@@ -2461,13 +2525,19 @@ function animate(now) {
     currentExpandedH = computeLiquidHeightStep(currentExpandedH, targetExpH, dt, animSpeedMultiplier);
   }
 
-  // Send window size updates to Electron Main
+  // Send window size updates to Electron Main (only on bounds change)
   const currentHeight = getTargetHeight(animProgress);
   const currentWidth = getTargetWidth(animProgress);
-  ipcRenderer.send('window-bounds-update', {
-    width: Math.round(currentWidth),
-    height: Math.round(currentHeight)
-  });
+  const roundedW = Math.round(currentWidth);
+  const roundedH = Math.round(currentHeight);
+  if (roundedW !== lastSentW || roundedH !== lastSentH) {
+    lastSentW = roundedW;
+    lastSentH = roundedH;
+    ipcRenderer.send('window-bounds-update', {
+      width: roundedW,
+      height: roundedH
+    });
+  }
 
   try {
     render();
@@ -2475,7 +2545,12 @@ function animate(now) {
     console.error('Render error:', err);
   }
 
-  requestAnimationFrame(animate);
+  if (isDynamicActive()) {
+    requestFrame();
+  } else {
+    // Throttle down to 2 FPS when resting and idle
+    idleFrameTimeout = setTimeout(requestFrame, 500);
+  }
 }
 
 window.addEventListener('wheel', (e) => {
@@ -2516,7 +2591,11 @@ window.addEventListener('wheel', (e) => {
   }
 }, { passive: false });
 
-requestAnimationFrame(animate);
+requestFrame();
+
+['mousemove', 'mouseenter', 'mouseleave', 'mousedown', 'mouseup', 'keydown', 'keyup', 'focus', 'wheel'].forEach(evt => {
+  window.addEventListener(evt, requestFrame, { passive: true });
+});
 
 function sanitizeProjectName(raw) {
   if (!raw) return 'Island';
@@ -7382,6 +7461,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getEligibleGreetingsList,
     getNextPersonalizedGreeting,
     buildCapsulePath,
-    drawCapsuleRim
+    drawCapsuleRim,
+    isDynamicActive
   };
 }

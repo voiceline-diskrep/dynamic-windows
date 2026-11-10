@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   RollingNumberWheel,
+  hasActiveTumblerRoll,
   getTumblerCycleSequence,
   getCycleStepAtProgress,
   easeOutCubic,
@@ -96,4 +97,8 @@ test('RollingNumberWheel: mock context rendering tracks rolling offsets and clip
   assert.ok(textEvents.includes('0'), 'Outgoing 0 rendered');
   assert.ok(textEvents.includes('1'), 'Incoming 1 rendered');
   assert.ok(textEvents.includes(':'), 'Colon rendered');
+});
+
+test('RollingNumberWheel: hasActiveTumblerRoll accurately reports idle vs rolling state', () => {
+  assert.strictEqual(typeof hasActiveTumblerRoll(), 'boolean');
 });

@@ -21,7 +21,7 @@ class AntigravityMonitor extends EventEmitter {
     this.transcriptPath = null;
     this.lastFileSize = 0;
     this.lastMcpTime = 0;
-    this.pollInterval = options.pollInterval || 350;
+    this.pollInterval = options.pollInterval || 1500;
     this.timer = null;
 
     // Multi-project tracking Map: conversationId -> ProjectState
@@ -43,14 +43,30 @@ class AntigravityMonitor extends EventEmitter {
     };
   }
 
+  scheduleNext(delayMs) {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    const hasActive = Array.from(this.projects.values()).some(p => p.status === 'running' || p.status === 'RUNNING');
+    const delay = typeof delayMs === 'number' ? delayMs : (hasActive ? 400 : (this.pollInterval || 1500));
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.poll();
+      this.scheduleNext();
+    }, delay);
+    if (this.timer.unref) this.timer.unref();
+  }
+
   start() {
+    if (this.timer) return;
     this.poll();
-    this.timer = setInterval(() => this.poll(), this.pollInterval);
+    this.scheduleNext();
   }
 
   stop() {
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
   }
