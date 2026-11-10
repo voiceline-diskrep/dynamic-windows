@@ -403,7 +403,7 @@ const UI = {
   ACTIVE_REST_W: 226,
   ACTIVE_BAR_H: 36,
 
-  EXPANDED_W: 580,
+  EXPANDED_W: 616,
   HOME_H: 164,
   CALENDAR_H: 330,
   CLOCK_H: 260,
@@ -1998,6 +1998,9 @@ function handleButtonClick(id, data) {
   } else if (id === 'toggle_display_mode') {
     displayMode = displayMode === 'island' ? 'notch' : 'island';
     ipcRenderer.send('set-display-mode', displayMode);
+  } else if (id === 'btn_top_exit') {
+    soundFX.play('click');
+    ipcRenderer.send('exit-app');
   } else if (id === 'song_popup_open_media') {
     songPopupActiveUntil = 0;
     switchTab('media');
@@ -4279,17 +4282,23 @@ function renderTopNav(x, y, w) {
     interactiveButtons.push({ id: item.id, x: px, y: topY, w: pillW, h: pillH });
   });
 
-  // Display Mode Quick Switcher with Crisp Black & White Logo
-  const modeW = 82;
+  // Dedicated Exit Application Button (✕) on the far right
+  const exitW = 22;
+  const exitH = 22;
+  const exitX = x + w - exitW - 16;
+  const isExitHov = hoveredButtonId === 'btn_top_exit';
+
+  // Display Mode Quick Switcher immediately to the left of the Exit Button
+  const modeW = 78;
   const modeH = 22;
-  const modeX = x + w - modeW - 16;
+  const modeX = exitX - modeW - 6;
   const isModeHov = hoveredButtonId === 'toggle_display_mode';
 
   // Laptop Battery Indicator Pill on Top Bar (Green >40%, Yellow 20-40%, Red 0-20%)
   if (batteryState && batteryState.hasBattery) {
     const battPillW = batteryState.isCharging ? 66 : 56;
     const battPillH = 22;
-    const battPillX = modeX - battPillW - 8;
+    const battPillX = modeX - battPillW - 6;
     const isBattHov = hoveredButtonId === 'btn_battery_status';
 
     ctx.save();
@@ -4352,6 +4361,27 @@ function renderTopNav(x, y, w) {
   ctx.textBaseline = 'middle';
   ctx.fillText(displayMode === 'island' ? 'Notch' : 'Island', iconCx + 11, topY + modeH / 2);
   interactiveButtons.push({ id: 'toggle_display_mode', x: modeX, y: topY, w: modeW, h: modeH });
+
+  // Draw Exit Application Button (✕)
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(exitX, topY, exitW, exitH, 11);
+  ctx.fillStyle = isExitHov ? 'rgba(239, 68, 68, 0.88)' : 'rgba(255, 255, 255, 0.06)';
+  ctx.fill();
+  if (!isExitHov) {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isExitHov ? '#ffffff' : '#94a3b8';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('✕', exitX + exitW / 2, topY + exitH / 2);
+  ctx.restore();
+
+  interactiveButtons.push({ id: 'btn_top_exit', x: exitX, y: topY, w: exitW, h: exitH });
 }
 
 function renderCalendarWidget(calX, calY, calW, calH) {
