@@ -43,3 +43,11 @@ test('sysHelper: getWorkArea returns monitor bounds', async () => {
   assert.strictEqual(typeof res.bottom, 'number');
   assert.ok(res.right > 0 && res.bottom > 0);
 });
+
+test('sysHelper: getBatteryStatus returns valid battery structure', async () => {
+  const res = await sysHelper.getBatteryStatus();
+  assert.ok(res, 'Should return an object');
+  assert.strictEqual(typeof res.hasBattery, 'boolean');
+  assert.strictEqual(typeof res.percent, 'number');
+  assert.strictEqual(typeof res.isCharging, 'boolean');
+});

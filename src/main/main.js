@@ -4,7 +4,7 @@
  * Main Process (Electron + Node.js)
  */
 
-const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, clipboard, nativeImage, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -12,7 +12,7 @@ const os = require('os');
 function getAppLogDir() {
   const dir = process.platform === 'darwin'
     ? path.join(os.homedir(), 'Library', 'Logs', 'DynamicWindows')
-    : getAppLogDir();
+    : path.join(process.env.LOCALAPPDATA || os.homedir(), 'DynamicWindows', 'logs');
   if (!fs.existsSync(dir)) {
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
   }
@@ -755,6 +755,11 @@ function createIslandWindow() {
     return configManager.get('userName') || '';
   });
 
+  ipcMain.handle('get-battery-status', async () => {
+    await refreshBatteryStatus();
+    return currentBatteryState;
+  });
+
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
@@ -770,6 +775,8 @@ function createIslandWindow() {
     sendFontFamily();
     sendUserName();
     sendNotifications();
+    sendBatteryState();
+    refreshBatteryStatus();
   });
 }
 
@@ -875,6 +882,31 @@ function sendUserName() {
       w.webContents.send('user-name-changed', { userName: name });
     }
   });
+}
+
+let currentBatteryState = { hasBattery: false, percent: 100, isCharging: false };
+
+function sendBatteryState() {
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('battery-status-changed', currentBatteryState);
+    }
+  });
+}
+
+async function refreshBatteryStatus() {
+  try {
+    const batt = await sysHelper.getBatteryStatus();
+    if (batt && typeof batt.hasBattery === 'boolean') {
+      const changed = batt.hasBattery !== currentBatteryState.hasBattery ||
+                      batt.percent !== currentBatteryState.percent ||
+                      batt.isCharging !== currentBatteryState.isCharging;
+      currentBatteryState = batt;
+      if (changed) {
+        sendBatteryState();
+      }
+    }
+  } catch (e) {}
 }
 
 function setupTray() {
@@ -1058,6 +1090,15 @@ app.whenReady().then(() => {
   cleanupTopBezel();
   setupTray();
   setupGlobalShortcuts();
+
+  // Battery Monitoring (Laptops / Systems with battery)
+  refreshBatteryStatus();
+  setInterval(refreshBatteryStatus, 15000).unref?.();
+  if (powerMonitor) {
+    powerMonitor.on('on-ac', () => refreshBatteryStatus());
+    powerMonitor.on('on-battery', () => refreshBatteryStatus());
+    powerMonitor.on('resume', () => refreshBatteryStatus());
+  }
 
   // Automatic Update Check on Startup (GitHub Releases)
   if (configManager.get('autoCheckUpdates') !== false) {

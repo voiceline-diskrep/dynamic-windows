@@ -32,6 +32,12 @@ const {
   getTargetExpandedHeight
 } = require('./tab-animation-engine');
 const { drawRollingTime, triggerRollingWheelSpin } = require('./rolling-number-wheel');
+const {
+  getBatteryColor,
+  getBatteryDisplay,
+  drawBatteryCircle,
+  drawBatteryIndicator
+} = require('./battery-indicator');
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -2228,6 +2234,43 @@ ipcRenderer.on('user-name-changed', (event, data) => {
     }
   }
 });
+
+let batteryState = { hasBattery: false, percent: 100, isCharging: false };
+
+ipcRenderer.on('battery-status-changed', (event, data) => {
+  if (data && typeof data.hasBattery === 'boolean') {
+    batteryState = {
+      hasBattery: data.hasBattery,
+      percent: typeof data.percent === 'number' ? data.percent : 100,
+      isCharging: Boolean(data.isCharging)
+    };
+  }
+});
+
+try {
+  ipcRenderer.invoke('get-battery-status').then(res => {
+    if (res && typeof res.hasBattery === 'boolean') {
+      batteryState = res;
+    }
+  }).catch(() => {});
+} catch (e) {}
+
+if (typeof navigator !== 'undefined' && typeof navigator.getBattery === 'function') {
+  navigator.getBattery().then(batt => {
+    function syncNativeBattery() {
+      if (batteryState.hasBattery || !batt.charging || batt.level < 1.0) {
+        batteryState.percent = Math.round(batt.level * 100);
+        batteryState.isCharging = batt.charging;
+        if (!batt.charging || batt.level < 1.0) {
+          batteryState.hasBattery = true;
+        }
+      }
+    }
+    batt.addEventListener('levelchange', syncNativeBattery);
+    batt.addEventListener('chargingchange', syncNativeBattery);
+    syncNativeBattery();
+  }).catch(() => {});
+}
 try {
   ipcRenderer.invoke('get-app-settings').then(res => {
     if (res && res.config) {
@@ -2574,7 +2617,7 @@ function getTargetRestingWidth() {
       mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(144 + textW)));
     }
   } else {
-    mainPillW = UI.REST_W;
+    mainPillW = (batteryState && batteryState.hasBattery) ? 134 : UI.REST_W;
   }
 
   // Main resting pill stays strictly centered without displacement
@@ -3451,9 +3494,16 @@ function renderRestingPill(x, y, w, h, alpha) {
   const hasMedia = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
 
   if (hasMedia) {
-    // Single Media Pill Layout: Clock + Rounded Album Art + Animated Word-by-Word Lyric / Song Title + 6-Bar Equalizer
+    // Single Media Pill Layout: (Optional Laptop Battery Dot) + Clock + Rounded Album Art + Animated Lyric + 6-Bar Equalizer
     const isRestingMediaHov = hoveredButtonId === 'nav_media' || isHovered;
-    drawRollingTime(ctx, 'resting_media_clock', timeStr, x + 12, y + h / 2, {
+    let clockStartX = x + 12;
+
+    if (batteryState && batteryState.hasBattery) {
+      drawBatteryCircle(ctx, x + 14, y + h / 2, 4.0, batteryState.percent, batteryState.isCharging, alpha);
+      clockStartX = x + 24;
+    }
+
+    drawRollingTime(ctx, 'resting_media_clock', timeStr, clockStartX, y + h / 2, {
       font: '600 11px "Segoe UI Variable Display", Inter, sans-serif',
       fillStyle: '#e4e4e7',
       align: 'left',
@@ -3466,7 +3516,7 @@ function renderRestingPill(x, y, w, h, alpha) {
 
     // Album Cover Thumbnail (20x20 rounded) or Music Note
     const artSize = 20;
-    const artX = x + 12 + clockW + 8;
+    const artX = clockStartX + clockW + 8;
     const artY = y + (h - artSize) / 2;
     if (albumImage && albumImage.complete && albumImage.naturalWidth > 0) {
       ctx.save();
@@ -3510,16 +3560,40 @@ function renderRestingPill(x, y, w, h, alpha) {
 
     interactiveButtons.push({ id: 'nav_media', x, y, w, h });
   } else {
-    // Pure minimalist centered clock with mechanical rolling tumbler lock animation
     const isRestingHomeHov = hoveredButtonId === 'nav_home' || isHovered;
-    drawRollingTime(ctx, 'resting_pill_clock', timeStr, x + w / 2, y + h / 2, {
-      font: '600 12px "Segoe UI Variable Display", Inter, sans-serif',
-      fillStyle: '#f4f4f5',
-      align: 'center',
-      baseline: 'middle',
-      isHovered: isRestingHomeHov,
-      alpha
-    });
+    if (batteryState && batteryState.hasBattery) {
+      // Laptop: Left side = Circular Battery Indicator (Green >40, Yellow 20-40, Red 0-20), Right side = Tumbler Rolling Clock
+      const battPadding = 12;
+      const battDim = drawBatteryIndicator(ctx, x + battPadding, y + h / 2, batteryState, {
+        radius: 4.2,
+        showText: true,
+        font: '600 11px "Segoe UI Variable Text", Inter, sans-serif',
+        textColor: '#e4e4e7',
+        alpha,
+        isHovered: isRestingHomeHov
+      });
+
+      const remainingW = w - (battPadding + battDim.width);
+      const clockTargetX = x + battPadding + battDim.width + remainingW / 2;
+      drawRollingTime(ctx, 'resting_pill_clock', timeStr, clockTargetX, y + h / 2, {
+        font: '600 12px "Segoe UI Variable Display", Inter, sans-serif',
+        fillStyle: '#f4f4f5',
+        align: 'center',
+        baseline: 'middle',
+        isHovered: isRestingHomeHov,
+        alpha
+      });
+    } else {
+      // Desktop: Pure minimalist centered clock with mechanical rolling tumbler lock animation
+      drawRollingTime(ctx, 'resting_pill_clock', timeStr, x + w / 2, y + h / 2, {
+        font: '600 12px "Segoe UI Variable Display", Inter, sans-serif',
+        fillStyle: '#f4f4f5',
+        align: 'center',
+        baseline: 'middle',
+        isHovered: isRestingHomeHov,
+        alpha
+      });
+    }
     interactiveButtons.push({ id: 'nav_home', x, y, w, h });
   }
 
@@ -4210,6 +4284,37 @@ function renderTopNav(x, y, w) {
   const modeH = 22;
   const modeX = x + w - modeW - 16;
   const isModeHov = hoveredButtonId === 'toggle_display_mode';
+
+  // Laptop Battery Indicator Pill on Top Bar (Green >40%, Yellow 20-40%, Red 0-20%)
+  if (batteryState && batteryState.hasBattery) {
+    const battPillW = batteryState.isCharging ? 66 : 56;
+    const battPillH = 22;
+    const battPillX = modeX - battPillW - 8;
+    const isBattHov = hoveredButtonId === 'btn_battery_status';
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(battPillX, topY, battPillW, battPillH, 11);
+    ctx.fillStyle = isBattHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.fill();
+
+    drawBatteryIndicator(ctx, battPillX + 7, topY + battPillH / 2, batteryState, {
+      radius: 4.2,
+      showText: true,
+      font: '600 10.5px "Segoe UI Variable Text", Inter, sans-serif',
+      textColor: isBattHov ? '#ffffff' : '#e4e4e7',
+      isHovered: isBattHov
+    });
+    ctx.restore();
+
+    interactiveButtons.push({
+      id: 'btn_battery_status',
+      x: battPillX,
+      y: topY,
+      w: battPillW,
+      h: battPillH
+    });
+  }
 
   ctx.beginPath();
   ctx.roundRect(modeX, topY, modeW, modeH, 11);
@@ -5639,6 +5744,36 @@ function renderHomeView(x, y, w, h) {
     w: greetW,
     h: greetH
   });
+
+  // Companion laptop battery status badge next to greeting
+  if (batteryState && batteryState.hasBattery) {
+    const homeBattX = clockX + greetW + 8;
+    const homeBattW = batteryState.isCharging ? 64 : 54;
+    const isHomeBattHov = hoveredButtonId === 'home_battery_badge';
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(homeBattX, greetY, homeBattW, greetH, 6);
+    ctx.fillStyle = isHomeBattHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.08)';
+    ctx.fill();
+
+    drawBatteryIndicator(ctx, homeBattX + 6, greetY + greetH / 2, batteryState, {
+      radius: 3.8,
+      showText: true,
+      font: '600 10px "Segoe UI Variable Text", Inter, sans-serif',
+      textColor: isHomeBattHov ? '#ffffff' : '#cbd5e1',
+      isHovered: isHomeBattHov
+    });
+    ctx.restore();
+
+    interactiveButtons.push({
+      id: 'home_battery_badge',
+      x: homeBattX,
+      y: greetY,
+      w: homeBattW,
+      h: greetH
+    });
+  }
 
   // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation
   const isHomeClockHov = hoveredButtonId === 'home_clock_display';

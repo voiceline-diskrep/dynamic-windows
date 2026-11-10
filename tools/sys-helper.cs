@@ -95,7 +95,20 @@ namespace DynamicWindowsTools {
         public int Bottom;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SYSTEM_POWER_STATUS {
+        public byte ACLineStatus;
+        public byte BatteryFlag;
+        public byte BatteryLifePercent;
+        public byte SystemStatusFlag;
+        public int BatteryLifeTime;
+        public int BatteryFullLifeTime;
+    }
+
     public class Program {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS lpSystemPowerStatus);
+
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);
 
@@ -588,6 +601,22 @@ namespace DynamicWindowsTools {
                         return true;
                     }, IntPtr.Zero);
                     Console.WriteLine(string.Format("{{\"ok\":{0},\"top\":0}}", ok ? "true" : "false"));
+                }
+                else if (cmd == "get-battery") {
+                    SYSTEM_POWER_STATUS sps;
+                    if (GetSystemPowerStatus(out sps)) {
+                        bool noBattery = (sps.BatteryFlag & 128) != 0 || sps.BatteryLifePercent > 100;
+                        bool hasBattery = !noBattery;
+                        int percent = (sps.BatteryLifePercent <= 100) ? (int)sps.BatteryLifePercent : 0;
+                        bool isCharging = hasBattery && ((sps.ACLineStatus == 1) || ((sps.BatteryFlag & 8) != 0));
+                        Console.WriteLine(string.Format("{{\"hasBattery\":{0},\"percent\":{1},\"isCharging\":{2}}}",
+                            hasBattery ? "true" : "false",
+                            percent,
+                            isCharging ? "true" : "false"
+                        ));
+                    } else {
+                        Console.WriteLine("{\"hasBattery\":false,\"percent\":0,\"isCharging\":false}");
+                    }
                 }
             } catch (Exception ex) {
                 Console.WriteLine("{{\"error\":\"" + ex.Message.Replace("\"", "\\\"") + "\"}}");

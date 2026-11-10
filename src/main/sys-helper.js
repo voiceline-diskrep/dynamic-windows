@@ -42,6 +42,23 @@ function runHelper(args) {
         });
       });
     }
+    if (cmd === 'get-battery') {
+      return new Promise((resolve) => {
+        execFile('/usr/bin/pmset', ['-g', 'batt'], (err, stdout) => {
+          if (err || !stdout) {
+            return resolve({ hasBattery: false, percent: 0, isCharging: false });
+          }
+          const hasBatt = /InternalBattery/i.test(stdout);
+          if (!hasBatt) {
+            return resolve({ hasBattery: false, percent: 0, isCharging: false });
+          }
+          const match = stdout.match(/(\d+)%/);
+          const percent = match ? parseInt(match[1], 10) : 100;
+          const isCharging = /charging|charged|AC Power/i.test(stdout);
+          resolve({ hasBattery: true, percent, isCharging });
+        });
+      });
+    }
     return Promise.resolve({ ok: true });
   }
 
@@ -74,5 +91,16 @@ module.exports = {
   focusProcess: (procName) => runHelper(['focus-process', String(procName)]),
   getWorkArea: () => runHelper(['get-workarea']),
   setWorkAreaTop: (px) => runHelper(['set-workarea-top', String(px)]),
-  restoreWorkArea: () => runHelper(['restore-workarea'])
+  restoreWorkArea: () => runHelper(['restore-workarea']),
+  getBatteryStatus: async () => {
+    try {
+      const res = await runHelper(['get-battery']);
+      if (res && typeof res.hasBattery === 'boolean') {
+        return res;
+      }
+      return { hasBattery: false, percent: 0, isCharging: false };
+    } catch (e) {
+      return { hasBattery: false, percent: 0, isCharging: false };
+    }
+  }
 };
