@@ -15,7 +15,7 @@ const CONFIG_DIR = process.platform === 'darwin'
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 const DEFAULT_CONFIG = {
-  version: '1.4.34',
+  version: '1.4.35',
   animationSpeed: 1.0,
   islandOpacity: 0.95, // 0.40 to 1.00 frosted glass opacity
   displayMode: 'island', // 'island' | 'notch'
@@ -31,6 +31,7 @@ const DEFAULT_CONFIG = {
   startupTakeover: false,
   clock24h: false,
   showSeconds: false,
+  showAmPm: true,
   antigravityMonitor: true,
   autoFocusAntigravity: true,
   hooksPort: 47823,

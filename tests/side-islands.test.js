@@ -96,6 +96,6 @@ test('SideIslandsLayout: places Call capsule immediately adjacent when Timer is 
 });
 
 test('CanvasEngine: detached side islands render outside center capsule clip path', () => {
-  const renderSection = canvasEngineSrc.match(/renderRestingPill\(x, y, w, h, restAlpha\);\s*ctx\.restore\(\);\s*renderDetachedSideIslands\(x, y, w, h, restAlpha\);/);
+  const renderSection = canvasEngineSrc.match(/renderRestingPill\([\s\S]*?ctx\.restore\(\);[\s\S]*?renderDetachedSideIslands\(/);
   assert.ok(renderSection, 'renderDetachedSideIslands must be invoked after ctx.restore() of center clip');
 });

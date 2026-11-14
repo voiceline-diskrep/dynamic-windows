@@ -774,6 +774,7 @@ function createIslandWindow() {
     sendSoundEffectsConfig();
     sendFontFamily();
     sendUserName();
+    sendClockSettings();
     sendNotifications();
     sendBatteryState();
     refreshBatteryStatus();
@@ -880,6 +881,19 @@ function sendUserName() {
   BrowserWindow.getAllWindows().forEach(w => {
     if (!w.isDestroyed()) {
       w.webContents.send('user-name-changed', { userName: name });
+    }
+  });
+}
+
+function sendClockSettings() {
+  const payload = {
+    clock24h: !!configManager.get('clock24h'),
+    showSeconds: !!configManager.get('showSeconds'),
+    showAmPm: configManager.get('showAmPm') !== false
+  };
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('clock-settings-changed', payload);
     }
   });
 }

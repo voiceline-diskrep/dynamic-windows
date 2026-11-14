@@ -262,7 +262,7 @@
 
     .setting-desc {
       font-size: 12px;
-      color: #71717a;
+      color: #a1a1aa;
       line-height: 1.4;
     }
 
@@ -287,7 +287,7 @@
       background-color: #27272a;
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 24px;
-      transition: background-color 0.2s ease, border-color 0.2s ease;
+      transition: background-color 180ms cubic-bezier(0.2, 0, 0, 1), border-color 180ms cubic-bezier(0.2, 0, 0, 1);
     }
 
     .slider:before {
@@ -298,8 +298,12 @@
       left: 2px;
       bottom: 2px;
       background-color: #ffffff;
-      border-radius: 50%;
-      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      border-radius: 999px;
+      transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), width 150ms cubic-bezier(0.2, 0, 0, 1);
+    }
+
+    .switch:active .slider:before {
+      width: 22px;
     }
 
     input:checked + .slider {
@@ -311,6 +315,10 @@
       transform: translateX(20px);
     }
 
+    .switch:active input:checked + .slider:before {
+      transform: translateX(16px);
+    }
+
     /* Buttons & Inputs */
     .btn {
       background-color: #22222a;
@@ -318,13 +326,17 @@
       color: #ffffff;
       font-size: 12.5px;
       font-weight: 500;
-      padding: 7px 16px;
-      border-radius: 6px;
+      padding: 8px 16px;
+      border-radius: 8px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      transition: background-color 0.15s ease, border-color 0.15s ease;
+      transition: background-color 150ms cubic-bezier(0.2, 0, 0, 1), border-color 150ms cubic-bezier(0.2, 0, 0, 1), transform 80ms cubic-bezier(0.2, 0, 0, 1);
+    }
+
+    .btn:active {
+      transform: scale(0.97);
     }
 
     .btn:hover {
@@ -657,6 +669,17 @@
 
         <div class="setting-row">
           <div class="setting-info">
+            <span class="setting-label">Show AM / PM Indicator</span>
+            <span class="setting-desc">Display AM or PM next to 12-hour clock times (disabled automatically in 24-hour mode).</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-showAmPm">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
             <span class="setting-label">Show Seconds</span>
             <span class="setting-desc">Include seconds in resting island clock display.</span>
           </div>
@@ -916,6 +939,8 @@
         if (elGameMode) elGameMode.checked = cfg.gameMode !== false;
         const elClock24 = document.getElementById('setting-clock24h');
         if (elClock24) elClock24.checked = !!cfg.clock24h;
+        const elShowAmPm = document.getElementById('setting-showAmPm');
+        if (elShowAmPm) elShowAmPm.checked = cfg.showAmPm !== false;
         const elSeconds = document.getElementById('setting-showSeconds');
         if (elSeconds) elSeconds.checked = !!cfg.showSeconds;
         const elLyrics = document.getElementById('setting-dynamicLyrics');
@@ -958,7 +983,7 @@
         }
 
         // Updates
-        const currentVer = data.version || '1.4.34';
+        const currentVer = data.version || '1.4.35';
         const curBadge = document.getElementById('current-version-badge');
         if (curBadge) curBadge.textContent = `v${currentVer}`;
         const aboutVer = document.getElementById('about-version-text');
@@ -1008,6 +1033,7 @@
     bindSettingChange('setting-startup', 'startup');
     bindSettingChange('setting-gameMode', 'gameMode');
     bindSettingChange('setting-clock24h', 'clock24h');
+    bindSettingChange('setting-showAmPm', 'showAmPm');
     bindSettingChange('setting-showSeconds', 'showSeconds');
     bindSettingChange('setting-dynamicLyrics', 'dynamicLyrics');
     bindSettingChange('setting-userName', 'userName');

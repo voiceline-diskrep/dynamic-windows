@@ -448,6 +448,89 @@ let navIndicatorX = null;
 let navIndicatorW = null;
 let currentExpandedH = UI.HOME_H;
 let currentDt = 0.016;
+let clock24h = false;
+let showSeconds = false;
+let showAmPm = true;
+
+function formatClockTime(date, { clock24h: use24h = false, showSeconds: includeSeconds = false, showAmPm: includeAmPm = true } = {}) {
+  const d = (date && typeof date.getHours === 'function' && !isNaN(date.getTime())) ? date : new Date();
+  const h24 = d.getHours();
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  if (use24h) {
+    const hh = String(h24).padStart(2, '0');
+    return includeSeconds ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
+  }
+  const h12 = h24 % 12 || 12;
+  const base = includeSeconds ? `${h12}:${mm}:${ss}` : `${h12}:${mm}`;
+  if (!includeAmPm) return base;
+  return `${base} ${h24 >= 12 ? 'PM' : 'AM'}`;
+}
+
+function getTopLumpHitbox(windowWidth) {
+  const w = 88;
+  const h = 10;
+  return {
+    x: Math.round((windowWidth - w) / 2),
+    y: 0,
+    w,
+    h
+  };
+}
+
+function computeCapsuleHideTransform({
+  hideProgress = 0,
+  normalW = 80,
+  normalH = 32,
+  normalY = 0,
+  normalRadius = 16,
+  normalTopFillet = 10,
+  isNotch = false
+} = {}) {
+  const k = Math.max(0, Math.min(1, Number(hideProgress) || 0));
+  if (k <= 0.001) {
+    return {
+      w: normalW,
+      h: normalH,
+      y: normalY,
+      topRadius: normalRadius,
+      bottomRadius: normalRadius,
+      topFillet: normalTopFillet,
+      contentAlpha: 1,
+      contentOffsetY: 0,
+      sideAlpha: 1,
+      sideOffsetY: 0
+    };
+  }
+  const lumpW = 54;
+  const lumpH = 6;
+  const lumpBottomRadius = 3;
+  const lumpTopFillet = 8;
+
+  const w = normalW + (lumpW - normalW) * k;
+  const h = normalH + (lumpH - normalH) * k;
+  const y = normalY * (1 - k);
+  const bottomRadius = normalRadius + (lumpBottomRadius - normalRadius) * k;
+  const topRadius = isNotch ? 0 : Math.max(0, normalRadius * (1 - k * 1.35));
+  const topFillet = normalTopFillet + (lumpTopFillet - normalTopFillet) * k;
+  const contentAlpha = Math.max(0, 1 - k * 2.4);
+  const contentOffsetY = -Math.round(k * 6);
+  const sideAlpha = Math.max(0, 1 - k * 2.0);
+  const sideOffsetY = -Math.round(k * 10);
+
+  return {
+    w,
+    h,
+    y,
+    topRadius,
+    bottomRadius,
+    topFillet,
+    contentAlpha,
+    contentOffsetY,
+    sideAlpha,
+    sideOffsetY
+  };
+}
 
 function switchTab(newView) {
   if (!newView || newView === currentView) return;
@@ -1216,6 +1299,9 @@ function drawVectorMediaIcon(kind, x, y, s, colour) {
 // TwoCode Tuck Away Mode & Game Mode
 // -------------------------------------------------------------
 let isTucked = false;
+let isPeekHidden = false;
+let hideProgress = 0.0; // 0.0 = shown, 1.0 = smoothly retracted into top bezel lump
+let isLumpHovered = false;
 let tuckHoverAt = 0;
 let tuckChangedAt = 0;
 let isGameModeFullscreen = false;
@@ -1254,6 +1340,15 @@ try {
   }
 } catch (e) {}
 
+function isShouldBeHidden() {
+  if (pendingPrompt !== null) return false;
+  if (targetProgress >= 0.5 || animProgress >= 0.35) return false;
+  if (songPopupProgress > 0.05 || songPopupActiveUntil > performance.now()) return false;
+  if (currentView === 'notification_banner' && notificationBannerUntil > performance.now()) return false;
+  if (isDraggingOver || isInlineModalOpen) return false;
+  return Boolean(isTucked || isPeekHidden);
+}
+
 function setTucked(on) {
   const next = Boolean(on);
   if (next === isTucked) return;
@@ -1266,14 +1361,15 @@ function setTucked(on) {
   }
   if (isTucked) {
     isHovered = false;
+    isPeekHidden = false;
     targetProgress = 0.0;
-    animProgress = 0.0;
     currentView = 'home';
     ipcRenderer.send('island-hover-end');
     ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
   } else {
-    ipcRenderer.send('set-ignore-mouse-events', false);
+    isPeekHidden = false;
   }
+  requestFrame();
 }
 
 function getAntigravityProgress(state) {
@@ -1393,6 +1489,8 @@ window.addEventListener('dragover', (e) => {
   dropZoneHoverZone = e.clientX < splitX ? 'onetime' : 'keep';
   if (!isDraggingOver) {
     isDraggingOver = true;
+    isPeekHidden = false;
+    isTucked = false;
     targetProgress = 1.0;
     currentView = 'dropzone';
     ipcRenderer.send('set-ignore-mouse-events', false);
@@ -1452,11 +1550,14 @@ canvas.addEventListener('mousemove', (e) => {
     return;
   }
 
+  const lumpHit = getTopLumpHitbox(window.innerWidth);
+  const isOverTopLump = pointInRect(mouseX, mouseY, lumpHit.x, lumpHit.y, lumpHit.w, lumpHit.h);
+  isLumpHovered = isOverTopLump;
+
   if (isTucked) {
-    const tuckW = 84;
-    const tuckH = 10;
-    const overTuck = pointInRect(mouseX, mouseY, (window.innerWidth - tuckW) / 2, 0, tuckW, tuckH);
-    if (overTuck) {
+    isPeekHidden = false;
+    hoveredButtonId = null;
+    if (isOverTopLump) {
       ipcRenderer.send('set-ignore-mouse-events', false);
       canvas.style.cursor = 'pointer';
     } else {
@@ -1487,66 +1588,83 @@ canvas.addEventListener('mousemove', (e) => {
   const leftSpan = aiPillSpan;
   const rightSpan = timerPillSpan + callPillSpan;
   const notchEarMargin = isNotch ? 18 : 8;
-  const isOverIsland = pointInRect(mouseX, mouseY, curX - notchEarMargin - leftSpan, Math.max(0, curY - 4), curW + notchEarMargin * 2 + leftSpan + rightSpan, curH + 16);
+  const isPopupShowing = (songPopupProgress > 0.05 || songPopupActiveUntil > performance.now()) && curP < 0.35;
+  const isExpandedState = (targetProgress >= 0.5 || curP >= 0.35);
 
-  if (isOverIsland) {
-    if (songPopupProgress > 0.05 || songPopupActiveUntil > performance.now()) {
-      hoveredDuringSongPopup = true;
-    }
-    if (leaveTimer) {
-      clearTimeout(leaveTimer);
-      leaveTimer = null;
-    }
-    if (!isHovered) {
-      isHovered = true;
-      if (curP < 0.25) {
-        let nextV = 'home';
-        if (hasAIPill && mouseX < curX) {
-          nextV = 'agent';
-        } else if (hasTimerPill && mouseX >= curX + curW && (!hasCallPill || mouseX < curX + curW + timerPillSpan)) {
-          nextV = 'clock';
-          if (focusRunning) clockSubMode = 'focus';
-          else if (stopwatchRunning) clockSubMode = 'stopwatch';
-          else if (timerRunning) clockSubMode = 'timer';
-        } else if (hasCallPill && mouseX >= curX + curW) {
-          nextV = 'call';
-        } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
-          nextV = 'media';
-        }
-        currentView = nextV;
-        previousView = nextV;
-        tabTransitionStartTime = 0;
-        navIndicatorX = null;
-        navIndicatorW = null;
-        currentExpandedH = getTargetExpandedHeightForView(nextV);
+  const isOverIsland = pointInRect(
+    mouseX,
+    mouseY,
+    curX - notchEarMargin - leftSpan,
+    0,
+    curW + notchEarMargin * 2 + leftSpan + rightSpan,
+    curY + curH + 14
+  );
+
+  if (isExpandedState || isPopupShowing) {
+    isPeekHidden = false;
+    if (isOverIsland) {
+      if (isPopupShowing) {
+        hoveredDuringSongPopup = true;
       }
-      targetProgress = 1.0;
+      if (leaveTimer) {
+        clearTimeout(leaveTimer);
+        leaveTimer = null;
+      }
+      isHovered = true;
       ipcRenderer.send('set-ignore-mouse-events', false);
-      ipcRenderer.send('island-hover-start');
+    } else {
+      if (hoveredDuringSongPopup) {
+        dismissSongAnnouncement();
+      }
+      if (isHovered && !leaveTimer && !isInlineModalOpen) {
+        leaveTimer = setTimeout(() => {
+          if (isInlineModalOpen) return;
+          isHovered = false;
+          targetProgress = 0.0;
+          currentView = 'home';
+          previousView = 'home';
+          tabTransitionStartTime = 0;
+          navIndicatorX = null;
+          navIndicatorW = null;
+          ipcRenderer.send('island-hover-end');
+          leaveTimer = null;
+          setTimeout(() => {
+            if (!isHovered && !isInlineModalOpen) {
+              ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+            }
+          }, 260);
+        }, UI.LEAVE_DELAY);
+      }
     }
   } else {
-    if (hoveredDuringSongPopup) {
-      dismissSongAnnouncement();
-    }
-    if (isHovered && !leaveTimer && !isInlineModalOpen) {
-      leaveTimer = setTimeout(() => {
-        if (isInlineModalOpen) return;
-        isHovered = false;
-        targetProgress = 0.0;
-        currentView = 'home';
-        previousView = 'home';
-        tabTransitionStartTime = 0;
-        navIndicatorX = null;
-        navIndicatorW = null;
-        ipcRenderer.send('island-hover-end');
+    // Collapsed resting notch/island: hovering retracts upward into the visible top lump
+    if (isOverIsland) {
+      if (!isPeekHidden) {
+        isPeekHidden = true;
+        requestFrame();
+      }
+      isHovered = false;
+      hoveredButtonId = null;
+      if (leaveTimer) {
+        clearTimeout(leaveTimer);
         leaveTimer = null;
-        setTimeout(() => {
-          if (!isHovered && !isInlineModalOpen) {
-            ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
-          }
-        }, 320);
-      }, UI.LEAVE_DELAY);
+      }
+    } else {
+      if (isPeekHidden) {
+        isPeekHidden = false;
+        requestFrame();
+      }
+      hoveredButtonId = null;
     }
+
+    if (isOverTopLump) {
+      ipcRenderer.send('set-ignore-mouse-events', false);
+      canvas.style.cursor = 'pointer';
+    } else {
+      ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+      canvas.style.cursor = 'default';
+    }
+    return;
   }
 
   if (isDraggingVolume && volumeSliderBounds) {
@@ -1580,8 +1698,18 @@ canvas.addEventListener('mousemove', (e) => {
 
 canvas.addEventListener('mouseleave', () => {
   if (isInlineModalOpen) return;
+  isLumpHovered = false;
+  if (isPeekHidden) {
+    isPeekHidden = false;
+    requestFrame();
+  }
   if (hoveredDuringSongPopup || songPopupActiveUntil > performance.now()) {
     dismissSongAnnouncement();
+  }
+  if (!isHovered && targetProgress < 0.5) {
+    hoveredButtonId = null;
+    ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+    return;
   }
   if (leaveTimer) clearTimeout(leaveTimer);
   leaveTimer = setTimeout(() => {
@@ -1681,8 +1809,27 @@ canvas.addEventListener('click', (e) => {
   const cx = e.clientX;
   const cy = e.clientY;
 
-  if (isTucked) {
-    setTucked(false);
+  const lumpHit = getTopLumpHitbox(window.innerWidth);
+  const clickedTopLump = pointInRect(cx, cy, lumpHit.x, lumpHit.y, lumpHit.w, lumpHit.h);
+
+  if (animProgress < 0.35 && targetProgress < 0.5 && (clickedTopLump || isTucked)) {
+    isTucked = false;
+    isPeekHidden = false;
+    songPopupActiveUntil = 0;
+    const nextV = (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing')
+      ? 'media'
+      : 'home';
+    currentView = nextV;
+    previousView = nextV;
+    tabTransitionStartTime = 0;
+    navIndicatorX = null;
+    navIndicatorW = null;
+    currentExpandedH = getTargetExpandedHeightForView(nextV);
+    isHovered = true;
+    targetProgress = 1.0;
+    ipcRenderer.send('set-ignore-mouse-events', false);
+    ipcRenderer.send('island-hover-start');
+    requestFrame();
     return;
   }
 
@@ -2256,6 +2403,14 @@ ipcRenderer.on('user-name-changed', (event, data) => {
     }
   }
 });
+ipcRenderer.on('clock-settings-changed', (event, data) => {
+  if (data && typeof data === 'object') {
+    if (typeof data.clock24h === 'boolean') clock24h = data.clock24h;
+    if (typeof data.showSeconds === 'boolean') showSeconds = data.showSeconds;
+    if (typeof data.showAmPm === 'boolean') showAmPm = data.showAmPm;
+    requestFrame();
+  }
+});
 
 let batteryState = { hasBattery: false, percent: 100, isCharging: false };
 
@@ -2362,6 +2517,7 @@ try {
 
 ipcRenderer.on('permission-prompt', (event, prompt) => {
   pendingPrompt = prompt;
+  isPeekHidden = false;
   if (isTucked) setTucked(false);
   if (isGameModeFullscreen) {
     gameModeOpenedAnyway = true;
@@ -2382,6 +2538,9 @@ let lastSentH = -1;
 
 function isDynamicActive() {
   if (isHovered || animProgress > 0.005 || targetProgress > 0.005) return true;
+
+  const targetHideNow = isShouldBeHidden() ? 1.0 : 0.0;
+  if (Math.abs(targetHideNow - hideProgress) > 0.002) return true;
 
   const targetRestW = getTargetRestingWidth();
   if (Math.abs(targetRestW - currentRestingWidth) > 0.5) return true;
@@ -2487,6 +2646,16 @@ function animate(now) {
   // Fluid Spring / Lerp towards targetProgress
   const speed = (targetProgress > animProgress ? 8.5 : 9.5) * animSpeedMultiplier;
   animProgress += (targetProgress - animProgress) * Math.min(1.0, dt * speed);
+
+  // Critically damped peek-hide / reveal animation (~170ms fast hide into lump, ~220ms reveal)
+  const wantHiddenNow = isShouldBeHidden();
+  const targetHide = wantHiddenNow ? 1.0 : 0.0;
+  const hideRate = (targetHide > hideProgress ? 18.0 : 13.5) * animSpeedMultiplier;
+  if (Math.abs(targetHide - hideProgress) <= 0.002) {
+    hideProgress = targetHide;
+  } else {
+    hideProgress += (targetHide - hideProgress) * (1 - Math.exp(-hideRate * dt));
+  }
 
   // Sound FX expansion state tracking
   if (lastAnimState === 'resting' && targetProgress > 0.4 && animProgress > 0.06) {
@@ -2658,10 +2827,6 @@ function truncateToWidth(text, maxW, font) {
 function getTargetRestingWidth() {
   tickLyrics();
 
-  if (isTucked) {
-    return 180;
-  }
-
   const hasMedia = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
   let mainPillW = UI.REST_W;
   const MAX_LYRIC_PILL_W = 520;
@@ -2709,11 +2874,20 @@ function getTargetRestingWidth() {
       mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(144 + textW)));
     }
   } else {
-    mainPillW = (batteryState && batteryState.hasBattery) ? 134 : UI.REST_W;
+    const timeStr = formatClockTime(new Date(), { clock24h, showSeconds, showAmPm });
+    ctx.save();
+    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+    const timeW = ctx.measureText(timeStr).width;
+    ctx.restore();
+    if (batteryState && batteryState.hasBattery) {
+      mainPillW = Math.max(122, Math.round(timeW + 76));
+    } else {
+      mainPillW = Math.max(66, Math.round(timeW + 26));
+    }
   }
 
   // Main resting pill stays strictly centered without displacement
-  return Math.max(UI.REST_W, Math.min(860, mainPillW));
+  return Math.max(66, Math.min(860, mainPillW));
 }
 
 function getRestingWidth() {
@@ -2741,10 +2915,6 @@ function getTargetExpandedHeightForView(view) {
 }
 
 function getTargetHeight(p) {
-  if (isTucked) {
-    return 14;
-  }
-
   let restH = UI.BAR_H;
   if (hasActiveAgent() || hasActiveCall() || (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing')) {
     restH = UI.ACTIVE_BAR_H;
@@ -2829,70 +2999,78 @@ function render() {
     return;
   }
 
-  if (isTucked) {
-    if (pendingPrompt) {
-      setTucked(false);
-    } else {
-      const lineW = 56;
-      const lineH = 4;
-      const lineX = (window.innerWidth - lineW) / 2;
-      const lineY = 1;
-
-      let lineCol = 'rgba(255, 255, 255, 0.55)';
-      if (hasActiveCall()) {
-        lineCol = '#f97316';
-      } else if (hasActiveAgent()) {
-        const projs = getActiveProjects();
-        if (projs.some(pr => pr.status === 'waiting')) lineCol = '#f59e0b';
-        else lineCol = '#38bdf8';
-      } else if (mediaState.isPlaying) {
-        lineCol = albumAccentColor || '#22c55e';
-      }
-
-      ctx.save();
-      ctx.shadowColor = lineCol;
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.roundRect(lineX, lineY, lineW, lineH, 2);
-      ctx.fillStyle = lineCol;
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
+  if (pendingPrompt && isTucked) {
+    setTucked(false);
   }
 
   const p = Math.max(0, Math.min(1, animProgress));
-  const w = getTargetWidth(p);
-  const h = getTargetHeight(p);
-  const x = (window.innerWidth - w) / 2;
+  const normalW = getTargetWidth(p);
+  const normalH = getTargetHeight(p);
   const isNotch = displayMode === 'notch';
-  const y = isNotch ? 0 : 8; // Flush with top for notch, floating for island
+  const normalY = isNotch ? 0 : 8; // Flush with top for notch, floating for island
+  const normalRadius = UI.COMPACT_RADIUS + (UI.EXPANDED_RADIUS - UI.COMPACT_RADIUS) * p;
+  const normalTopFillet = Math.round(10 + 4 * p);
 
-  const radius = UI.COMPACT_RADIUS + (UI.EXPANDED_RADIUS - UI.COMPACT_RADIUS) * p;
-  const topFillet = Math.round(10 + 4 * p);
-  const radii = isNotch ? [0, 0, radius, radius] : radius;
+  const hideT = computeCapsuleHideTransform({
+    hideProgress,
+    normalW,
+    normalH,
+    normalY,
+    normalRadius,
+    normalTopFillet,
+    isNotch
+  });
 
-  // Main resting pill stays strictly centered
-  const isSplitResting = false;
+  const w = hideT.w;
+  const h = hideT.h;
+  const x = (window.innerWidth - w) / 2;
+  const y = hideT.y;
+  const radius = hideT.bottomRadius;
+  const topFillet = hideT.topFillet;
+  const useBezelLump = isNotch || y <= 0.15;
+
+  const traceCapsulePath = () => {
+    if (useBezelLump) {
+      buildCapsulePath(ctx, x, y, w, h, radius, true, topFillet);
+    } else {
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, [hideT.topRadius, hideT.topRadius, hideT.bottomRadius, hideT.bottomRadius]);
+    }
+  };
+
+  const traceCapsuleRim = () => {
+    if (useBezelLump) {
+      drawCapsuleRim(ctx, x, y, w, h, radius, true, topFillet);
+    } else {
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, [hideT.topRadius, hideT.topRadius, hideT.bottomRadius, hideT.bottomRadius]);
+    }
+  };
+
   const unifiedAlpha = 1.0;
 
   if (unifiedAlpha > 0.02) {
     ctx.save();
     ctx.globalAlpha = unifiedAlpha;
 
-    // 1. Ambient Drop Shadow (illuminated when music is playing with album gradient)
+    // 1. Ambient Drop Shadow (illuminated when music is playing with album gradient, quiet on top lump)
     const hasMediaTrack = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
-    const wantTint = (albumColorGradientEnabled && hasMediaTrack) ? 1.0 : 0.0;
+    const wantTint = (albumColorGradientEnabled && hasMediaTrack && hideProgress < 0.5) ? 1.0 : 0.0;
     tintK += (wantTint - tintK) * 0.16;
 
-    if (tintK > 0.05 && albumAccentColor) {
+    if (hideProgress > 0.55) {
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 2;
+    } else if (tintK > 0.05 && albumAccentColor) {
       ctx.shadowColor = colorWithAlpha(albumAccentColor, 0.45 * tintK);
       ctx.shadowBlur = (18 + 14 * p) + (tintK * 12);
+      ctx.shadowOffsetY = 6 + 6 * p;
     } else {
       ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
       ctx.shadowBlur = 18 + 14 * p;
+      ctx.shadowOffsetY = 6 + 6 * p;
     }
-    ctx.shadowOffsetY = 6 + 6 * p;
 
     // 2. Liquid Glass OLED Black Surface (Always true OLED dark grey/black)
     const grad = ctx.createLinearGradient(x, y, x, y + h);
@@ -2900,15 +3078,26 @@ function render() {
     grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
     grad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
 
-    buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
+    traceCapsulePath();
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // 3. Specular Border Rim (illuminated with album accent when active)
-    drawCapsuleRim(ctx, x, y, w, h, radius, isNotch, topFillet);
+    // 3. Specular Border Rim (subtle bezel hairline on top lump, illuminated accent when active)
+    traceCapsuleRim();
     ctx.lineWidth = 1;
     if (isDraggingOver) {
       ctx.strokeStyle = 'rgba(59, 130, 246, 0.85)';
+    } else if (hideProgress > 0.45) {
+      if (isLumpHovered) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.40)';
+      } else if (hasActiveCall()) {
+        ctx.strokeStyle = 'rgba(249, 115, 22, 0.55)';
+      } else if (hasActiveAgent()) {
+        const projs = getActiveProjects();
+        ctx.strokeStyle = projs.some(pr => pr.status === 'waiting') ? 'rgba(245, 158, 11, 0.50)' : 'rgba(56, 189, 248, 0.45)';
+      } else {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+      }
     } else if (tintK > 0.05 && albumAccentColor) {
       ctx.strokeStyle = colorWithAlpha(albumAccentColor, 0.55 * tintK + 0.15);
     } else {
@@ -2924,23 +3113,27 @@ function render() {
     const restAlpha = Math.max(0, (0.32 - p) / 0.32);
     if (songPopupProgress > 0.05) {
       ctx.save();
-      buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
+      traceCapsulePath();
       ctx.clip();
       renderSongAnnouncementPopup(x, y, w, h, restAlpha);
       ctx.restore();
     } else {
-      ctx.save();
-      buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
-      ctx.clip();
-      renderRestingPill(x, y, w, h, restAlpha);
-      ctx.restore();
+      if (hideT.contentAlpha > 0.02) {
+        ctx.save();
+        traceCapsulePath();
+        ctx.clip();
+        renderRestingPill(x, y + hideT.contentOffsetY, w, h, restAlpha * hideT.contentAlpha);
+        ctx.restore();
+      }
 
-      renderDetachedSideIslands(x, y, w, h, restAlpha);
+      if (hideT.sideAlpha > 0.02) {
+        renderDetachedSideIslands(x, y + hideT.sideOffsetY, w, h, restAlpha * hideT.sideAlpha);
+      }
     }
   }
   if (p > 0.15) {
     ctx.save();
-    buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
+    traceCapsulePath();
     ctx.clip();
     const alpha = Math.max(0, Math.min(1.0, (p - 0.15) / 0.85));
     renderExpandedView(x, y, w, h, alpha);
@@ -3013,7 +3206,7 @@ function renderSongAnnouncementPopup(x, y, w, h, popAlpha) {
   // 2. Connected Top Bar (0 to 34px)
   const topH = 34;
   const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const timeStr = formatClockTime(now, { clock24h, showSeconds, showAmPm });
 
   // Digital Clock on Left
   ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
@@ -3575,7 +3768,7 @@ function renderRestingPill(x, y, w, h, alpha) {
   ctx.globalAlpha = alpha;
 
   const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const timeStr = formatClockTime(now, { clock24h, showSeconds, showAmPm });
 
   // -------------------------------------------------------------
   // 1. Center Main Island Capsule [ Clock or Media ]
@@ -5897,7 +6090,7 @@ function renderTodoTabView(x, y, w, h) {
 
 function renderHomeView(x, y, w, h) {
   const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const timeStr = formatClockTime(now, { clock24h, showSeconds: true, showAmPm });
   const dateStr = now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
   // 0. Personalized Greeting & Name pill above Digital Clock
@@ -5971,8 +6164,10 @@ function renderHomeView(x, y, w, h) {
 
   // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation
   const isHomeClockHov = hoveredButtonId === 'home_clock_display';
-  drawRollingTime(ctx, 'home_digital_clock', timeStr, clockX, y + 62, {
-    font: '700 27px "Segoe UI Variable Display", Inter, sans-serif',
+  const homeClockFontSize = (!clock24h && showAmPm) ? 23 : 27;
+  const homeClockY = (!clock24h && showAmPm) ? (y + 64) : (y + 62);
+  drawRollingTime(ctx, 'home_digital_clock', timeStr, clockX, homeClockY, {
+    font: `700 ${homeClockFontSize}px "Segoe UI Variable Display", Inter, sans-serif`,
     fillStyle: isHomeClockHov ? '#38bdf8' : '#ffffff',
     align: 'left',
     baseline: 'top',
@@ -7581,6 +7776,9 @@ if (typeof module !== 'undefined' && module.exports) {
     buildCapsulePath,
     drawCapsuleRim,
     isDynamicActive,
-    computeSideIslandsLayout
+    computeSideIslandsLayout,
+    formatClockTime,
+    getTopLumpHitbox,
+    computeCapsuleHideTransform
   };
 }

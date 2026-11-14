@@ -232,6 +232,18 @@ function registerSettingsIPC(dropZoneInstance) {
         }
       });
     }
+    if (newSettings && ('clock24h' in newSettings || 'showSeconds' in newSettings || 'showAmPm' in newSettings)) {
+      const clockPayload = {
+        clock24h: !!updated.clock24h,
+        showSeconds: !!updated.showSeconds,
+        showAmPm: updated.showAmPm !== false
+      };
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('clock-settings-changed', clockPayload);
+        }
+      });
+    }
     return updated;
   });
 
