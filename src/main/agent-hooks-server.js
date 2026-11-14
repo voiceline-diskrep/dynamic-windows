@@ -27,9 +27,19 @@ class AgentHooksServer extends EventEmitter {
       updatedAt: 0
     };
     this.serial = 0;
+    this.stopped = false;
+    this.retryTimer = null;
+    this.retryCount = 0;
   }
 
   start() {
+    this.stopped = false;
+    this.retryCount = 0;
+    this._listen();
+  }
+
+  _listen() {
+    if (this.stopped) return;
     this.server = http.createServer((req, res) => this.handleRequest(req, res));
     this.server.on('error', (err) => {
       console.warn('[AgentHooksServer] HTTP error:', err.message);
@@ -38,8 +48,19 @@ class AgentHooksServer extends EventEmitter {
         if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
         fs.appendFileSync(path.join(logDir, 'server.log'), `[${new Date().toISOString()}] Server error: ${err.stack || err}\n`);
       } catch (e) {}
+
+      if (err.code === 'EADDRINUSE' && !this.stopped && this.retryCount < 5) {
+        this.retryCount++;
+        try { this.server.close(); } catch (e) {}
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          this._listen();
+        }, 1000);
+        if (this.retryTimer.unref) this.retryTimer.unref();
+      }
     });
     this.server.listen(this.port, '127.0.0.1', () => {
+      this.retryCount = 0;
       console.log(`[AgentHooksServer] Listening for agent hooks on 127.0.0.1:${this.port}`);
       try {
         const logDir = path.join(process.env.APPDATA || 'C:\\', 'DynamicWindows', 'logs');
@@ -50,6 +71,11 @@ class AgentHooksServer extends EventEmitter {
   }
 
   stop() {
+    this.stopped = true;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     if (this.server) {
       this.server.close();
       this.server = null;

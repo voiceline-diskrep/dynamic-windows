@@ -93,10 +93,38 @@ class AntigravityMonitor extends EventEmitter {
     };
   }
 
+  resolveMcpConversationId(data) {
+    if (data.conversationId) return data.conversationId;
+
+    const realProjects = Array.from(this.projects.values())
+      .filter(p => p.conversationId && p.conversationId !== 'default')
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+    if (realProjects.length === 0) return 'default';
+
+    if (data.project) {
+      const targetProj = String(data.project).toLowerCase();
+      const activeMatch = realProjects.find(p =>
+        ['running', 'thinking', 'waiting'].includes(p.status) &&
+        p.project && p.project.toLowerCase() === targetProj
+      );
+      if (activeMatch) return activeMatch.conversationId;
+
+      const anyMatch = realProjects.find(p => p.project && p.project.toLowerCase() === targetProj);
+      if (anyMatch) return anyMatch.conversationId;
+    }
+
+    const activeRecent = realProjects.find(p => ['running', 'thinking', 'waiting'].includes(p.status));
+    if (activeRecent) return activeRecent.conversationId;
+
+    return realProjects[0].conversationId;
+  }
+
   updateFromMcp(data) {
     if (!data) return;
-    this.lastMcpTime = Date.now();
-    const convId = data.conversationId || (this.projects.size > 0 ? Array.from(this.projects.keys())[0] : 'default');
+    const now = Date.now();
+    this.lastMcpTime = now;
+    const convId = this.resolveMcpConversationId(data);
     const existing = this.projects.get(convId) || {
       provider: 'Google Antigravity',
       project: data.project || 'Antigravity',
@@ -107,7 +135,8 @@ class AntigravityMonitor extends EventEmitter {
       file: '',
       command: '',
       progress: null,
-      updatedAt: Date.now()
+      lastMcpTime: now,
+      updatedAt: now
     };
 
     const prevState = existing.status;
@@ -120,7 +149,8 @@ class AntigravityMonitor extends EventEmitter {
     if (data.file) existing.file = data.file;
     if (data.command) existing.command = data.command;
     if (typeof data.progress === 'number') existing.progress = data.progress;
-    existing.updatedAt = Date.now();
+    existing.lastMcpTime = now;
+    existing.updatedAt = now;
 
     this.projects.set(convId, existing);
     this.lastState = { ...existing };
@@ -197,6 +227,7 @@ class AntigravityMonitor extends EventEmitter {
     try {
       if (!fs.existsSync(this.brainDir)) return;
       const entries = fs.readdirSync(this.brainDir, { withFileTypes: true });
+      const now = Date.now();
 
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
@@ -204,31 +235,56 @@ class AntigravityMonitor extends EventEmitter {
         if (!fs.existsSync(transcriptFile)) continue;
 
         const stat = fs.statSync(transcriptFile);
-        const ageMs = Date.now() - stat.mtimeMs;
+        const ageMs = now - stat.mtimeMs;
         const existing = this.projects.get(entry.name);
         const isActive = existing && ['running', 'thinking', 'waiting'].includes(existing.status);
 
+        // Clean up transient 'default' MCP bucket once a real active UUID conversation is seen
+        if (ageMs < 60000 && this.projects.has('default')) {
+          const defProj = this.projects.get('default');
+          this.projects.delete('default');
+          if (!existing && defProj && defProj.lastMcpTime && (now - defProj.lastMcpTime < 4000)) {
+            this.projects.set(entry.name, { ...defProj, conversationId: entry.name });
+          }
+        }
+
+        const currentExisting = this.projects.get(entry.name);
+        const lastMcpAge = currentExisting && currentExisting.lastMcpTime ? (now - currentExisting.lastMcpTime) : Infinity;
+        const effectiveAgeMs = Math.min(ageMs, lastMcpAge);
+
+        // Auto-expire stuck active chats after 2 minutes without transcript or MCP updates
+        if (isActive && effectiveAgeMs > 120000) {
+          currentExisting.status = 'idle';
+          currentExisting.phase = 'Ready';
+          currentExisting.updatedAt = now;
+          this.lastState = { ...currentExisting };
+          this.emit('change', this.getState());
+          continue;
+        }
+
         // Track conversations modified within 25 minutes or currently active
         if (ageMs > 25 * 60 * 1000 && !isActive) {
-          if (existing && existing.status === 'done' && Date.now() - existing.updatedAt > 20 * 60 * 1000) {
+          if (currentExisting && ['done', 'idle'].includes(currentExisting.status) && now - currentExisting.updatedAt > 20 * 60 * 1000) {
             this.projects.delete(entry.name);
           }
           continue;
         }
 
         const lastSize = this.fileOffsets.get(entry.name) || 0;
-        if (stat.size === lastSize && existing) {
+        if (stat.size === lastSize && currentExisting) {
           // If task completed > 8s ago, transition to idle Ready
-          if (existing.status === 'done' && Date.now() - existing.updatedAt > 8000) {
-            existing.status = 'idle';
-            existing.phase = 'Ready';
+          if (currentExisting.status === 'done' && now - currentExisting.updatedAt > 8000) {
+            currentExisting.status = 'idle';
+            currentExisting.phase = 'Ready';
+            this.lastState = { ...currentExisting };
             this.emit('change', this.getState());
           }
           continue;
         }
 
         this.fileOffsets.set(entry.name, stat.size);
-        const readLen = Math.min(stat.size, 32768);
+        const readLen = Math.min(stat.size, 262144);
+        if (readLen <= 0) continue;
         const fd = fs.openSync(transcriptFile, 'r');
         const buf = Buffer.alloc(readLen);
         fs.readSync(fd, buf, 0, readLen, Math.max(0, stat.size - readLen));
@@ -242,10 +298,47 @@ class AntigravityMonitor extends EventEmitter {
         for (let i = lines.length - 1; i >= 0; i--) {
           try {
             const step = JSON.parse(lines[i]);
-            const projName = existing ? existing.project : this.extractProjectName(transcriptFile, 'Antigravity');
+            const projName = (currentExisting && currentExisting.project && currentExisting.project !== 'Antigravity')
+              ? currentExisting.project
+              : this.extractProjectName(transcriptFile, 'Antigravity');
             const parsed = this.parseStepToState(step, entry.name, projName);
             if (parsed) {
-              const prev = this.projects.get(entry.name);
+              // On initial discovery of stale conversations, mark them idle immediately
+              if (!currentExisting) {
+                if (ageMs > 120000 && ['running', 'thinking', 'waiting'].includes(parsed.status)) {
+                  parsed.status = 'idle';
+                  parsed.phase = 'Ready';
+                  parsed.updatedAt = stat.mtimeMs;
+                } else if (ageMs > 8000 && parsed.status === 'done') {
+                  parsed.status = 'idle';
+                  parsed.phase = 'Ready';
+                  parsed.updatedAt = stat.mtimeMs;
+                }
+              }
+
+              // Preserve previous tool phase when generic tool output arrives
+              if (parsed.phase === 'Processing tool results...' && currentExisting && currentExisting.phase && currentExisting.phase !== 'Ready') {
+                parsed.phase = currentExisting.phase;
+                parsed.tool = currentExisting.tool;
+                parsed.command = currentExisting.command;
+                parsed.file = currentExisting.file;
+              }
+
+              // Preserve recent MCP override unless transcript explicitly finished or awaits user input
+              if (lastMcpAge < 4000 && currentExisting && parsed.status !== 'done' && parsed.status !== 'waiting') {
+                parsed.status = currentExisting.status;
+                parsed.phase = currentExisting.phase;
+                parsed.tool = currentExisting.tool;
+                parsed.command = currentExisting.command;
+                parsed.file = currentExisting.file;
+                parsed.progress = currentExisting.progress;
+              }
+
+              if (currentExisting && currentExisting.lastMcpTime) {
+                parsed.lastMcpTime = currentExisting.lastMcpTime;
+              }
+
+              const prev = currentExisting;
               this.projects.set(entry.name, parsed);
 
               if (!prev || prev.status !== parsed.status || prev.phase !== parsed.phase) {

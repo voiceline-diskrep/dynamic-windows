@@ -102,6 +102,8 @@ test('TabAnimationEngine: target expanded heights for distinct views', () => {
   assert.strictEqual(getTargetExpandedHeight('notifications'), 260);
   assert.strictEqual(getTargetExpandedHeight('media'), 254);
   assert.strictEqual(getTargetExpandedHeight('agent'), 196);
+  assert.strictEqual(getTargetExpandedHeight('agent', { projectCount: 2 }), 216);
+  assert.strictEqual(getTargetExpandedHeight('agent', { projectCount: 4 }), 216);
   assert.strictEqual(getTargetExpandedHeight('call'), 206);
   assert.strictEqual(getTargetExpandedHeight('dropzone'), 260);
   assert.strictEqual(getTargetExpandedHeight('clipboard'), 280);

@@ -1476,7 +1476,7 @@ canvas.addEventListener('mousemove', (e) => {
 
   const activeProjsForPill = getActiveProjects().filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
   const hasAIPill = (curP < 0.28 && (activeProjsForPill.length > 0 || pendingPrompt !== null));
-  const aiPillSpan = hasAIPill ? 145 : 0;
+  const aiPillSpan = hasAIPill ? 164 : 0;
 
   const hasTimerPill = (curP < 0.28 && (timerRunning || focusRunning || stopwatchRunning));
   const timerPillSpan = hasTimerPill ? 110 : 0;
@@ -2395,8 +2395,10 @@ function isDynamicActive() {
 
   if (callState && callState.inCall) return true;
 
-  if (antigravityState && (antigravityState.status === 'running' || antigravityState.status === 'RUNNING')) return true;
-  if (antigravityState && Array.isArray(antigravityState.activeProjects) && antigravityState.activeProjects.some(p => p.status === 'running' || p.status === 'RUNNING')) return true;
+  const activeStatuses = ['running', 'thinking', 'waiting'];
+  if (antigravityState && activeStatuses.includes(String(antigravityState.status || '').toLowerCase())) return true;
+  if (antigravityState && Array.isArray(antigravityState.projects) && antigravityState.projects.some(p => activeStatuses.includes(String(p.status || '').toLowerCase()))) return true;
+  if (pendingPrompt !== null) return true;
 
   if (isDraggingOver || isDraggingVolume || shelfDragCandidate) return true;
 
@@ -6184,7 +6186,7 @@ function renderAgentView(x, y, w, h) {
   }
 
   // -----------------------------------------------------------
-  // MULTI-PROJECT VIEW (2 or more concurrent Antigravity projects)
+  // MULTI-PROJECT VIEW (2 or more concurrent Antigravity projects -> Rounded Squares)
   // -----------------------------------------------------------
   ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#38bdf8';
@@ -6192,47 +6194,80 @@ function renderAgentView(x, y, w, h) {
   ctx.textBaseline = 'top';
   ctx.fillText(`✦ Active Antigravity Projects (${projs.length})`, contentX, topY);
 
-  const cardGap = 8;
-  const maxProjects = Math.min(3, projs.length);
-  const cardH = maxProjects === 2 ? 78 : 66;
-  const startY = topY + 22;
+  const cardSize = 134;
+  const cardGap = 10;
+  const maxProjects = Math.min(4, projs.length);
+  const rowW = maxProjects * cardSize + (maxProjects - 1) * cardGap;
+  const startX = contentX + Math.max(0, Math.round((contentW - rowW) / 2));
+  const startY = topY + 24;
+  const cardRadius = 16;
 
   for (let idx = 0; idx < maxProjects; idx++) {
     const proj = projs[idx];
-    const cy = startY + idx * (cardH + cardGap);
+    const cx = startX + idx * (cardSize + cardGap);
+    const cy = startY;
+    const isProjActive = ['running', 'thinking', 'waiting'].includes(String(proj.status || '').toLowerCase());
 
-    // Card background
+    // Rounded square card background
     ctx.beginPath();
-    ctx.roundRect(contentX, cy, contentW, cardH, 8);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
-    ctx.strokeStyle = ['running', 'thinking'].includes(proj.status) ? 'rgba(56, 189, 248, 0.28)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.roundRect(cx, cy, cardSize, cardSize, cardRadius);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.strokeStyle = proj.status === 'waiting'
+      ? 'rgba(245, 158, 11, 0.45)'
+      : (isProjActive ? 'rgba(56, 189, 248, 0.35)' : 'rgba(255, 255, 255, 0.08)');
     ctx.lineWidth = 1;
     ctx.fill();
     ctx.stroke();
 
-    // 1. Project Title & Status badge
-    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+    // 1. Project Title + Traffic Light Dot
+    ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#38bdf8';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    const titleText = `✦ ${proj.project || ('Project ' + (idx + 1))}`;
-    ctx.fillText(titleText, contentX + 10, cy + 8);
+    const rawName = (proj.project && proj.project !== 'Antigravity') ? proj.project : (`Chat ${idx + 1}`);
+    ctx.fillText(truncateToWidth(`✦ ${sanitizeProjectName(rawName)}`, cardSize - 34, ctx.font), cx + 10, cy + 10);
+    renderTrafficLightDot(cx + cardSize - 14, cy + 16, proj.status);
 
-    // Phase text
-    ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
+    // 2. Phase text wrapped up to 2 lines
+    ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#e4e4e7';
-    const phaseStr = proj.phase || (proj.tool ? `⚙ ${proj.tool}` : 'Active');
-    ctx.fillText(truncateToWidth(phaseStr, contentW - 170, ctx.font), contentX + 10, cy + 26);
+    const phaseStr = String(proj.phase || (proj.tool ? `⚙ ${proj.tool}` : 'Ready'));
+    const maxLineW = cardSize - 20;
+    const words = phaseStr.split(/\s+/);
+    let line1 = '';
+    let line2 = '';
+    let splitIdx = 0;
+    while (splitIdx < words.length) {
+      const candidate = line1 ? `${line1} ${words[splitIdx]}` : words[splitIdx];
+      if (ctx.measureText(candidate).width <= maxLineW) {
+        line1 = candidate;
+        splitIdx++;
+      } else {
+        if (!line1) {
+          line1 = truncateToWidth(words[splitIdx], maxLineW, ctx.font);
+          splitIdx++;
+        }
+        break;
+      }
+    }
+    if (splitIdx < words.length) {
+      line2 = truncateToWidth(words.slice(splitIdx).join(' '), maxLineW, ctx.font);
+    }
+    ctx.fillText(line1, cx + 10, cy + 32);
+    if (line2) {
+      ctx.fillStyle = '#a1a1aa';
+      ctx.fillText(line2, cx + 10, cy + 47);
+    }
 
-    // Focus button
-    const btnW = 90;
+    // 3. Compact Focus button inside square card
+    const btnW = cardSize - 20;
     const btnH = 20;
-    const btnX = contentX + contentW - btnW - 10;
-    const btnY = cy + 8;
+    const btnX = cx + 10;
+    const btnY = cy + cardSize - 42;
     const isHov = hoveredButtonId === `focus_proj_${idx}`;
     ctx.beginPath();
-    ctx.roundRect(btnX, btnY, btnW, btnH, 5);
-    ctx.fillStyle = isHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
+    ctx.roundRect(btnX, btnY, btnW, btnH, 6);
+    ctx.fillStyle = isHov ? '#2563eb' : 'rgba(37, 99, 235, 0.22)';
     ctx.strokeStyle = '#3b82f6';
     ctx.lineWidth = 1;
     ctx.fill();
@@ -6242,24 +6277,24 @@ function renderAgentView(x, y, w, h) {
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Focus ➔', btnX + btnW / 2, btnY + btnH / 2);
+    ctx.fillText('Focus ↗', btnX + btnW / 2, btnY + btnH / 2);
     interactiveButtons.push({ id: `focus_proj_${idx}`, data: proj.conversationId, x: btnX, y: btnY, w: btnW, h: btnH });
 
-    // 2. 4-Segment Progress Bar for this project
+    // 4. 4-Segment Progress Bar at bottom of square card
     const prog = getAntigravityProgress(proj);
-    const pBarY = cy + cardH - 18;
-    const pBarH = 5;
-    const pGap = 4;
-    const pSegW = (contentW - 20 - 3 * pGap) / 4;
+    const pBarY = cy + cardSize - 13;
+    const pBarH = 4;
+    const pGap = 3;
+    const pSegW = (cardSize - 20 - 3 * pGap) / 4;
 
     for (let s = 0; s < 4; s++) {
-      const sx = contentX + 10 + s * (pSegW + pGap);
+      const sx = cx + 10 + s * (pSegW + pGap);
       ctx.beginPath();
-      ctx.roundRect(sx, pBarY, pSegW, pBarH, 2.5);
+      ctx.roundRect(sx, pBarY, pSegW, pBarH, 2);
       if (prog.segments[s]) {
-        ctx.fillStyle = '#22c55e'; // Finished segment filled with vibrant green
+        ctx.fillStyle = '#22c55e';
       } else if (prog.activeSegment === s) {
-        ctx.fillStyle = '#38bdf8'; // Active segment cyan
+        ctx.fillStyle = '#38bdf8';
       } else {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
       }

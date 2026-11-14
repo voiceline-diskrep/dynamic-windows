@@ -114,8 +114,8 @@ function getTargetExpandedHeight(view, options = {}) {
   }
   if (view === 'todo') return UI.TODO_H;
   if (view === 'agent') {
-    const cardCount = Math.max(1, Math.min(3, options.projectCount || 0));
-    return cardCount === 1 ? UI.AGENT_H : Math.min(340, 160 + (cardCount - 1) * 82);
+    const cardCount = Math.max(1, options.projectCount || 0);
+    return cardCount === 1 ? UI.AGENT_H : 216;
   }
   if (view === 'call') return UI.CALL_H;
   if (view === 'media') return UI.MEDIA_H + 34; // 254px (includes speed pill bar)

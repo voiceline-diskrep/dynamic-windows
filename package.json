@@ -1,6 +1,6 @@
 {
   "name": "dynamic-windows",
-  "version": "1.4.31",
+  "version": "1.4.32",
   "description": "Dynamic Windows: Apple Dynamic Island & Notch for Windows with Google Antigravity & Liner Synced Lyrics",
   "main": "src/main/main.js",
   "type": "commonjs",
