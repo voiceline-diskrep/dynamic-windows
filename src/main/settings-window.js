@@ -146,7 +146,7 @@ function checkForGitHubUpdate() {
   });
 }
 
-function registerSettingsIPC(dropZoneInstance) {
+function registerSettingsIPC(dropZoneInstance, callbacks = {}) {
   ipcMain.handle('get-app-settings', async () => {
     return {
       config: configManager.get(),
@@ -173,11 +173,15 @@ function registerSettingsIPC(dropZoneInstance) {
       });
     }
     if (newSettings && 'gameMode' in newSettings) {
-      BrowserWindow.getAllWindows().forEach(w => {
-        if (!w.isDestroyed()) {
-          w.webContents.send('game-mode-toggled', { enabled: Boolean(newSettings.gameMode) });
-        }
-      });
+      if (callbacks && typeof callbacks.onGameModeChange === 'function') {
+        callbacks.onGameModeChange(Boolean(newSettings.gameMode));
+      } else {
+        BrowserWindow.getAllWindows().forEach(w => {
+          if (!w.isDestroyed()) {
+            w.webContents.send('game-mode-toggled', { enabled: Boolean(newSettings.gameMode) });
+          }
+        });
+      }
     }
     if (newSettings && 'dynamicLyrics' in newSettings) {
       BrowserWindow.getAllWindows().forEach(w => {

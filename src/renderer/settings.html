@@ -1032,6 +1032,14 @@
 
     bindSettingChange('setting-startup', 'startup');
     bindSettingChange('setting-gameMode', 'gameMode');
+    ipcRenderer.on('game-mode-toggled', (event, data) => {
+      if (data && typeof data.enabled === 'boolean') {
+        const el = document.getElementById('setting-gameMode');
+        if (el && el.checked !== data.enabled) {
+          el.checked = data.enabled;
+        }
+      }
+    });
     bindSettingChange('setting-clock24h', 'clock24h');
     bindSettingChange('setting-showAmPm', 'showAmPm');
     bindSettingChange('setting-showSeconds', 'showSeconds');

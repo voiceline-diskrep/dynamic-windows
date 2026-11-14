@@ -108,15 +108,16 @@ function applyGameModeVisibility() {
     syncGameModeMonitors(false);
     if (!mainWindow.isVisible()) {
       mainWindow.showInactive();
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
-  if (process.platform === 'darwin') {
-    if (app.dock && typeof app.dock.hide === 'function') {
-      try { app.dock.hide(); } catch (e) {}
     }
-    try {
-      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    } catch (e) {}
-  }
+    mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    mainWindow.moveTop();
+    if (process.platform === 'darwin') {
+      if (app.dock && typeof app.dock.hide === 'function') {
+        try { app.dock.hide(); } catch (e) {}
+      }
+      try {
+        mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      } catch (e) {}
     }
   }
 }
@@ -125,13 +126,15 @@ function setGameMode(enabled, source = 'ui') {
   gameModeEnabled = Boolean(enabled);
   configManager.set('gameMode', gameModeEnabled);
   applyGameModeVisibility();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('game-mode-toggled', {
-      enabled: gameModeEnabled,
-      isFullscreen: isFullscreenGame,
-      source
-    });
-  }
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) {
+      w.webContents.send('game-mode-toggled', {
+        enabled: gameModeEnabled,
+        isFullscreen: isFullscreenGame,
+        source
+      });
+    }
+  });
   setupTray();
 }
 
@@ -410,15 +413,16 @@ function createIslandWindow() {
       syncGameModeMonitors(false);
       if (!mainWindow.isVisible()) {
         mainWindow.showInactive();
-        mainWindow.setAlwaysOnTop(true, 'screen-saver');
-  if (process.platform === 'darwin') {
-    if (app.dock && typeof app.dock.hide === 'function') {
-      try { app.dock.hide(); } catch (e) {}
-    }
-    try {
-      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    } catch (e) {}
-  }
+      }
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.moveTop();
+      if (process.platform === 'darwin') {
+        if (app.dock && typeof app.dock.hide === 'function') {
+          try { app.dock.hide(); } catch (e) {}
+        }
+        try {
+          mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+        } catch (e) {}
       }
     }
   });
@@ -1101,17 +1105,21 @@ app.whenReady().then(() => {
   mediaController.on('fullscreen', (isFull) => {
     isFullscreenGame = Boolean(isFull);
     applyGameModeVisibility();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('game-mode-changed', {
-        fullscreen: isFullscreenGame,
-        enabled: gameModeEnabled
-      });
-    }
+    BrowserWindow.getAllWindows().forEach(w => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('game-mode-changed', {
+          fullscreen: isFullscreenGame,
+          enabled: gameModeEnabled
+        });
+      }
+    });
   });
   dropZone = new DropZone();
   userDataManager = new UserDataManager();
   userDataManager.registerIpc(ipcMain, () => mainWindow);
-  registerSettingsIPC(dropZone);
+  registerSettingsIPC(dropZone, {
+    onGameModeChange: (val) => setGameMode(val, 'settings')
+  });
   startClipboardMonitor();
 
   // 2. Google Antigravity Real-Time Monitor

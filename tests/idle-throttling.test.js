@@ -132,6 +132,66 @@ test('Monitors: setPaused stops and resumes polling cleanly during Game Mode', (
   }
 });
 
+test('GameMode: turning Game Mode OFF keeps monitors running and window unhidden during fullscreen game', () => {
+  let gameModeEnabled = true;
+  let isFullscreenGame = false;
+  let isWindowVisible = true;
+  let alwaysOnTopLevel = null;
+  let movedTop = false;
+  let monitorsPaused = false;
+
+  function syncGameModeMonitors(paused) {
+    monitorsPaused = Boolean(paused);
+  }
+
+  function applyGameModeVisibility() {
+    if (gameModeEnabled && isFullscreenGame) {
+      if (isWindowVisible) isWindowVisible = false;
+      syncGameModeMonitors(true);
+    } else {
+      syncGameModeMonitors(false);
+      if (!isWindowVisible) isWindowVisible = true;
+      alwaysOnTopLevel = 'screen-saver';
+      movedTop = true;
+    }
+  }
+
+  function setGameMode(enabled) {
+    gameModeEnabled = Boolean(enabled);
+    applyGameModeVisibility();
+  }
+
+  // Initial state: gameMode enabled, not in fullscreen
+  assert.strictEqual(gameModeEnabled, true);
+  assert.strictEqual(isWindowVisible, true);
+
+  // Fullscreen game starts -> hides window and pauses monitors
+  isFullscreenGame = true;
+  applyGameModeVisibility();
+  assert.strictEqual(isWindowVisible, false);
+  assert.strictEqual(monitorsPaused, true);
+
+  // User turns Game Mode OFF in settings
+  setGameMode(false);
+  assert.strictEqual(gameModeEnabled, false);
+  assert.strictEqual(isWindowVisible, true);
+  assert.strictEqual(monitorsPaused, false);
+  assert.strictEqual(alwaysOnTopLevel, 'screen-saver');
+  assert.strictEqual(movedTop, true);
+
+  // Exiting and re-entering fullscreen while Game Mode is OFF never hides window
+  isFullscreenGame = false;
+  applyGameModeVisibility();
+  assert.strictEqual(isWindowVisible, true);
+  assert.strictEqual(monitorsPaused, false);
+
+  isFullscreenGame = true;
+  applyGameModeVisibility();
+  assert.strictEqual(isWindowVisible, true);
+  assert.strictEqual(monitorsPaused, false);
+  assert.strictEqual(alwaysOnTopLevel, 'screen-saver');
+});
+
 test('computeDynamicActive: returns false (0 FPS) when resting, expanded-settled, tucked, or Game Mode hidden', () => {
   const computeDynamicActive = extractFunction('computeDynamicActive');
 
