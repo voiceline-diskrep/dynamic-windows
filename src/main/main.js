@@ -66,6 +66,35 @@ let isQuitting = false;
 
 let gameModeEnabled = configManager.get('gameMode') !== false;
 let isFullscreenGame = false;
+let gameModeIpcHidden = false;
+let monitorsPausedForGameMode = false;
+let batteryPollInterval = null;
+let lastMediaSignature = '';
+let lastMediaVolumeSignature = '';
+let mediaVolumeTickCount = 0;
+
+function isPausedForGameMode() {
+  return Boolean(gameModeEnabled && (isFullscreenGame || gameModeIpcHidden));
+}
+
+function syncGameModeMonitors(paused) {
+  const nextPaused = Boolean(paused);
+  if (callMonitor && typeof callMonitor.setPaused === 'function') {
+    callMonitor.setPaused(nextPaused);
+  }
+  if (notificationMonitor && typeof notificationMonitor.setPaused === 'function') {
+    notificationMonitor.setPaused(nextPaused);
+  }
+  if (antigravityMonitor && typeof antigravityMonitor.setPaused === 'function') {
+    antigravityMonitor.setPaused(nextPaused);
+  }
+  if (monitorsPausedForGameMode && !nextPaused) {
+    lastMediaSignature = '';
+    lastMediaVolumeSignature = '';
+    sendMediaState(true);
+  }
+  monitorsPausedForGameMode = nextPaused;
+}
 
 function applyGameModeVisibility() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -73,7 +102,10 @@ function applyGameModeVisibility() {
     if (mainWindow.isVisible()) {
       mainWindow.hide();
     }
+    syncGameModeMonitors(true);
   } else {
+    gameModeIpcHidden = false;
+    syncGameModeMonitors(false);
     if (!mainWindow.isVisible()) {
       mainWindow.showInactive();
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -112,6 +144,7 @@ let lastClipText = '';
 
 function startClipboardMonitor() {
   setInterval(() => {
+    if (isPausedForGameMode()) return;
     try {
       const text = clipboard.readText();
       if (typeof text !== 'string' || !text || text === lastClipText) return;
@@ -332,7 +365,7 @@ function createIslandWindow() {
   ipcMain.on('media-play-pause', () => {
     if (mediaController) {
       mediaController.playPause();
-      sendMediaState();
+      sendMediaState(true);
     }
   });
 
@@ -369,8 +402,12 @@ function createIslandWindow() {
   ipcMain.on('game-mode-hide', (event, hide) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (hide && gameModeEnabled) {
+      gameModeIpcHidden = true;
       if (mainWindow.isVisible()) mainWindow.hide();
+      syncGameModeMonitors(true);
     } else {
+      gameModeIpcHidden = false;
+      syncGameModeMonitors(false);
       if (!mainWindow.isVisible()) {
         mainWindow.showInactive();
         mainWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -640,14 +677,14 @@ function createIslandWindow() {
   ipcMain.on('media-set-speed', (event, rate) => {
     if (mediaController) {
       mediaController.setPlaybackSpeed(rate);
-      sendMediaState();
+      sendMediaState(true);
     }
   });
 
   ipcMain.on('media-set-offset', (event, offsetMs) => {
     if (mediaController) {
       mediaController.setLyricOffset(offsetMs);
-      sendMediaState();
+      sendMediaState(true);
     }
   });
 
@@ -763,7 +800,7 @@ function createIslandWindow() {
   // Send initial data once loaded
   mainWindow.webContents.once('did-finish-load', () => {
     sendAntigravityState();
-    sendMediaState();
+    sendMediaState(true);
     sendCallState();
     sendDropZoneFiles();
     sendDisplayMode();
@@ -799,14 +836,43 @@ function sendAntigravityState() {
   }
 }
 
-function sendMediaState() {
+function sendMediaState(force = false) {
+  if (!force && isPausedForGameMode()) return;
   if (mainWindow && !mainWindow.isDestroyed() && mediaController) {
     const state = mediaController.getState();
-    mainWindow.webContents.send('media-state', state);
-    const hint = (mediaController.now && mediaController.now.app) || (state.track && state.track.source) || '';
+    const tr = state && state.track ? state.track : null;
+    const mediaSig = [
+      state && state.hasMedia ? 1 : 0,
+      state && state.isPlaying ? 1 : 0,
+      tr ? tr.title || '' : '',
+      tr ? tr.artist || '' : '',
+      tr ? tr.album || '' : '',
+      tr ? tr.source || '' : '',
+      tr ? Math.round(Number(tr.position) || 0) : 0,
+      tr ? Math.round(Number(tr.duration) || 0) : 0,
+      tr && tr.artwork ? tr.artwork.length : 0,
+      state && state.lyrics ? state.lyrics.length : 0,
+      state && state.syncedLyrics ? state.syncedLyrics.length : 0
+    ].join('|');
+
+    const mediaChanged = force || mediaSig !== lastMediaSignature;
+    if (mediaChanged) {
+      lastMediaSignature = mediaSig;
+      mainWindow.webContents.send('media-state', state);
+    }
+
+    mediaVolumeTickCount = (mediaVolumeTickCount + 1) % 3;
+    const shouldQueryVolume = force || (state && state.isPlaying) || (state && state.hasMedia && mediaVolumeTickCount === 0);
+    if (!shouldQueryVolume) return;
+
+    const hint = (mediaController.now && mediaController.now.app) || (tr && tr.source) || '';
     sysHelper.getMediaVolume(hint).then(vol => {
       if (mainWindow && !mainWindow.isDestroyed() && vol && !vol.error) {
-        mainWindow.webContents.send('media-volume-update', vol);
+        const volSig = `${vol.volume}:${vol.muted ? 1 : 0}:${vol.app || ''}`;
+        if (force || volSig !== lastMediaVolumeSignature) {
+          lastMediaVolumeSignature = volSig;
+          mainWindow.webContents.send('media-volume-update', vol);
+        }
       }
     }).catch(() => {});
   }
@@ -916,6 +982,17 @@ async function refreshBatteryStatus() {
                       batt.percent !== currentBatteryState.percent ||
                       batt.isCharging !== currentBatteryState.isCharging;
       currentBatteryState = batt;
+      if (batt.hasBattery === false) {
+        if (batteryPollInterval) {
+          clearInterval(batteryPollInterval);
+          batteryPollInterval = null;
+        }
+      } else if (!batteryPollInterval) {
+        batteryPollInterval = setInterval(() => {
+          if (!isPausedForGameMode()) refreshBatteryStatus();
+        }, 15000);
+        batteryPollInterval.unref?.();
+      }
       if (changed) {
         sendBatteryState();
       }
@@ -1020,7 +1097,7 @@ function setupGlobalShortcuts() {
 app.whenReady().then(() => {
   // 1. Initialize Subsystems
   mediaController = new MediaController();
-  mediaController.on('changed', () => sendMediaState());
+  mediaController.on('changed', () => sendMediaState(true));
   mediaController.on('fullscreen', (isFull) => {
     isFullscreenGame = Boolean(isFull);
     applyGameModeVisibility();
@@ -1106,8 +1183,11 @@ app.whenReady().then(() => {
   setupGlobalShortcuts();
 
   // Battery Monitoring (Laptops / Systems with battery)
+  batteryPollInterval = setInterval(() => {
+    if (!isPausedForGameMode()) refreshBatteryStatus();
+  }, 15000);
+  batteryPollInterval.unref?.();
   refreshBatteryStatus();
-  setInterval(refreshBatteryStatus, 15000).unref?.();
   if (powerMonitor) {
     powerMonitor.on('on-ac', () => refreshBatteryStatus());
     powerMonitor.on('on-battery', () => refreshBatteryStatus());
@@ -1135,7 +1215,7 @@ app.whenReady().then(() => {
 
   // Periodically stream media & lyrics updates to Island
   setInterval(() => {
-    sendMediaState();
+    sendMediaState(false);
   }, 1500).unref?.();
 
   app.on('activate', () => {

@@ -22,17 +22,6 @@ window.addEventListener('unhandledrejection', (e) => {
 'use strict';
 
 const { ipcRenderer, webUtils } = require('electron');
-if (ipcRenderer && typeof ipcRenderer.on === 'function') {
-  const origIpcOn = ipcRenderer.on.bind(ipcRenderer);
-  ipcRenderer.on = function(channel, listener) {
-    return origIpcOn(channel, function(...args) {
-      if (typeof requestFrame === 'function') {
-        requestFrame();
-      }
-      return listener.apply(this, args);
-    });
-  };
-}
 const { soundFX } = require('./sound-fx');
 const {
   TAB_ORDER,
@@ -65,11 +54,15 @@ try {
 function applyFontFamily(font) {
   if (!font || typeof font !== 'string') return;
   appFontFamily = font.trim();
+  fontReplaceCache.clear();
   try { localStorage.setItem('app_font_family', appFontFamily); } catch (e) {}
   document.documentElement.style.setProperty('--app-font-family', `"${appFontFamily}", 'Segoe UI Variable Text', -apple-system, sans-serif`);
+  if (typeof requestFrame === 'function') requestFrame();
 }
 
-// Global Canvas font setter interception for dynamic typography
+// Global Canvas font setter interception for dynamic typography (memoized)
+const fontReplaceCache = new Map();
+let fontReplaceCacheFamily = '';
 const proto = CanvasRenderingContext2D.prototype;
 const origFontDesc = Object.getOwnPropertyDescriptor(proto, 'font');
 if (origFontDesc && origFontDesc.set) {
@@ -79,13 +72,24 @@ if (origFontDesc && origFontDesc.set) {
     },
     set(val) {
       if (typeof val === 'string' && appFontFamily && appFontFamily !== 'Default') {
-        if (!val.includes(`"${appFontFamily}"`) && !val.includes(`'${appFontFamily}'`)) {
-          const replaced = val.replace(/"Segoe UI Variable (?:Text|Display)"|'Segoe UI Variable (?:Text|Display)'|Inter/g, `"${appFontFamily}", "Segoe UI Variable Text"`);
-          if (replaced !== val) {
-            origFontDesc.set.call(this, replaced);
-            return;
-          }
+        if (fontReplaceCacheFamily !== appFontFamily) {
+          fontReplaceCache.clear();
+          fontReplaceCacheFamily = appFontFamily;
         }
+        let cached = fontReplaceCache.get(val);
+        if (cached === undefined) {
+          if (!val.includes(`"${appFontFamily}"`) && !val.includes(`'${appFontFamily}'`)) {
+            cached = val.replace(/"Segoe UI Variable (?:Text|Display)"|'Segoe UI Variable (?:Text|Display)'|Inter/g, `"${appFontFamily}", "Segoe UI Variable Text"`);
+          } else {
+            cached = val;
+          }
+          if (fontReplaceCache.size >= 64) {
+            fontReplaceCache.clear();
+          }
+          fontReplaceCache.set(val, cached);
+        }
+        origFontDesc.set.call(this, cached);
+        return;
       }
       origFontDesc.set.call(this, val);
     },
@@ -156,11 +160,11 @@ function showInlineModal(title, placeholder, extraChips, callback) {
 
   if (backdrop) backdrop.style.display = 'block';
   modal.style.display = 'block';
-  ipcRenderer.send('set-ignore-mouse-events', false);
+  setIgnoreMouseEventsCached(false);
 
   setTimeout(() => {
     modalInput.focus();
-    ipcRenderer.send('set-ignore-mouse-events', false);
+    setIgnoreMouseEventsCached(false);
   }, 40);
 
   const onSubmit = () => {
@@ -199,7 +203,7 @@ function hideInlineModal() {
   inlineModalSelectedChip = null;
   setTimeout(() => {
     if (!isHovered && !isInlineModalOpen) {
-      ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+      setIgnoreMouseEventsCached(true, { forward: true });
     }
   }, 100);
 }
@@ -286,7 +290,8 @@ function showPersonalizedBanner(title, body = 'Dynamic Windows', icon = '👋') 
   }
   currentView = 'notification_banner';
   targetProgress = 1.0;
-  ipcRenderer.send('set-ignore-mouse-events', false);
+  setIgnoreMouseEventsCached(false);
+  if (typeof requestFrame === 'function') requestFrame();
 }
 
 // Modal and Backdrop Interactive Event Wiring
@@ -301,7 +306,7 @@ if (inlineModalEl) {
       leaveTimer = null;
     }
     isHovered = true;
-    ipcRenderer.send('set-ignore-mouse-events', false);
+    setIgnoreMouseEventsCached(false);
   });
   inlineModalEl.addEventListener('mousemove', (e) => {
     e.stopPropagation();
@@ -313,7 +318,7 @@ if (inlineModalEl) {
   });
   inlineModalEl.addEventListener('mousedown', (e) => {
     e.stopPropagation();
-    ipcRenderer.send('set-ignore-mouse-events', false);
+    setIgnoreMouseEventsCached(false);
   });
 }
 
@@ -325,7 +330,7 @@ if (inlineModalBackdropEl) {
       leaveTimer = null;
     }
     isHovered = true;
-    ipcRenderer.send('set-ignore-mouse-events', false);
+    setIgnoreMouseEventsCached(false);
   });
   inlineModalBackdropEl.addEventListener('click', (e) => {
     e.preventDefault();
@@ -343,25 +348,38 @@ window.addEventListener('keydown', (e) => {
 // User Data IPC Initialization
 try {
   ipcRenderer.invoke('calendar-get-notes').then(notes => {
-    if (Array.isArray(notes)) calendarNotes = notes;
+    if (Array.isArray(notes)) {
+      calendarNotes = notes;
+      requestFrame();
+    }
   }).catch(() => {});
 
   ipcRenderer.on('calendar-notes-updated', (event, notes) => {
-    if (Array.isArray(notes)) calendarNotes = notes;
+    if (Array.isArray(notes)) {
+      calendarNotes = notes;
+      requestFrame();
+    }
   });
 
   ipcRenderer.invoke('todo-get-data').then(data => {
-    if (data && Array.isArray(data.categories)) todoData = data;
+    if (data && Array.isArray(data.categories)) {
+      todoData = data;
+      requestFrame();
+    }
   }).catch(() => {});
 
   ipcRenderer.on('todo-data-updated', (event, data) => {
-    if (data && Array.isArray(data.categories)) todoData = data;
+    if (data && Array.isArray(data.categories)) {
+      todoData = data;
+      requestFrame();
+    }
   });
 
   ipcRenderer.invoke('clock-get-state').then(st => {
     if (st && st.timer) {
       timerDurationSec = st.timer.durationSec || 300;
       timerRemainingSec = st.timer.remainingSec || 300;
+      requestFrame();
     }
   }).catch(() => {});
 } catch (e) {}
@@ -446,6 +464,7 @@ let tabTransitionStartTime = 0;
 let tabTransitionDirection = 1;
 let navIndicatorX = null;
 let navIndicatorW = null;
+let isNavPillAnimating = false;
 let currentExpandedH = UI.HOME_H;
 let currentDt = 0.016;
 let clock24h = false;
@@ -538,6 +557,8 @@ function switchTab(newView) {
   previousView = currentView;
   currentView = newView;
   tabTransitionStartTime = performance.now();
+  isNavPillAnimating = true;
+  if (typeof requestFrame === 'function') requestFrame();
 }
 let leaveTimer = null;
 let dropZoneFiles = [];
@@ -835,9 +856,11 @@ function updateAlbumArt(url) {
     } catch (e) {
       albumAccentColor = '#e4e4e7';
     }
+    requestFrame();
   };
   albumImage.onerror = () => {
     albumAccentColor = '#e4e4e7';
+    requestFrame();
   };
   albumImage.src = url;
 }
@@ -1192,8 +1215,6 @@ function drawEqualizer(key, x, cy, w, h, colour, n = 6) {
   const bw = Math.max(1.5, (w - gap * (n - 1)) / n);
 
   ctx.save();
-  ctx.shadowColor = colour;
-  ctx.shadowBlur = h * 0.35;
   for (let i = 0; i < n; i++) {
     const raw = !playing
       ? 0.08
@@ -1365,7 +1386,7 @@ function setTucked(on) {
     targetProgress = 0.0;
     currentView = 'home';
     ipcRenderer.send('island-hover-end');
-    ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+    setIgnoreMouseEventsCached(true, { forward: true });
   } else {
     isPeekHidden = false;
   }
@@ -1470,8 +1491,23 @@ let mouseX = -1000;
 let mouseY = -1000;
 let hoveredButtonId = null;
 
+let lastIgnoreMouseEvents = null;
+let lastForwardMouseEvents = null;
+function setIgnoreMouseEventsCached(ignore, options) {
+  const nextIgnore = Boolean(ignore);
+  const nextForward = Boolean(options && options.forward);
+  if (nextIgnore === lastIgnoreMouseEvents && nextForward === lastForwardMouseEvents) return;
+  lastIgnoreMouseEvents = nextIgnore;
+  lastForwardMouseEvents = nextForward;
+  if (nextIgnore && options) {
+    ipcRenderer.send('set-ignore-mouse-events', true, options);
+  } else {
+    ipcRenderer.send('set-ignore-mouse-events', nextIgnore);
+  }
+}
+
 // Initial transparent click-through state
-ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+setIgnoreMouseEventsCached(true, { forward: true });
 
 // Prevent accidental window close or reload via shortcuts
 window.addEventListener('keydown', (e) => {
@@ -1486,14 +1522,19 @@ window.addEventListener('dragover', (e) => {
   e.preventDefault();
   e.stopPropagation();
   const splitX = window.innerWidth / 2;
-  dropZoneHoverZone = e.clientX < splitX ? 'onetime' : 'keep';
+  const nextZone = e.clientX < splitX ? 'onetime' : 'keep';
+  const zoneChanged = nextZone !== dropZoneHoverZone;
+  dropZoneHoverZone = nextZone;
   if (!isDraggingOver) {
     isDraggingOver = true;
     isPeekHidden = false;
     isTucked = false;
     targetProgress = 1.0;
     currentView = 'dropzone';
-    ipcRenderer.send('set-ignore-mouse-events', false);
+    setIgnoreMouseEventsCached(false);
+    requestFrame();
+  } else if (zoneChanged) {
+    requestFrame();
   }
 });
 
@@ -1501,6 +1542,7 @@ window.addEventListener('dragleave', (e) => {
   e.preventDefault();
   e.stopPropagation();
   isDraggingOver = false;
+  requestFrame();
 });
 
 window.addEventListener('drop', (e) => {
@@ -1546,10 +1588,11 @@ canvas.addEventListener('mousemove', (e) => {
       leaveTimer = null;
     }
     isHovered = true;
-    ipcRenderer.send('set-ignore-mouse-events', false);
+    setIgnoreMouseEventsCached(false);
     return;
   }
 
+  const prevLumpHovered = isLumpHovered;
   const lumpHit = getTopLumpHitbox(window.innerWidth);
   const isOverTopLump = pointInRect(mouseX, mouseY, lumpHit.x, lumpHit.y, lumpHit.w, lumpHit.h);
   isLumpHovered = isOverTopLump;
@@ -1558,12 +1601,13 @@ canvas.addEventListener('mousemove', (e) => {
     isPeekHidden = false;
     hoveredButtonId = null;
     if (isOverTopLump) {
-      ipcRenderer.send('set-ignore-mouse-events', false);
+      setIgnoreMouseEventsCached(false);
       canvas.style.cursor = 'pointer';
     } else {
-      ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+      setIgnoreMouseEventsCached(true, { forward: true });
       canvas.style.cursor = 'default';
     }
+    if (isLumpHovered !== prevLumpHovered) requestFrame();
     return;
   }
 
@@ -1611,10 +1655,11 @@ canvas.addEventListener('mousemove', (e) => {
         leaveTimer = null;
       }
       isHovered = true;
-      ipcRenderer.send('set-ignore-mouse-events', false);
+      setIgnoreMouseEventsCached(false);
     } else {
       if (hoveredDuringSongPopup) {
         dismissSongAnnouncement();
+        requestFrame();
       }
       if (isHovered && !leaveTimer && !isInlineModalOpen) {
         leaveTimer = setTimeout(() => {
@@ -1626,11 +1671,13 @@ canvas.addEventListener('mousemove', (e) => {
           tabTransitionStartTime = 0;
           navIndicatorX = null;
           navIndicatorW = null;
+          isNavPillAnimating = false;
           ipcRenderer.send('island-hover-end');
           leaveTimer = null;
+          requestFrame();
           setTimeout(() => {
             if (!isHovered && !isInlineModalOpen) {
-              ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+              setIgnoreMouseEventsCached(true, { forward: true });
             }
           }, 260);
         }, UI.LEAVE_DELAY);
@@ -1658,18 +1705,21 @@ canvas.addEventListener('mousemove', (e) => {
     }
 
     if (isOverTopLump) {
-      ipcRenderer.send('set-ignore-mouse-events', false);
+      setIgnoreMouseEventsCached(false);
       canvas.style.cursor = 'pointer';
     } else {
-      ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+      setIgnoreMouseEventsCached(true, { forward: true });
       canvas.style.cursor = 'default';
     }
+    if (isLumpHovered !== prevLumpHovered) requestFrame();
     return;
   }
 
+  let needsFrame = false;
   if (isDraggingVolume && volumeSliderBounds) {
     wasVolumeDragging = true;
     updateVolumeFromMouseY(mouseY, volumeSliderBounds);
+    needsFrame = true;
   }
 
   // Shelf drag-out trigger
@@ -1679,6 +1729,7 @@ canvas.addEventListener('mousemove', (e) => {
     shelfDragCandidate = null;
     canvas.draggable = false;
     ipcRenderer.send('shelf-drag-start', p);
+    needsFrame = true;
   }
 
   // Button hover inspection
@@ -1693,22 +1744,28 @@ canvas.addEventListener('mousemove', (e) => {
   if (found !== hoveredButtonId) {
     hoveredButtonId = found;
     canvas.style.cursor = found ? 'pointer' : 'default';
+    needsFrame = true;
   }
+  if (needsFrame) requestFrame();
 });
 
 canvas.addEventListener('mouseleave', () => {
   if (isInlineModalOpen) return;
+  const prevLump = isLumpHovered;
   isLumpHovered = false;
   if (isPeekHidden) {
     isPeekHidden = false;
     requestFrame();
+  } else if (prevLump) {
+    requestFrame();
   }
   if (hoveredDuringSongPopup || songPopupActiveUntil > performance.now()) {
     dismissSongAnnouncement();
+    requestFrame();
   }
   if (!isHovered && targetProgress < 0.5) {
     hoveredButtonId = null;
-    ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+    setIgnoreMouseEventsCached(true, { forward: true });
     return;
   }
   if (leaveTimer) clearTimeout(leaveTimer);
@@ -1721,9 +1778,11 @@ canvas.addEventListener('mouseleave', () => {
     tabTransitionStartTime = 0;
     navIndicatorX = null;
     navIndicatorW = null;
+    isNavPillAnimating = false;
     ipcRenderer.send('island-hover-end');
     leaveTimer = null;
-    ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+    setIgnoreMouseEventsCached(true, { forward: true });
+    requestFrame();
   }, UI.LEAVE_DELAY);
 });
 
@@ -1827,7 +1886,7 @@ canvas.addEventListener('click', (e) => {
     currentExpandedH = getTargetExpandedHeightForView(nextV);
     isHovered = true;
     targetProgress = 1.0;
-    ipcRenderer.send('set-ignore-mouse-events', false);
+    setIgnoreMouseEventsCached(false);
     ipcRenderer.send('island-hover-start');
     requestFrame();
     return;
@@ -1837,6 +1896,7 @@ canvas.addEventListener('click', (e) => {
     if (pointInRect(cx, cy, btn.x, btn.y, btn.w, btn.h)) {
       soundFX.play('tap');
       handleButtonClick(btn.id, btn.data);
+      requestFrame();
       return;
     }
   }
@@ -1849,6 +1909,7 @@ canvas.addEventListener('click', (e) => {
     const popY = displayMode === 'notch' ? 0 : 8;
     if (pointInRect(cx, cy, popX, popY, popW, popH)) {
       dismissSongAnnouncement();
+      requestFrame();
       return;
     }
   }
@@ -1879,8 +1940,10 @@ canvas.addEventListener('click', (e) => {
     tabTransitionStartTime = 0;
     navIndicatorX = null;
     navIndicatorW = null;
+    isNavPillAnimating = false;
     currentExpandedH = getTargetExpandedHeightForView(nextV);
     targetProgress = 1.0;
+    requestFrame();
   }
 });
 
@@ -2191,7 +2254,11 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('clipboard-copy', clipId);
     copiedFeedbackId = clipId;
     if (copiedFeedbackTimer) clearTimeout(copiedFeedbackTimer);
-    copiedFeedbackTimer = setTimeout(() => { copiedFeedbackId = null; }, 1800);
+    copiedFeedbackTimer = setTimeout(() => {
+      copiedFeedbackId = null;
+      requestFrame();
+    }, 1800);
+    requestFrame();
   } else if (id && id.startsWith('clip_pin_')) {
     ipcRenderer.send('clipboard-pin', data);
   } else if (id === 'clipboard_clear') {
@@ -2229,21 +2296,45 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('permission-response', { id: data, allow: true });
     pendingPrompt = null;
     currentView = 'home';
+    requestFrame();
   } else if (id === 'prompt_deny') {
     ipcRenderer.send('permission-response', { id: data, allow: false });
     pendingPrompt = null;
     currentView = 'home';
+    requestFrame();
   }
 }
 
 // -------------------------------------------------------------
 // IPC Listeners
 // -------------------------------------------------------------
+let lastAntigravitySig = '';
+let aiPulseUntil = 0;
 ipcRenderer.on('antigravity-state', (event, state) => {
   antigravityState = state;
+  const projs = state && Array.isArray(state.projects) ? state.projects : [];
+  const activeStatuses = ['running', 'thinking'];
+  const isBusy = Boolean(
+    (state && activeStatuses.includes(String(state.status || '').toLowerCase())) ||
+    projs.some(p => activeStatuses.includes(String(p.status || '').toLowerCase()))
+  );
+  const sig = JSON.stringify({
+    s: state && state.status,
+    p: state && state.phase,
+    t: state && state.task,
+    k: projs.map(p => `${p.id || p.project}:${p.status}:${p.phase}:${p.task || ''}`).join(',')
+  });
+  if (sig !== lastAntigravitySig) {
+    lastAntigravitySig = sig;
+    if (isBusy) {
+      aiPulseUntil = performance.now() + 900;
+    }
+    requestFrame();
+  }
 });
 
 let lastCallRinging = false;
+let lastCallSig = '';
 ipcRenderer.on('call-state', (event, state) => {
   callState = state || { inCall: false, status: 'idle', participants: [] };
 
@@ -2264,8 +2355,23 @@ ipcRenderer.on('call-state', (event, state) => {
     }
   }
   lastCallRinging = isRinging;
+
+  const parts = Array.isArray(callState.participants) ? callState.participants : [];
+  const sig = JSON.stringify({
+    i: Boolean(callState.inCall),
+    s: callState.status,
+    a: callState.app,
+    m: Boolean(callState.isMuted),
+    d: Boolean(callState.isDeafened),
+    p: parts.map(pt => `${pt.name || ''}:${pt.isSpeaking ? 1 : 0}:${pt.isMuted ? 1 : 0}:${pt.isDeafened ? 1 : 0}`)
+  });
+  if (sig !== lastCallSig) {
+    lastCallSig = sig;
+    requestFrame();
+  }
 });
 
+let lastMediaSig = '';
 ipcRenderer.on('media-state', (event, state) => {
   mediaState = state || { isPlaying: false, track: null, progress_ms: 0, duration_ms: 0 };
   mediaSyncAt = performance.now();
@@ -2280,6 +2386,20 @@ ipcRenderer.on('media-state', (event, state) => {
     }
     lastSongAnnouncementKey = curKey;
   }
+
+  const tr = mediaState.track;
+  const sig = JSON.stringify({
+    pl: Boolean(mediaState.isPlaying),
+    t: tr ? tr.title : '',
+    a: tr ? tr.artist : '',
+    im: tr ? tr.image_url : '',
+    pm: mediaState.progress_ms || 0,
+    dm: mediaState.duration_ms || 0
+  });
+  if (sig !== lastMediaSig || mediaState.isPlaying) {
+    lastMediaSig = sig;
+    requestFrame();
+  }
 });
 
 ipcRenderer.on('toggle-tuck', () => {
@@ -2291,6 +2411,7 @@ ipcRenderer.on('untuck-island', () => {
   gameModeOpenedAnyway = true;
   ipcRenderer.send('game-mode-hide', false);
   targetProgress = 1.0;
+  requestFrame();
 });
 
 ipcRenderer.on('game-mode-changed', (event, data) => {
@@ -2307,6 +2428,7 @@ ipcRenderer.on('game-mode-changed', (event, data) => {
   } else {
     ipcRenderer.send('game-mode-hide', false);
   }
+  requestFrame();
 });
 
 ipcRenderer.on('game-mode-toggled', (event, data) => {
@@ -2324,62 +2446,85 @@ ipcRenderer.on('game-mode-toggled', (event, data) => {
   } else {
     ipcRenderer.send('game-mode-hide', false);
   }
+  requestFrame();
 });
 
 ipcRenderer.on('dropzone-files', (event, files) => {
   dropZoneFiles = files || [];
+  requestFrame();
 });
 
 ipcRenderer.on('clipboard-update', (event, list) => {
   clipboardHistory = list || [];
+  requestFrame();
 });
 
 ipcRenderer.on('display-mode', (event, mode) => {
   displayMode = mode || 'island';
+  requestFrame();
 });
 ipcRenderer.on('animation-speed', (event, speed) => {
   const val = parseFloat(speed);
   if (!isNaN(val) && val >= 0.2 && val <= 5.0) {
     animSpeedMultiplier = val;
+    requestFrame();
   }
 });
 ipcRenderer.on('media-volume-update', (event, data) => {
   if (isDraggingVolume) return;
+  let changed = false;
   if (data && typeof data.volume === 'number') {
-    currentVolume = Math.max(0, Math.min(1, data.volume));
+    const nextV = Math.max(0, Math.min(1, data.volume));
+    if (Math.abs(nextV - currentVolume) > 0.001) {
+      currentVolume = nextV;
+      changed = true;
+    }
   }
-  if (data && typeof data.muted === 'boolean') {
+  if (data && typeof data.muted === 'boolean' && data.muted !== isVolumeMuted) {
     isVolumeMuted = data.muted;
+    changed = true;
   }
+  if (changed && (animProgress > 0.1 || currentView === 'media')) requestFrame();
 });
 ipcRenderer.on('volume-update', (event, data) => {
   if (isDraggingVolume) return;
+  let changed = false;
   if (data && typeof data.volume === 'number') {
-    currentVolume = Math.max(0, Math.min(1, data.volume));
+    const nextV = Math.max(0, Math.min(1, data.volume));
+    if (Math.abs(nextV - currentVolume) > 0.001) {
+      currentVolume = nextV;
+      changed = true;
+    }
   }
-  if (data && typeof data.muted === 'boolean') {
+  if (data && typeof data.muted === 'boolean' && data.muted !== isVolumeMuted) {
     isVolumeMuted = data.muted;
+    changed = true;
   }
+  if (changed && (animProgress > 0.1 || currentView === 'media')) requestFrame();
 });
 try {
   ipcRenderer.invoke('get-media-volume', '').then(res => {
     if (res && typeof res.volume === 'number') currentVolume = Math.max(0, Math.min(1, res.volume));
     if (res && typeof res.muted === 'boolean') isVolumeMuted = res.muted;
+    requestFrame();
   }).catch(() => {});
 } catch (e) {}
 ipcRenderer.on('dynamic-lyrics-toggled', (event, data) => {
   if (data && typeof data.enabled === 'boolean') {
     dynamicLyricsEnabled = data.enabled;
+    requestFrame();
   }
 });
 ipcRenderer.on('album-color-gradient-toggled', (event, data) => {
   if (data && typeof data.enabled === 'boolean') {
     albumColorGradientEnabled = data.enabled;
+    requestFrame();
   }
 });
 ipcRenderer.on('island-opacity-changed', (event, data) => {
   if (data && typeof data.opacity === 'number') {
     islandOpacity = Math.max(0.4, Math.min(1.0, data.opacity));
+    requestFrame();
   }
 });
 ipcRenderer.on('sound-effects-config', (event, data) => {
@@ -2401,6 +2546,7 @@ ipcRenderer.on('user-name-changed', (event, data) => {
     if (currentUserName && !activeGreeting) {
       activeGreeting = getNextPersonalizedGreeting(currentUserName);
     }
+    requestFrame();
   }
 });
 ipcRenderer.on('clock-settings-changed', (event, data) => {
@@ -2416,11 +2562,15 @@ let batteryState = { hasBattery: false, percent: 100, isCharging: false };
 
 ipcRenderer.on('battery-status-changed', (event, data) => {
   if (data && typeof data.hasBattery === 'boolean') {
+    const nextPct = typeof data.percent === 'number' ? data.percent : 100;
+    const nextChg = Boolean(data.isCharging);
+    const changed = data.hasBattery !== batteryState.hasBattery || nextPct !== batteryState.percent || nextChg !== batteryState.isCharging;
     batteryState = {
       hasBattery: data.hasBattery,
-      percent: typeof data.percent === 'number' ? data.percent : 100,
-      isCharging: Boolean(data.isCharging)
+      percent: nextPct,
+      isCharging: nextChg
     };
+    if (changed) requestFrame();
   }
 });
 
@@ -2428,6 +2578,7 @@ try {
   ipcRenderer.invoke('get-battery-status').then(res => {
     if (res && typeof res.hasBattery === 'boolean') {
       batteryState = res;
+      requestFrame();
     }
   }).catch(() => {});
 } catch (e) {}
@@ -2436,10 +2587,14 @@ if (typeof navigator !== 'undefined' && typeof navigator.getBattery === 'functio
   navigator.getBattery().then(batt => {
     function syncNativeBattery() {
       if (batteryState.hasBattery || !batt.charging || batt.level < 1.0) {
-        batteryState.percent = Math.round(batt.level * 100);
-        batteryState.isCharging = batt.charging;
-        if (!batt.charging || batt.level < 1.0) {
-          batteryState.hasBattery = true;
+        const nextPct = Math.round(batt.level * 100);
+        const nextChg = batt.charging;
+        const nextHas = (!batt.charging || batt.level < 1.0) ? true : batteryState.hasBattery;
+        if (nextPct !== batteryState.percent || nextChg !== batteryState.isCharging || nextHas !== batteryState.hasBattery) {
+          batteryState.percent = nextPct;
+          batteryState.isCharging = nextChg;
+          batteryState.hasBattery = nextHas;
+          requestFrame();
         }
       }
     }
@@ -2487,6 +2642,7 @@ try {
         const val = parseFloat(res.config.animationSpeed);
         if (!isNaN(val) && val >= 0.2 && val <= 5.0) animSpeedMultiplier = val;
       }
+      requestFrame();
     }
   }).catch(() => {});
 } catch (e) {}
@@ -2494,6 +2650,7 @@ try {
 ipcRenderer.on('notifications-updated', (event, list) => {
   if (Array.isArray(list)) {
     notificationList = list.filter(n => !String(n.app || '').toLowerCase().includes('antigravity'));
+    requestFrame();
   }
 });
 ipcRenderer.on('notification-received', (event, notif) => {
@@ -2505,12 +2662,14 @@ ipcRenderer.on('notification-received', (event, notif) => {
       currentView = 'notification_banner';
       targetProgress = 1.0;
     }
+    requestFrame();
   }
 });
 try {
   ipcRenderer.invoke('get-notifications').then(list => {
     if (Array.isArray(list)) {
       notificationList = list.filter(n => !String(n.app || '').toLowerCase().includes('antigravity'));
+      requestFrame();
     }
   }).catch(() => {});
 } catch (e) {}
@@ -2525,6 +2684,7 @@ ipcRenderer.on('permission-prompt', (event, prompt) => {
   }
   currentView = 'prompt';
   targetProgress = 1.0;
+  requestFrame();
 });
 
 // -------------------------------------------------------------
@@ -2536,48 +2696,149 @@ let idleFrameTimeout = null;
 let lastSentW = -1;
 let lastSentH = -1;
 
-function isDynamicActive() {
-  if (isHovered || animProgress > 0.005 || targetProgress > 0.005) return true;
+function computeDynamicActive(s) {
+  if (!s || s.hiddenByGameMode) return false;
 
-  const targetHideNow = isShouldBeHidden() ? 1.0 : 0.0;
-  if (Math.abs(targetHideNow - hideProgress) > 0.002) return true;
+  if (Math.abs((s.targetProgress || 0) - (s.animProgress || 0)) > 0.001) return true;
+  if (Math.abs((s.targetHide || 0) - (s.hideProgress || 0)) > 0.002) return true;
+  if (Math.abs((s.targetRestW || 0) - (s.currentRestingWidth || 0)) > 0.5) return true;
+  if ((s.animProgress || 0) > 0.05 && Math.abs((s.targetExpH || 0) - (s.currentExpandedH || 0)) > 0.5) return true;
+  if (Math.abs((s.targetSongPopupProgress || 0) - (s.songPopupProgress || 0)) > 0.002) return true;
+  if (Math.abs((s.wantTint || 0) - (s.tintK || 0)) > 0.004) return true;
 
-  const targetRestW = getTargetRestingWidth();
-  if (Math.abs(targetRestW - currentRestingWidth) > 0.5) return true;
+  if ((s.animProgress || 0) > 0.15 && (s.isTabTransitioning || s.isNavPillAnimating)) return true;
+  if (s.gameModeToastFading) return true;
 
-  const targetExpH = getTargetExpandedHeightForView(currentView);
-  if (animProgress > 0.05 && Math.abs(targetExpH - currentExpandedH) > 0.5) return true;
+  if (s.activeAlarmRinging || s.stopwatchRunning) return true;
+  if (s.hasActiveTumbler) return true;
+  if (s.mediaPlaying) return true;
+  if (s.callInCall && (s.callRinging || s.callSpeaking)) return true;
+  if (s.aiPulseActive) return true;
 
-  if (songPopupProgress > 0.005 || songPopupActiveUntil > performance.now()) return true;
-
-  if (currentView === 'notification_banner' || notificationBannerUntil > performance.now()) return true;
-
-  if (timerRunning || stopwatchRunning || focusRunning) return true;
-
-  if (activeAlarmRinging) return true;
-
-  if (typeof hasActiveTumblerRoll === 'function' && hasActiveTumblerRoll()) return true;
-
-  if (mediaState && mediaState.isPlaying) return true;
-
-  if (callState && callState.inCall) return true;
-
-  const activeStatuses = ['running', 'thinking', 'waiting'];
-  if (antigravityState && activeStatuses.includes(String(antigravityState.status || '').toLowerCase())) return true;
-  if (antigravityState && Array.isArray(antigravityState.projects) && antigravityState.projects.some(p => activeStatuses.includes(String(p.status || '').toLowerCase()))) return true;
-  if (pendingPrompt !== null) return true;
-
-  if (isDraggingOver || isDraggingVolume || shelfDragCandidate) return true;
-
-  if (isInlineModalOpen) return true;
+  if (s.isDraggingOver || s.isDraggingVolume || s.shelfDragCandidate) return true;
 
   return false;
+}
+
+function getNextIdleWakeDelayMs(s) {
+  if (!s || s.hiddenByGameMode) return null;
+
+  const now = typeof s.now === 'number' ? s.now : 0;
+  const delays = [];
+
+  if ((s.notificationBannerUntil || 0) > now) {
+    delays.push(Math.max(16, s.notificationBannerUntil - now + 10));
+  }
+  if ((s.songPopupActiveUntil || 0) > now && (s.animProgress || 0) < 0.2) {
+    delays.push(Math.max(16, s.songPopupActiveUntil - now + 10));
+  }
+  if ((s.gameModeToastUntil || 0) > now) {
+    const fadeStartAt = s.gameModeToastUntil - 320;
+    delays.push(fadeStartAt > now ? Math.max(16, fadeStartAt - now) : 16);
+  }
+
+  const hideFully = Boolean(s.isTucked || (s.hideProgress || 0) >= 0.98);
+  const expanded = (s.animProgress || 0) >= 0.15;
+
+  if (!hideFully && (s.timerRunning || s.focusRunning || s.callInCall)) {
+    const dateMs = typeof s.dateMs === 'number' ? s.dateMs : 0;
+    delays.push(1000 - (dateMs % 1000) + 15);
+  } else if (hideFully && (s.timerRunning || s.focusRunning)) {
+    const remSec = s.timerRunning ? (s.timerRemainingSec || 0) : (s.focusRemainingSec || 0);
+    if (remSec > 0) delays.push(Math.max(50, Math.ceil(remSec * 1000) + 20));
+  }
+
+  if (!hideFully && ((expanded && s.currentView === 'home') || (s.showSeconds && !s.mediaPlaying))) {
+    const dateMs = typeof s.dateMs === 'number' ? s.dateMs : 0;
+    delays.push(1000 - (dateMs % 1000) + 15);
+  } else if (!hideFully || s.hasEnabledAlarms) {
+    const curSec = typeof s.dateSec === 'number' ? s.dateSec : 0;
+    const curMs = typeof s.dateMs === 'number' ? s.dateMs : 0;
+    const msToNextMin = (60 - curSec) * 1000 - curMs + 25;
+    delays.push(Math.max(25, msToNextMin));
+  }
+
+  if (delays.length === 0) return null;
+  return Math.max(16, Math.min(...delays));
+}
+
+function isHiddenByGameMode() {
+  return Boolean(gameModeEnabled && isGameModeFullscreen && !gameModeOpenedAnyway && !pendingPrompt);
+}
+
+function getDynamicStateSnapshot(nowMs) {
+  const now = typeof nowMs === 'number' ? nowMs : performance.now();
+  const d = new Date();
+  const hasMediaTrack = Boolean(mediaState && mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing');
+  const wantTint = (albumColorGradientEnabled && hasMediaTrack && hideProgress < 0.5) ? 1.0 : 0.0;
+  const tabDuration = Math.max(120, 220 / (animSpeedMultiplier || 1.0));
+  const isTabTransitioning = Boolean(tabTransitionStartTime > 0 && (now - tabTransitionStartTime) < tabDuration && previousView && previousView !== currentView);
+  const parts = callState && Array.isArray(callState.participants) ? callState.participants : [];
+  const callSpeaking = Boolean(callState && callState.inCall && parts.some(p => p && p.isSpeaking));
+  const toastRemain = gameModeToastUntil > now ? (gameModeToastUntil - now) : 0;
+  const gameModeToastFading = Boolean(toastRemain > 0 && toastRemain <= 340);
+  const activeProjs = typeof getActiveProjects === 'function' ? getActiveProjects() : [];
+  const hasBusyAi = Boolean(
+    (antigravityState && ['running', 'thinking'].includes(String(antigravityState.status || '').toLowerCase())) ||
+    activeProjs.some(pr => ['running', 'thinking'].includes(String(pr.status || '').toLowerCase()))
+  );
+
+  return {
+    now,
+    dateSec: d.getSeconds(),
+    dateMs: d.getMilliseconds(),
+    hiddenByGameMode: isHiddenByGameMode(),
+    targetProgress,
+    animProgress,
+    targetHide: isShouldBeHidden() ? 1.0 : 0.0,
+    hideProgress,
+    isTucked,
+    targetRestW: getTargetRestingWidth(),
+    currentRestingWidth,
+    targetExpH: getTargetExpandedHeightForView(currentView),
+    currentExpandedH,
+    targetSongPopupProgress: (songPopupActiveUntil > now && animProgress < 0.2) ? 1.0 : 0.0,
+    songPopupProgress,
+    songPopupActiveUntil,
+    notificationBannerUntil,
+    gameModeToastUntil,
+    gameModeToastFading,
+    wantTint,
+    tintK,
+    currentView,
+    isTabTransitioning,
+    isNavPillAnimating,
+    activeAlarmRinging: Boolean(activeAlarmRinging),
+    stopwatchRunning: Boolean(stopwatchRunning),
+    timerRunning: Boolean(timerRunning),
+    timerRemainingSec,
+    focusRunning: Boolean(focusRunning),
+    focusRemainingSec,
+    showSeconds: Boolean(showSeconds),
+    hasEnabledAlarms: Boolean(alarmsList && alarmsList.some(a => a && a.enabled)),
+    hasActiveTumbler: Boolean(typeof hasActiveTumblerRoll === 'function' && hasActiveTumblerRoll()),
+    mediaPlaying: Boolean(mediaState && mediaState.isPlaying),
+    callInCall: Boolean(callState && callState.inCall),
+    callRinging: Boolean(callState && callState.inCall && callState.status === 'ringing'),
+    callSpeaking,
+    aiPulseActive: Boolean(hasBusyAi && aiPulseUntil > now),
+    isDraggingOver: Boolean(isDraggingOver),
+    isDraggingVolume: Boolean(isDraggingVolume),
+    shelfDragCandidate: Boolean(shelfDragCandidate)
+  };
+}
+
+function isDynamicActive() {
+  return computeDynamicActive(getDynamicStateSnapshot(performance.now()));
 }
 
 function requestFrame() {
   if (idleFrameTimeout) {
     clearTimeout(idleFrameTimeout);
     idleFrameTimeout = null;
+  }
+  if (isHiddenByGameMode()) {
+    return;
   }
   if (!animFrameRequested) {
     animFrameRequested = true;
@@ -2591,13 +2852,14 @@ function animate(now) {
     clearTimeout(idleFrameTimeout);
     idleFrameTimeout = null;
   }
-  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  const rawDt = Math.max(0, (now - lastTime) / 1000);
+  const dt = Math.min(rawDt, 0.05);
   lastTime = now;
   currentDt = dt;
 
-  // Clock / Timer / Stopwatch / Focus Real-Time Ticking
+  // Clock / Timer / Stopwatch / Focus Real-Time Ticking (uncapped elapsed time)
   if (timerRunning) {
-    timerRemainingSec = Math.max(0, timerRemainingSec - dt);
+    timerRemainingSec = Math.max(0, timerRemainingSec - rawDt);
     if (timerRemainingSec <= 0) {
       timerRemainingSec = 0;
       timerRunning = false;
@@ -2605,10 +2867,10 @@ function animate(now) {
     }
   }
   if (stopwatchRunning) {
-    stopwatchElapsedMs += dt * 1000;
+    stopwatchElapsedMs += rawDt * 1000;
   }
   if (focusRunning) {
-    focusRemainingSec = Math.max(0, focusRemainingSec - dt);
+    focusRemainingSec = Math.max(0, focusRemainingSec - rawDt);
     if (focusRemainingSec <= 0) {
       if (focusMode === 'work') {
         focusSessionsCompleted++;
@@ -2628,7 +2890,7 @@ function animate(now) {
   const curSecs = currentDate.getSeconds();
   const todayKey = currentDate.toISOString().slice(0, 10);
 
-  if (curSecs === 0 && alarmsList && alarmsList.length > 0 && !activeAlarmRinging) {
+  if (curSecs <= 2 && alarmsList && alarmsList.length > 0 && !activeAlarmRinging) {
     for (let i = 0; i < alarmsList.length; i++) {
       const al = alarmsList[i];
       if (!al.enabled) continue;
@@ -2643,9 +2905,18 @@ function animate(now) {
     }
   }
 
+  if (isHiddenByGameMode()) {
+    try { render(); } catch (err) {}
+    return;
+  }
+
   // Fluid Spring / Lerp towards targetProgress
   const speed = (targetProgress > animProgress ? 8.5 : 9.5) * animSpeedMultiplier;
-  animProgress += (targetProgress - animProgress) * Math.min(1.0, dt * speed);
+  if (Math.abs(targetProgress - animProgress) <= 0.001) {
+    animProgress = targetProgress;
+  } else {
+    animProgress += (targetProgress - animProgress) * (1 - Math.exp(-speed * dt));
+  }
 
   // Critically damped peek-hide / reveal animation (~170ms fast hide into lump, ~220ms reveal)
   const wantHiddenNow = isShouldBeHidden();
@@ -2669,7 +2940,11 @@ function animate(now) {
   // Smooth Dynamic Spring transition for resting pill width
   const targetRestW = getTargetRestingWidth();
   const restSpeed = (targetRestW > currentRestingWidth ? 8.5 : 7.0) * animSpeedMultiplier;
-  currentRestingWidth += (targetRestW - currentRestingWidth) * Math.min(1.0, dt * restSpeed);
+  if (Math.abs(targetRestW - currentRestingWidth) <= 0.5) {
+    currentRestingWidth = targetRestW;
+  } else {
+    currentRestingWidth += (targetRestW - currentRestingWidth) * (1 - Math.exp(-restSpeed * dt));
+  }
 
   // Song Announcement Downward Popup Spring & Hover Tracking
   const isHoveredOverPopup = (songPopupProgress > 0.05 || songPopupActiveUntil > now) && mouseX >= 0 && mouseY >= 0 && pointInRect(mouseX, mouseY, (window.innerWidth - getTargetWidth(animProgress)) / 2 - 8, (displayMode === 'notch' ? 0 : 8) - 4, getTargetWidth(animProgress) + 16, getTargetHeight(animProgress) + 16);
@@ -2679,7 +2954,11 @@ function animate(now) {
   const isSongPopupActive = songPopupActiveUntil > now && animProgress < 0.2;
   const targetSongPopupProgress = isSongPopupActive ? 1.0 : 0.0;
   const songSpringSpeed = (targetSongPopupProgress > songPopupProgress ? 9.5 : 7.0) * animSpeedMultiplier;
-  songPopupProgress += (targetSongPopupProgress - songPopupProgress) * Math.min(1.0, dt * songSpringSpeed);
+  if (Math.abs(targetSongPopupProgress - songPopupProgress) <= 0.002) {
+    songPopupProgress = targetSongPopupProgress;
+  } else {
+    songPopupProgress += (targetSongPopupProgress - songPopupProgress) * (1 - Math.exp(-songSpringSpeed * dt));
+  }
 
   // Auto-collapse notification banner after 4s unless hovered
   if (currentView === 'notification_banner' && notificationBannerUntil > 0 && now > notificationBannerUntil) {
@@ -2687,12 +2966,15 @@ function animate(now) {
     const curH = getTargetHeight(animProgress);
     const curX = (window.innerWidth - curW) / 2;
     const curY = displayMode === 'notch' ? 0 : 8;
-    const isHovered = mouseX >= 0 && mouseY >= 0 && pointInRect(mouseX, mouseY, curX - 4, curY - 4, curW + 8, curH + 8);
-    if (!isHovered) {
+    const isBannerHovered = mouseX >= 0 && mouseY >= 0 && pointInRect(mouseX, mouseY, curX - 4, curY - 4, curW + 8, curH + 8);
+    if (!isBannerHovered) {
       notificationBannerUntil = 0;
       targetProgress = 0.0;
       currentView = 'home';
       activeNotification = null;
+    } else {
+      // Check again shortly if user stops hovering notification banner
+      notificationBannerUntil = now + 600;
     }
   }
 
@@ -2724,11 +3006,14 @@ function animate(now) {
     console.error('Render error:', err);
   }
 
-  if (isDynamicActive()) {
+  const snap = getDynamicStateSnapshot(now);
+  if (computeDynamicActive(snap)) {
     requestFrame();
   } else {
-    // Throttle down to 2 FPS when resting and idle
-    idleFrameTimeout = setTimeout(requestFrame, 500);
+    const wakeDelay = getNextIdleWakeDelayMs(snap);
+    if (wakeDelay !== null) {
+      idleFrameTimeout = setTimeout(requestFrame, wakeDelay);
+    }
   }
 }
 
@@ -2772,7 +3057,7 @@ window.addEventListener('wheel', (e) => {
 
 requestFrame();
 
-['mousemove', 'mouseenter', 'mouseleave', 'mousedown', 'mouseup', 'keydown', 'keyup', 'focus', 'wheel'].forEach(evt => {
+['mouseenter', 'mouseleave', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'focus', 'wheel'].forEach(evt => {
   window.addEventListener(evt, requestFrame, { passive: true });
 });
 
@@ -2991,6 +3276,121 @@ function drawCapsuleRim(c, x, y, w, h, radius, isNotch = false, topFillet = 12) 
   }
 }
 
+const shadowSpriteCache = new Map();
+
+function traceShadowShapePath(c, sx, sy, sw, sh, radius, topRadius, bottomRadius, useBezelLump, topFillet) {
+  if (useBezelLump) {
+    buildCapsulePath(c, sx, sy, sw, sh, bottomRadius !== undefined ? bottomRadius : radius, true, topFillet);
+  } else if (Array.isArray(radius)) {
+    c.beginPath();
+    c.roundRect(sx, sy, sw, sh, radius);
+  } else if (topRadius !== undefined && bottomRadius !== undefined) {
+    c.beginPath();
+    c.roundRect(sx, sy, sw, sh, [topRadius, topRadius, bottomRadius, bottomRadius]);
+  } else {
+    c.beginPath();
+    c.roundRect(sx, sy, sw, sh, radius);
+  }
+}
+
+function drawBlurredCapsuleShadow(targetCtx, opts) {
+  const {
+    x,
+    y,
+    w,
+    h,
+    radius = 16,
+    topRadius,
+    bottomRadius,
+    topFillet = 12,
+    useBezelLump = false,
+    blur = 14,
+    offsetY = 4,
+    color = 'rgba(0, 0, 0, 0.5)',
+    preferSprite = true
+  } = opts;
+  if (w <= 0 || h <= 0) return;
+
+  if (!preferSprite || typeof document === 'undefined' || !document.createElement) {
+    // Zero-blur 2-layer soft silhouette during 144Hz morphs (zero per-frame canvas alloc or Skia blur)
+    const layers = [
+      { padX: blur * 0.52, padY: blur * 0.45, dy: offsetY * 0.9, alpha: 0.14 },
+      { padX: blur * 0.24, padY: blur * 0.22, dy: offsetY * 0.55, alpha: 0.28 }
+    ];
+    for (let i = 0; i < layers.length; i++) {
+      const l = layers[i];
+      const lx = x - l.padX;
+      const ly = useBezelLump ? 0 : (y - l.padY * 0.35 + l.dy);
+      const lw = w + l.padX * 2;
+      const lh = useBezelLump ? (h + l.padY + l.dy) : (h + l.padY * 1.15);
+      targetCtx.save();
+      traceShadowShapePath(
+        targetCtx,
+        lx,
+        ly,
+        lw,
+        lh,
+        Array.isArray(radius) ? radius.map(r => r + l.padX * 0.5) : (radius + l.padX * 0.5),
+        topRadius !== undefined ? topRadius + l.padX * 0.5 : undefined,
+        bottomRadius !== undefined ? bottomRadius + l.padX * 0.5 : undefined,
+        useBezelLump,
+        topFillet
+      );
+      targetCtx.fillStyle = color;
+      targetCtx.globalAlpha *= l.alpha;
+      targetCtx.fill();
+      targetCtx.restore();
+    }
+    return;
+  }
+
+  const rw = Math.round(w);
+  const rh = Math.round(h);
+  const rKey = Array.isArray(radius) ? radius.map(v => Math.round(v)).join(',') : Math.round(radius);
+  const key = `${useBezelLump ? 1 : 0}:${rw}:${rh}:${rKey}:${Math.round(topRadius || 0)}:${Math.round(bottomRadius || 0)}:${Math.round(topFillet)}:${Math.round(blur)}:${Math.round(offsetY)}:${color}`;
+
+  let entry = shadowSpriteCache.get(key);
+  if (!entry) {
+    const blurPad = Math.ceil(blur * 2 + 6);
+    const earPad = useBezelLump ? Math.ceil(topFillet + 2) : 0;
+    const padX = blurPad + earPad;
+    const padTop = useBezelLump ? 0 : blurPad;
+    const padBottom = blurPad + Math.ceil(Math.max(0, offsetY));
+    const cw = Math.max(1, rw + padX * 2);
+    const ch = Math.max(1, rh + padTop + padBottom);
+    const oc = document.createElement('canvas');
+    oc.width = cw;
+    oc.height = ch;
+    const octx = oc.getContext('2d');
+    if (octx) {
+      octx.save();
+      octx.shadowColor = color;
+      octx.shadowBlur = blur;
+      octx.shadowOffsetY = offsetY;
+      traceShadowShapePath(octx, padX, padTop, rw, rh, radius, topRadius, bottomRadius, useBezelLump, topFillet);
+      octx.fillStyle = '#000000';
+      octx.fill();
+      octx.restore();
+
+      // Cut out exact inner shape so semi-transparent glass doesn't composite black underfill
+      octx.save();
+      octx.globalCompositeOperation = 'destination-out';
+      traceShadowShapePath(octx, padX, padTop, rw, rh, radius, topRadius, bottomRadius, useBezelLump, topFillet);
+      octx.fillStyle = '#000000';
+      octx.fill();
+      octx.restore();
+    }
+    if (shadowSpriteCache.size >= 24) {
+      const oldestKey = shadowSpriteCache.keys().next().value;
+      shadowSpriteCache.delete(oldestKey);
+    }
+    entry = { canvas: oc, padX, padTop };
+    shadowSpriteCache.set(key, entry);
+  }
+
+  targetCtx.drawImage(entry.canvas, x - entry.padX, useBezelLump ? 0 : (y - entry.padTop));
+}
+
 function render() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   interactiveButtons = [];
@@ -3053,24 +3453,53 @@ function render() {
     ctx.save();
     ctx.globalAlpha = unifiedAlpha;
 
-    // 1. Ambient Drop Shadow (illuminated when music is playing with album gradient, quiet on top lump)
+    // 1. Ambient Drop Shadow (cached offscreen blur when settled, zero-blur silhouette when morphing)
     const hasMediaTrack = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
     const wantTint = (albumColorGradientEnabled && hasMediaTrack && hideProgress < 0.5) ? 1.0 : 0.0;
-    tintK += (wantTint - tintK) * 0.16;
-
-    if (hideProgress > 0.55) {
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-      ctx.shadowBlur = 8;
-      ctx.shadowOffsetY = 2;
-    } else if (tintK > 0.05 && albumAccentColor) {
-      ctx.shadowColor = colorWithAlpha(albumAccentColor, 0.45 * tintK);
-      ctx.shadowBlur = (18 + 14 * p) + (tintK * 12);
-      ctx.shadowOffsetY = 6 + 6 * p;
+    const tintStep = 1 - Math.exp(-10.0 * currentDt);
+    if (Math.abs(wantTint - tintK) <= 0.004) {
+      tintK = wantTint;
     } else {
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-      ctx.shadowBlur = 18 + 14 * p;
-      ctx.shadowOffsetY = 6 + 6 * p;
+      tintK += (wantTint - tintK) * tintStep;
     }
+
+    let shadowCol = 'rgba(0, 0, 0, 0.55)';
+    let shadowBlurVal = 18 + 14 * p;
+    let shadowOffY = 6 + 6 * p;
+    if (hideProgress > 0.55) {
+      shadowCol = 'rgba(0, 0, 0, 0.45)';
+      shadowBlurVal = 8;
+      shadowOffY = 2;
+    } else if (tintK > 0.05 && albumAccentColor) {
+      shadowCol = colorWithAlpha(albumAccentColor, 0.45 * tintK);
+      shadowBlurVal = (18 + 14 * p) + (tintK * 12);
+      shadowOffY = 6 + 6 * p;
+    }
+
+    const wantSongPop = (songPopupActiveUntil > performance.now() && animProgress < 0.2) ? 1.0 : 0.0;
+    const isCapsuleMorphing =
+      Math.abs(targetProgress - animProgress) > 0.005 ||
+      Math.abs((isShouldBeHidden() ? 1.0 : 0.0) - hideProgress) > 0.005 ||
+      Math.abs(getTargetRestingWidth() - currentRestingWidth) > 1.0 ||
+      (animProgress > 0.05 && Math.abs(getTargetExpandedHeightForView(currentView) - currentExpandedH) > 1.0) ||
+      Math.abs(wantSongPop - songPopupProgress) > 0.005 ||
+      Math.abs(wantTint - tintK) > 0.01;
+
+    drawBlurredCapsuleShadow(ctx, {
+      x,
+      y,
+      w,
+      h,
+      radius,
+      topRadius: hideT.topRadius,
+      bottomRadius: hideT.bottomRadius,
+      topFillet,
+      useBezelLump,
+      blur: shadowBlurVal,
+      offsetY: shadowOffY,
+      color: shadowCol,
+      preferSprite: !isCapsuleMorphing
+    });
 
     // 2. Liquid Glass OLED Black Surface (Always true OLED dark grey/black)
     const grad = ctx.createLinearGradient(x, y, x, y + h);
@@ -3157,9 +3586,18 @@ function render() {
 
     ctx.save();
     ctx.globalAlpha = toastAlpha;
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    ctx.shadowBlur = 10;
-    ctx.shadowOffsetY = 3;
+    drawBlurredCapsuleShadow(ctx, {
+      x: toastX,
+      y: toastY,
+      w: toastW,
+      h: toastH,
+      radius: 14,
+      useBezelLump: false,
+      blur: 10,
+      offsetY: 3,
+      color: 'rgba(0, 0, 0, 0.45)',
+      preferSprite: toastAlpha >= 0.99
+    });
 
     ctx.beginPath();
     ctx.roundRect(toastX, toastY, toastW, toastH, 14);
@@ -3286,11 +3724,20 @@ function renderSongAnnouncementPopup(x, y, w, h, popAlpha) {
   const artY = y + 42;
   const artR = 10;
 
-  ctx.save();
-  ctx.shadowColor = colorWithAlpha(albumAccentColor, 0.45 * popAlpha);
-  ctx.shadowBlur = 14;
-  ctx.shadowOffsetY = 4;
+  drawBlurredCapsuleShadow(ctx, {
+    x: artX,
+    y: artY,
+    w: artSize,
+    h: artSize,
+    radius: artR,
+    useBezelLump: false,
+    blur: 14,
+    offsetY: 4,
+    color: colorWithAlpha(albumAccentColor, 0.45 * popAlpha),
+    preferSprite: popAlpha >= 0.99
+  });
 
+  ctx.save();
   ctx.beginPath();
   ctx.roundRect(artX, artY, artSize, artSize, artR);
   ctx.clip();
@@ -3459,8 +3906,6 @@ function drawAnimatedRestingLyric(textStartX, cy, maxTextW, roll, alpha) {
         wipeGrad.addColorStop(softEdge, 'rgba(255, 255, 255, 0.25)');
         wipeGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.08)');
         ctx.fillStyle = wipeGrad;
-        ctx.shadowColor = colorWithAlpha(albumAccentColor || '#38bdf8', 0.55 * (1 - subP * 0.4));
-        ctx.shadowBlur = 6 * Math.sin(subP * Math.PI);
       } else {
         ctx.fillStyle = '#ffffff';
       }
@@ -3613,8 +4058,11 @@ function drawParticipantAvatarWithBadges(part, idx, ax, ay, size) {
     const lineY = ay + size + (size >= 30 ? 3 : 1.5);
 
     ctx.save();
-    ctx.shadowColor = '#22c55e';
-    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.roundRect(lineX - 1.5, lineY - 1, lineW + 3, lineH + 2, (lineH + 2) / 2);
+    ctx.fillStyle = 'rgba(34, 197, 94, 0.28)';
+    ctx.fill();
+
     ctx.beginPath();
     ctx.roundRect(lineX, lineY, lineW, lineH, lineH / 2);
     ctx.fillStyle = '#22c55e';
@@ -3663,8 +4111,6 @@ function renderOrangeCallDot(dx, dy, isRinging, isSpeaking) {
   ctx.fillStyle = `rgba(249, 115, 22, ${0.38 * pulseFactor})`;
   ctx.fill();
 
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 8;
   ctx.beginPath();
   ctx.arc(dx, dy, 4, 0, Math.PI * 2);
   ctx.fillStyle = color;
@@ -3677,9 +4123,18 @@ function renderRightCallCapsule(cx, cy, cw, ch) {
 
   // 1. Detached OLED Liquid Glass Capsule Background
   ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-  ctx.shadowBlur = 14;
-  ctx.shadowOffsetY = 4;
+  drawBlurredCapsuleShadow(ctx, {
+    x: cx,
+    y: cy,
+    w: cw,
+    h: ch,
+    radius: pillRadius,
+    useBezelLump: false,
+    blur: 14,
+    offsetY: 4,
+    color: 'rgba(0, 0, 0, 0.45)',
+    preferSprite: true
+  });
   ctx.beginPath();
   ctx.roundRect(cx, cy, cw, ch, pillRadius);
   const callGrad = ctx.createLinearGradient(cx, cy, cx, cy + ch);
@@ -3894,9 +4349,18 @@ function computeSideIslandsLayout({ centerX, centerW, hasTimer, timerW, hasAI, a
 
 function drawDetachedPillSurface(px, py, pw, ph, radius, borderColor) {
   ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-  ctx.shadowBlur = 14;
-  ctx.shadowOffsetY = 4;
+  drawBlurredCapsuleShadow(ctx, {
+    x: px,
+    y: py,
+    w: pw,
+    h: ph,
+    radius,
+    useBezelLump: false,
+    blur: 14,
+    offsetY: 4,
+    color: 'rgba(0, 0, 0, 0.55)',
+    preferSprite: true
+  });
 
   ctx.beginPath();
   ctx.roundRect(px, py, pw, ph, radius);
@@ -3907,7 +4371,6 @@ function drawDetachedPillSurface(px, py, pw, ph, radius, borderColor) {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  ctx.shadowColor = 'transparent';
   ctx.beginPath();
   ctx.roundRect(px, py, pw, ph, radius);
   ctx.lineWidth = 1;
@@ -4142,13 +4605,20 @@ function renderTrafficLightDot(dx, dy, status) {
   }
 
   ctx.save();
-  if (pulse) {
-    const pulseFactor = 0.5 + 0.5 * Math.sin(Date.now() / 180);
+  if (pulse && aiPulseUntil > performance.now()) {
+    const pulseFactor = 0.5 + 0.5 * Math.sin(performance.now() / 140);
     ctx.beginPath();
     ctx.arc(dx, dy, 5 + pulseFactor * 2.5, 0, Math.PI * 2);
     ctx.fillStyle = color === '#22c55e'
       ? `rgba(34, 197, 94, ${0.35 * pulseFactor})`
       : `rgba(56, 189, 248, ${0.35 * pulseFactor})`;
+    ctx.fill();
+  } else if (pulse) {
+    ctx.beginPath();
+    ctx.arc(dx, dy, 6.2, 0, Math.PI * 2);
+    ctx.fillStyle = color === '#22c55e'
+      ? 'rgba(34, 197, 94, 0.22)'
+      : 'rgba(56, 189, 248, 0.22)';
     ctx.fill();
   }
 
@@ -4207,6 +4677,9 @@ function renderExpandedView(x, y, w, h, alpha) {
   const tabDuration = Math.max(120, 220 / (animSpeedMultiplier || 1.0));
   const elapsed = now - tabTransitionStartTime;
   const progress = tabTransitionStartTime > 0 ? Math.min(1.0, elapsed / tabDuration) : 1.0;
+  if (tabTransitionStartTime > 0 && progress >= 1.0) {
+    tabTransitionStartTime = 0;
+  }
   const isTransitioning = progress < 1.0 && previousView && previousView !== currentView;
 
   if (isTransitioning) {
@@ -4601,6 +5074,9 @@ function renderTopNav(x, y, w) {
     const step = computeSlidingPillStep(navIndicatorX, navIndicatorW, activePillX, activePillW, currentDt, animSpeedMultiplier);
     navIndicatorX = step.x;
     navIndicatorW = step.w;
+    isNavPillAnimating = !step.isSettled;
+  } else {
+    isNavPillAnimating = false;
   }
 
   // 1. Inactive pill base backgrounds
@@ -4616,13 +5092,16 @@ function renderTopNav(x, y, w) {
   if (navIndicatorX !== null && navIndicatorW !== null) {
     ctx.save();
     ctx.beginPath();
+    ctx.roundRect(navIndicatorX - 1.5, topY - 1, navIndicatorW + 3, pillH + 2, 12);
+    ctx.fillStyle = 'rgba(37, 99, 235, 0.24)';
+    ctx.fill();
+
+    ctx.beginPath();
     ctx.roundRect(navIndicatorX, topY, navIndicatorW, pillH, 11);
     const blueGrad = ctx.createLinearGradient(navIndicatorX, topY, navIndicatorX, topY + pillH);
     blueGrad.addColorStop(0, '#3b82f6');
     blueGrad.addColorStop(1, '#1d4ed8');
     ctx.fillStyle = blueGrad;
-    ctx.shadowColor = 'rgba(37, 99, 235, 0.55)';
-    ctx.shadowBlur = 8;
     ctx.fill();
     ctx.restore();
   }
@@ -5551,8 +6030,11 @@ function renderClockTabView(x, y, w, h) {
 
       const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 150);
       ctx.save();
-      ctx.shadowColor = `rgba(239, 68, 68, ${0.4 + 0.3 * pulse})`;
-      ctx.shadowBlur = 18;
+      ctx.beginPath();
+      ctx.roundRect(bannerX - 3, bannerY - 3, bannerW + 6, bannerH + 6, 15);
+      ctx.fillStyle = `rgba(239, 68, 68, ${(0.12 + 0.14 * pulse).toFixed(3)})`;
+      ctx.fill();
+
       ctx.beginPath();
       ctx.roundRect(bannerX, bannerY, bannerW, bannerH, 12);
       const ringGrad = ctx.createLinearGradient(bannerX, bannerY, bannerX, bannerY + bannerH);
@@ -6399,13 +6881,6 @@ function renderAgentView(x, y, w, h) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
       }
       ctx.fill();
-
-      if (prog.segments[i]) {
-        ctx.shadowColor = 'rgba(34, 197, 94, 0.4)';
-        ctx.shadowBlur = 4;
-        ctx.fill();
-        ctx.shadowBlur = 0;
-      }
     }
 
     // Segment Labels under the 4 lines
@@ -6597,10 +7072,20 @@ function renderMediaView(x, y, w, h) {
   const artX = contentX;
   const artY = topY;
 
+  drawBlurredCapsuleShadow(ctx, {
+    x: artX,
+    y: artY,
+    w: artSize,
+    h: artSize,
+    radius: 10,
+    useBezelLump: false,
+    blur: 12,
+    offsetY: 4,
+    color: 'rgba(0, 0, 0, 0.5)',
+    preferSprite: true
+  });
+
   ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-  ctx.shadowBlur = 12;
-  ctx.shadowOffsetY = 4;
   ctx.beginPath();
   ctx.roundRect(artX, artY, artSize, artSize, 10);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
@@ -6727,19 +7212,14 @@ function renderMediaView(x, y, w, h) {
 
           if (w.isSung) {
             ctx.fillStyle = '#ffffff';
-            ctx.shadowBlur = 0;
             ctx.fillText(w.text, curX, midY + push);
           } else if (w.isActive) {
             // Smoothly glowing transition from dimmed to bright
             const alpha = 0.38 + 0.62 * w.progress;
             ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
-            ctx.shadowColor = `rgba(255, 255, 255, ${(0.42 * w.progress).toFixed(2)})`;
-            ctx.shadowBlur = 5 * w.progress;
             ctx.fillText(w.text, curX, midY + push);
-            ctx.shadowBlur = 0;
           } else {
             ctx.fillStyle = 'rgba(255, 255, 255, 0.32)';
-            ctx.shadowBlur = 0;
             ctx.fillText(w.text, curX, midY + push);
           }
 
@@ -6912,9 +7392,10 @@ function renderMediaView(x, y, w, h) {
     ctx.beginPath();
     ctx.arc(volCenterX, volFillY, 5.5, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    ctx.shadowBlur = 4;
     ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.stroke();
   }
   ctx.restore();
 
@@ -7775,6 +8256,8 @@ if (typeof module !== 'undefined' && module.exports) {
     getNextPersonalizedGreeting,
     buildCapsulePath,
     drawCapsuleRim,
+    computeDynamicActive,
+    getNextIdleWakeDelayMs,
     isDynamicActive,
     computeSideIslandsLayout,
     formatClockTime,

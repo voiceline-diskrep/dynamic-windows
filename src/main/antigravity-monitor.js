@@ -48,10 +48,12 @@ class AntigravityMonitor extends EventEmitter {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.paused) return;
     const hasActive = Array.from(this.projects.values()).some(p => p.status === 'running' || p.status === 'RUNNING');
     const delay = typeof delayMs === 'number' ? delayMs : (hasActive ? 400 : (this.pollInterval || 1500));
     this.timer = setTimeout(() => {
       this.timer = null;
+      if (this.paused) return;
       this.poll();
       this.scheduleNext();
     }, delay);
@@ -59,12 +61,29 @@ class AntigravityMonitor extends EventEmitter {
   }
 
   start() {
+    this.paused = false;
     if (this.timer) return;
     this.poll();
     this.scheduleNext();
   }
 
+  setPaused(paused) {
+    const next = Boolean(paused);
+    if (this.paused === next) return;
+    this.paused = next;
+    if (next) {
+      if (this.timer) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
+    } else if (!this.timer) {
+      this.poll();
+      this.scheduleNext();
+    }
+  }
+
   stop() {
+    this.paused = true;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;

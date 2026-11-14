@@ -58,11 +58,32 @@ class NotificationMonitor extends EventEmitter {
   }
 
   start() {
+    this.paused = false;
     this.poll();
-    this.pollTimer = setInterval(() => this.poll(), this.pollIntervalMs);
+    if (!this.pollTimer) {
+      this.pollTimer = setInterval(() => this.poll(), this.pollIntervalMs);
+      if (this.pollTimer.unref) this.pollTimer.unref();
+    }
+  }
+
+  setPaused(paused) {
+    const next = Boolean(paused);
+    if (this.paused === next) return;
+    this.paused = next;
+    if (next) {
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = null;
+      }
+    } else if (!this.pollTimer) {
+      this.poll();
+      this.pollTimer = setInterval(() => this.poll(), this.pollIntervalMs);
+      if (this.pollTimer.unref) this.pollTimer.unref();
+    }
   }
 
   stop() {
+    this.paused = true;
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -70,7 +91,7 @@ class NotificationMonitor extends EventEmitter {
   }
 
   poll() {
-    if (this.isPolling || process.platform !== 'win32') return;
+    if (this.paused || this.isPolling || process.platform !== 'win32') return;
     this.isPolling = true;
 
     try {

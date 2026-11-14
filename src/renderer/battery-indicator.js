@@ -42,7 +42,14 @@ function drawBatteryCircle(ctx, cx, cy, radius, percent, isCharging, alpha = 1.0
 
   const color = getBatteryColor(percent);
 
-  // 1. Subtle dark glass base ring
+  // 1. Subtle dark glass base ring + soft glow halo (zero shadowBlur overhead)
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius + (isCharging ? 2.8 : 1.8), 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha * (isCharging ? 0.28 : 0.18);
+  ctx.fill();
+  ctx.globalAlpha = alpha;
+
   ctx.beginPath();
   ctx.arc(cx, cy, radius + 1.2, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
@@ -52,13 +59,10 @@ function drawBatteryCircle(ctx, cx, cy, radius, percent, isCharging, alpha = 1.0
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fillStyle = color;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = isCharging ? 6 : 3;
   ctx.fill();
 
   // 3. Crisp inner detail / charging glyph
   if (isCharging) {
-    ctx.shadowBlur = 0;
     ctx.fillStyle = '#ffffff';
     ctx.font = `${Math.round(radius * 1.5)}px "Segoe UI Symbol", sans-serif`;
     ctx.textAlign = 'center';
