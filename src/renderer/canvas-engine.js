@@ -1484,8 +1484,8 @@ canvas.addEventListener('mousemove', (e) => {
   const hasCallPill = (curP < 0.28 && hasActiveCall());
   const callPillSpan = hasCallPill ? (getCallCapsuleWidth() + 12) : 0;
 
-  const leftSpan = timerPillSpan;
-  const rightSpan = aiPillSpan + callPillSpan;
+  const leftSpan = aiPillSpan;
+  const rightSpan = timerPillSpan + callPillSpan;
   const notchEarMargin = isNotch ? 18 : 8;
   const isOverIsland = pointInRect(mouseX, mouseY, curX - notchEarMargin - leftSpan, Math.max(0, curY - 4), curW + notchEarMargin * 2 + leftSpan + rightSpan, curH + 16);
 
@@ -1501,13 +1501,13 @@ canvas.addEventListener('mousemove', (e) => {
       isHovered = true;
       if (curP < 0.25) {
         let nextV = 'home';
-        if (hasTimerPill && mouseX < curX) {
+        if (hasAIPill && mouseX < curX) {
+          nextV = 'agent';
+        } else if (hasTimerPill && mouseX >= curX + curW && (!hasCallPill || mouseX < curX + curW + timerPillSpan)) {
           nextV = 'clock';
           if (focusRunning) clockSubMode = 'focus';
           else if (stopwatchRunning) clockSubMode = 'stopwatch';
           else if (timerRunning) clockSubMode = 'timer';
-        } else if (hasAIPill && mouseX >= curX + curW && (!hasCallPill || mouseX < curX + curW + aiPillSpan)) {
-          nextV = 'agent';
         } else if (hasCallPill && mouseX >= curX + curW) {
           nextV = 'call';
         } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
@@ -1715,13 +1715,13 @@ canvas.addEventListener('click', (e) => {
     const hasTimerPill = (timerRunning || focusRunning || stopwatchRunning);
 
     let nextV = 'home';
-    if (hasTimerPill && cx < curX) {
+    if (hasAIPill && cx < curX) {
+      nextV = 'agent';
+    } else if (hasTimerPill && cx >= curX + curW && (!hasActiveCall() || cx < curX + curW + 124)) {
       nextV = 'clock';
       if (focusRunning) clockSubMode = 'focus';
       else if (stopwatchRunning) clockSubMode = 'stopwatch';
       else if (timerRunning) clockSubMode = 'timer';
-    } else if (hasAIPill && cx >= curX + curW && (!hasActiveCall() || cx < curX + curW + 168)) {
-      nextV = 'agent';
     } else if (hasActiveCall() && cx >= curX + curW) {
       nextV = 'call';
     } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
@@ -3691,12 +3691,12 @@ function renderRestingPill(x, y, w, h, alpha) {
 
 function computeSideIslandsLayout({ centerX, centerW, hasTimer, timerW, hasAI, aiW, hasCall, callW, gap = 8 }) {
   const safeGap = Math.max(4, Number(gap) || 8);
-  const leftTimerX = hasTimer ? Math.round(centerX - timerW - safeGap) : null;
-  const rightAiX = hasAI ? Math.round(centerX + centerW + safeGap) : null;
+  const leftAiX = hasAI ? Math.round(centerX - aiW - safeGap) : null;
+  const rightTimerX = hasTimer ? Math.round(centerX + centerW + safeGap) : null;
   const rightCallX = hasCall
-    ? Math.round(centerX + centerW + (hasAI ? (aiW + safeGap * 2) : safeGap))
+    ? Math.round(centerX + centerW + (hasTimer ? (timerW + safeGap * 2) : safeGap))
     : null;
-  return { leftTimerX, rightAiX, rightCallX };
+  return { leftAiX, rightTimerX, rightCallX };
 }
 
 function drawDetachedPillSurface(px, py, pw, ph, radius, borderColor) {
@@ -3795,7 +3795,7 @@ function renderDetachedSideIslands(x, y, w, h, alpha) {
 
   const isNotch = displayMode === 'notch';
   const pillRadius = isNotch ? [0, 0, UI.COMPACT_RADIUS, UI.COMPACT_RADIUS] : Math.round(h / 2);
-  const gap = 8;
+  const gap = isNotch ? 16 : 8;
 
   // Prepare Left Pill metrics (Timer / Focus / Stopwatch)
   let timerText = '';
@@ -3864,29 +3864,9 @@ function renderDetachedSideIslands(x, y, w, h, alpha) {
     gap
   });
 
-  // 1. Left Detached Island: Timer / Focus / Stopwatch (Apple Live Activity style)
-  if (hasTimer && layout.leftTimerX !== null) {
-    const tx = layout.leftTimerX;
-    const isTimerHov = hoveredButtonId === 'nav_clock';
-    const rim = isTimerHov ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.14)';
-    drawDetachedPillSurface(tx, y, timerW, h, pillRadius, rim);
-
-    const glyphCx = tx + 11 + 6;
-    const midY = y + h / 2;
-    renderAppleClockGlyph(glyphCx, midY, timerMode, timerProgress, timerCol);
-
-    ctx.font = clockFont;
-    ctx.fillStyle = timerMode === 'focus' && focusMode !== 'break' ? '#d8b4fe' : timerCol;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(timerText, tx + 11 + 14 + 6, midY);
-
-    interactiveButtons.push({ id: 'nav_clock', x: tx, y, w: timerW, h });
-  }
-
-  // 2. Right Detached Island (adjacent to center island): Antigravity progress
-  if (hasAI && layout.rightAiX !== null) {
-    const ax = layout.rightAiX;
+  // 1. Left Detached Island: Antigravity progress
+  if (hasAI && layout.leftAiX !== null) {
+    const ax = layout.leftAiX;
     const isAiHov = hoveredButtonId === 'nav_agent';
     const rim = (aiStatus === 'waiting')
       ? 'rgba(245, 158, 11, 0.45)'
@@ -3922,7 +3902,27 @@ function renderDetachedSideIslands(x, y, w, h, alpha) {
     interactiveButtons.push({ id: 'nav_agent', x: ax, y, w: aiW, h });
   }
 
-  // 3. Right Detached Call Capsule (stacked beside Antigravity if active)
+  // 2. Right Detached Island: Timer / Focus / Stopwatch (Apple Live Activity style)
+  if (hasTimer && layout.rightTimerX !== null) {
+    const tx = layout.rightTimerX;
+    const isTimerHov = hoveredButtonId === 'nav_clock';
+    const rim = isTimerHov ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.14)';
+    drawDetachedPillSurface(tx, y, timerW, h, pillRadius, rim);
+
+    const glyphCx = tx + 11 + 6;
+    const midY = y + h / 2;
+    renderAppleClockGlyph(glyphCx, midY, timerMode, timerProgress, timerCol);
+
+    ctx.font = clockFont;
+    ctx.fillStyle = timerMode === 'focus' && focusMode !== 'break' ? '#d8b4fe' : timerCol;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(timerText, tx + 11 + 14 + 6, midY);
+
+    interactiveButtons.push({ id: 'nav_clock', x: tx, y, w: timerW, h });
+  }
+
+  // 3. Right Detached Call Capsule (stacked beside Timer if active)
   if (hasCall && layout.rightCallX !== null) {
     renderRightCallCapsule(layout.rightCallX, y, callW, h);
   }
