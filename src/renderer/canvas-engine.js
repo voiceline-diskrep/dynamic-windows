@@ -1476,12 +1476,18 @@ canvas.addEventListener('mousemove', (e) => {
 
   const activeProjsForPill = getActiveProjects().filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
   const hasAIPill = (curP < 0.28 && (activeProjsForPill.length > 0 || pendingPrompt !== null));
-  const aiPillSpan = hasAIPill ? 164 : 0;
+  const aiPillSpan = hasAIPill ? 168 : 0;
 
   const hasTimerPill = (curP < 0.28 && (timerRunning || focusRunning || stopwatchRunning));
-  const timerPillSpan = hasTimerPill ? 110 : 0;
+  const timerPillSpan = hasTimerPill ? 116 : 0;
+
+  const hasCallPill = (curP < 0.28 && hasActiveCall());
+  const callPillSpan = hasCallPill ? (getCallCapsuleWidth() + 12) : 0;
+
+  const leftSpan = timerPillSpan;
+  const rightSpan = aiPillSpan + callPillSpan;
   const notchEarMargin = isNotch ? 18 : 8;
-  const isOverIsland = pointInRect(mouseX, mouseY, curX - notchEarMargin - aiPillSpan, Math.max(0, curY - 4), curW + notchEarMargin * 2 + timerPillSpan + aiPillSpan, curH + 16);
+  const isOverIsland = pointInRect(mouseX, mouseY, curX - notchEarMargin - leftSpan, Math.max(0, curY - 4), curW + notchEarMargin * 2 + leftSpan + rightSpan, curH + 16);
 
   if (isOverIsland) {
     if (songPopupProgress > 0.05 || songPopupActiveUntil > performance.now()) {
@@ -1495,13 +1501,15 @@ canvas.addEventListener('mousemove', (e) => {
       isHovered = true;
       if (curP < 0.25) {
         let nextV = 'home';
-        if (hasAIPill && mouseX < curX) {
-          nextV = 'agent';
-        } else if (hasTimerPill && mouseX >= curX + curW) {
+        if (hasTimerPill && mouseX < curX) {
           nextV = 'clock';
           if (focusRunning) clockSubMode = 'focus';
           else if (stopwatchRunning) clockSubMode = 'stopwatch';
           else if (timerRunning) clockSubMode = 'timer';
+        } else if (hasAIPill && mouseX >= curX + curW && (!hasCallPill || mouseX < curX + curW + aiPillSpan)) {
+          nextV = 'agent';
+        } else if (hasCallPill && mouseX >= curX + curW) {
+          nextV = 'call';
         } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
           nextV = 'media';
         }
@@ -1707,14 +1715,14 @@ canvas.addEventListener('click', (e) => {
     const hasTimerPill = (timerRunning || focusRunning || stopwatchRunning);
 
     let nextV = 'home';
-    if (hasAIPill && cx < curX) {
-      nextV = 'agent';
-    } else if (hasTimerPill && cx > curX + curW) {
+    if (hasTimerPill && cx < curX) {
       nextV = 'clock';
       if (focusRunning) clockSubMode = 'focus';
       else if (stopwatchRunning) clockSubMode = 'stopwatch';
       else if (timerRunning) clockSubMode = 'timer';
-    } else if (hasActiveCall() && cx > curX + curW) {
+    } else if (hasAIPill && cx >= curX + curW && (!hasActiveCall() || cx < curX + curW + 168)) {
+      nextV = 'agent';
+    } else if (hasActiveCall() && cx >= curX + curW) {
       nextV = 'call';
     } else if (mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing') {
       nextV = 'media';
@@ -2913,19 +2921,21 @@ function render() {
 
   // 4. Render Views (with individual clipping for expanded view & song announcement)
   if (p < 0.32) {
+    const restAlpha = Math.max(0, (0.32 - p) / 0.32);
     if (songPopupProgress > 0.05) {
       ctx.save();
       buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
       ctx.clip();
-      const popAlpha = Math.max(0, (0.32 - p) / 0.32);
-      renderSongAnnouncementPopup(x, y, w, h, popAlpha);
+      renderSongAnnouncementPopup(x, y, w, h, restAlpha);
       ctx.restore();
     } else {
       ctx.save();
       buildCapsulePath(ctx, x, y, w, h, radius, isNotch, topFillet);
       ctx.clip();
-      renderRestingPill(x, y, w, h, Math.max(0, (0.32 - p) / 0.32));
+      renderRestingPill(x, y, w, h, restAlpha);
       ctx.restore();
+
+      renderDetachedSideIslands(x, y, w, h, restAlpha);
     }
   }
   if (p > 0.15) {
@@ -3567,11 +3577,6 @@ function renderRestingPill(x, y, w, h, alpha) {
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-  // Antigravity active status check
-  const activeProjs = getActiveProjects().filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
-  const activeCount = activeProjs.length;
-  const hasAI = (activeCount > 0 || pendingPrompt !== null);
-
   // -------------------------------------------------------------
   // 1. Center Main Island Capsule [ Clock or Media ]
   // -------------------------------------------------------------
@@ -3681,16 +3686,154 @@ function renderRestingPill(x, y, w, h, alpha) {
     interactiveButtons.push({ id: 'nav_home', x, y, w, h });
   }
 
-  // -------------------------------------------------------------
-  // 2. Small Detached Dynamic Island on Left Side for Antigravity
-  //    - Multiple active: "x running"
-  //    - Single active: conversation/project name (e.g. "Island")
-  //    - Inactive / nothing: no detached island (stays in main island)
-  // -------------------------------------------------------------
-  if (hasAI) {
-    let aiLabel = '';
-    let aiStatus = 'running';
+  ctx.restore();
+}
 
+function computeSideIslandsLayout({ centerX, centerW, hasTimer, timerW, hasAI, aiW, hasCall, callW, gap = 8 }) {
+  const safeGap = Math.max(4, Number(gap) || 8);
+  const leftTimerX = hasTimer ? Math.round(centerX - timerW - safeGap) : null;
+  const rightAiX = hasAI ? Math.round(centerX + centerW + safeGap) : null;
+  const rightCallX = hasCall
+    ? Math.round(centerX + centerW + (hasAI ? (aiW + safeGap * 2) : safeGap))
+    : null;
+  return { leftTimerX, rightAiX, rightCallX };
+}
+
+function drawDetachedPillSurface(px, py, pw, ph, radius, borderColor) {
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+  ctx.shadowBlur = 14;
+  ctx.shadowOffsetY = 4;
+
+  ctx.beginPath();
+  ctx.roundRect(px, py, pw, ph, radius);
+  const grad = ctx.createLinearGradient(px, py, px, py + ph);
+  grad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
+  grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
+  grad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  ctx.shadowColor = 'transparent';
+  ctx.beginPath();
+  ctx.roundRect(px, py, pw, ph, radius);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = borderColor;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderAppleClockGlyph(cx, cy, mode, progress, accentCol) {
+  const r = 6;
+  ctx.save();
+  if (mode === 'timer') {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255, 159, 10, 0.25)';
+    ctx.stroke();
+
+    const clamped = Math.max(0, Math.min(1, progress));
+    if (clamped > 0.005) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamped);
+      ctx.lineWidth = 2.1;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = accentCol;
+      ctx.stroke();
+    }
+  } else if (mode === 'focus') {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = accentCol;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(cx + 2.6, cy - 1.8, r * 0.72, 0, Math.PI * 2);
+    ctx.fillStyle = '#08080a';
+    ctx.fill();
+  } else {
+    // Stopwatch circular dial + crown tick + sweep hand
+    ctx.beginPath();
+    ctx.arc(cx, cy + 0.5, r - 0.5, 0, Math.PI * 2);
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = accentCol;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r - 1.5);
+    ctx.lineTo(cx, cy - r + 0.5);
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = accentCol;
+    ctx.stroke();
+
+    const angle = -Math.PI / 2 + progress * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + 0.5);
+    ctx.lineTo(cx + Math.cos(angle) * (r - 2.2), cy + 0.5 + Math.sin(angle) * (r - 2.2));
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function renderDetachedSideIslands(x, y, w, h, alpha) {
+  if (alpha <= 0.02) return;
+
+  const activeProjs = getActiveProjects().filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
+  const activeCount = activeProjs.length;
+  const hasAI = (activeCount > 0 || pendingPrompt !== null);
+  const hasTimer = Boolean(timerRunning || focusRunning || stopwatchRunning);
+  const hasCall = hasActiveCall();
+
+  if (!hasAI && !hasTimer && !hasCall) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  const isNotch = displayMode === 'notch';
+  const pillRadius = isNotch ? [0, 0, UI.COMPACT_RADIUS, UI.COMPACT_RADIUS] : Math.round(h / 2);
+  const gap = 8;
+
+  // Prepare Left Pill metrics (Timer / Focus / Stopwatch)
+  let timerText = '';
+  let timerMode = 'timer';
+  let timerCol = '#ff9f0a';
+  let timerProgress = 0;
+  let timerW = 0;
+  const clockFont = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
+
+  if (hasTimer) {
+    if (timerRunning) {
+      timerMode = 'timer';
+      timerText = formatTimerSeconds(timerRemainingSec);
+      timerCol = '#ff9f0a';
+      timerProgress = timerDurationSec > 0 ? (timerRemainingSec / timerDurationSec) : 0;
+    } else if (focusRunning) {
+      timerMode = 'focus';
+      timerText = formatTimerSeconds(focusRemainingSec);
+      timerCol = focusMode === 'break' ? '#30d158' : '#a855f7';
+      timerProgress = 1;
+    } else {
+      timerMode = 'stopwatch';
+      timerText = formatStopwatchMs(stopwatchElapsedMs);
+      timerCol = '#30d158';
+      timerProgress = ((stopwatchElapsedMs / 1000) % 60) / 60;
+    }
+    ctx.font = clockFont;
+    const textW = ctx.measureText(timerText).width;
+    timerW = Math.max(82, Math.round(11 + 14 + 6 + textW + 12));
+  }
+
+  // Prepare Right Pill metrics (Antigravity)
+  let aiLabel = '';
+  let aiStatus = 'running';
+  let aiW = 0;
+  const aiFont = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+
+  if (hasAI) {
     if (pendingPrompt) {
       aiLabel = 'Needs input';
       aiStatus = 'waiting';
@@ -3703,44 +3846,57 @@ function renderRestingPill(x, y, w, h, alpha) {
       const raw = (p0.project && p0.project !== 'Antigravity') ? p0.project : (p0.task || p0.project || 'Island');
       aiLabel = sanitizeProjectName(raw);
     }
-
-    ctx.save();
-    ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.font = aiFont;
     const labelW = ctx.measureText(aiLabel).width;
-    const aiPillW = Math.max(88, Math.min(150, Math.round(54 + labelW)));
-    const aiPillH = h;
-    const aiGap = 8;
-    const aiPillX = x - aiPillW - aiGap;
-    const isNotch = displayMode === 'notch';
-    const aiRadius = isNotch ? [0, 0, UI.COMPACT_RADIUS, UI.COMPACT_RADIUS] : UI.COMPACT_RADIUS;
+    aiW = Math.max(92, Math.min(164, Math.round(54 + labelW)));
+  }
 
-    // Drop Shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-    ctx.shadowBlur = 14;
-    ctx.shadowOffsetY = 4;
+  const callW = hasCall ? getCallCapsuleWidth() : 0;
+  const layout = computeSideIslandsLayout({
+    centerX: x,
+    centerW: w,
+    hasTimer,
+    timerW,
+    hasAI,
+    aiW,
+    hasCall,
+    callW,
+    gap
+  });
 
-    // Liquid Glass OLED Black Surface
-    ctx.beginPath();
-    ctx.roundRect(aiPillX, y, aiPillW, aiPillH, aiRadius);
-    const aiGrad = ctx.createLinearGradient(aiPillX, y, aiPillX, y + aiPillH);
-    aiGrad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
-    aiGrad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
-    aiGrad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
-    ctx.fillStyle = aiGrad;
-    ctx.fill();
+  // 1. Left Detached Island: Timer / Focus / Stopwatch (Apple Live Activity style)
+  if (hasTimer && layout.leftTimerX !== null) {
+    const tx = layout.leftTimerX;
+    const isTimerHov = hoveredButtonId === 'nav_clock';
+    const rim = isTimerHov ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.14)';
+    drawDetachedPillSurface(tx, y, timerW, h, pillRadius, rim);
 
-    // Specular Border Rim
-    ctx.shadowColor = 'transparent';
-    ctx.beginPath();
-    ctx.roundRect(aiPillX, y, aiPillW, aiPillH, aiRadius);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = (aiStatus === 'waiting') ? 'rgba(245, 158, 11, 0.45)' : 'rgba(255, 255, 255, 0.12)';
-    ctx.stroke();
+    const glyphCx = tx + 11 + 6;
+    const midY = y + h / 2;
+    renderAppleClockGlyph(glyphCx, midY, timerMode, timerProgress, timerCol);
+
+    ctx.font = clockFont;
+    ctx.fillStyle = timerMode === 'focus' && focusMode !== 'break' ? '#d8b4fe' : timerCol;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(timerText, tx + 11 + 14 + 6, midY);
+
+    interactiveButtons.push({ id: 'nav_clock', x: tx, y, w: timerW, h });
+  }
+
+  // 2. Right Detached Island (adjacent to center island): Antigravity progress
+  if (hasAI && layout.rightAiX !== null) {
+    const ax = layout.rightAiX;
+    const isAiHov = hoveredButtonId === 'nav_agent';
+    const rim = (aiStatus === 'waiting')
+      ? 'rgba(245, 158, 11, 0.45)'
+      : (isAiHov ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.14)');
+    drawDetachedPillSurface(ax, y, aiW, h, pillRadius, rim);
 
     // Antigravity Logo (18x18 rounded)
     const logoSize = 18;
-    const logoX = aiPillX + 8;
-    const logoY = y + (aiPillH - logoSize) / 2;
+    const logoX = ax + 9;
+    const logoY = y + (h - logoSize) / 2;
     if (antigravityLogo.complete && antigravityLogo.naturalWidth > 0) {
       ctx.save();
       ctx.beginPath();
@@ -3753,95 +3909,22 @@ function renderRestingPill(x, y, w, h, alpha) {
     // Label Text
     const textStartX = logoX + logoSize + 6;
     const dotReserve = 18;
-    const maxLabelW = Math.max(20, (aiPillX + aiPillW - dotReserve) - textStartX);
+    const maxLabelW = Math.max(20, (ax + aiW - dotReserve) - textStartX);
+    ctx.font = aiFont;
     ctx.fillStyle = '#f4f4f5';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(truncateToWidth(aiLabel, maxLabelW, ctx.font), textStartX, y + aiPillH / 2);
+    ctx.fillText(truncateToWidth(aiLabel, maxLabelW, ctx.font), textStartX, y + h / 2);
 
     // Traffic Light Status Dot
-    const dotX = aiPillX + aiPillW - 12;
-    const dotY = y + aiPillH / 2;
-    renderTrafficLightDot(dotX, dotY, aiStatus);
+    renderTrafficLightDot(ax + aiW - 12, y + h / 2, aiStatus);
 
-    ctx.restore();
-
-    interactiveButtons.push({ id: 'nav_agent', x: aiPillX, y, w: aiPillW, h: aiPillH });
+    interactiveButtons.push({ id: 'nav_agent', x: ax, y, w: aiW, h });
   }
 
-  // -------------------------------------------------------------
-  // 3. Small Detached Island on Right Side for Timer / Focus / Stopwatch
-  // -------------------------------------------------------------
-  if (timerRunning || focusRunning || stopwatchRunning) {
-    let badgeText = '';
-    let badgeCol = '#38bdf8';
-    let badgeGlow = 'rgba(56, 189, 248, 0.45)';
-
-    if (timerRunning) {
-      badgeText = `⏱️ ${formatTimerSeconds(timerRemainingSec)}`;
-      badgeCol = '#38bdf8';
-      badgeGlow = 'rgba(56, 189, 248, 0.45)';
-    } else if (focusRunning) {
-      badgeText = `🎯 ${formatTimerSeconds(focusRemainingSec)}`;
-      badgeCol = '#10b981';
-      badgeGlow = 'rgba(16, 185, 129, 0.45)';
-    } else if (stopwatchRunning) {
-      badgeText = `⏱️ ${formatStopwatchMs(stopwatchElapsedMs)}`;
-      badgeCol = '#22c55e';
-      badgeGlow = 'rgba(34, 197, 94, 0.45)';
-    }
-
-    ctx.save();
-    ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
-    const textW = ctx.measureText(badgeText).width;
-    const timerW = Math.max(76, Math.round(textW + 18));
-    const timerH = h;
-    const timerGap = 8;
-    const timerX = x + w + timerGap;
-    const isNotch = displayMode === 'notch';
-    const timerR = isNotch ? [0, 0, UI.COMPACT_RADIUS, UI.COMPACT_RADIUS] : UI.COMPACT_RADIUS;
-
-    // Drop Shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-    ctx.shadowBlur = 14;
-    ctx.shadowOffsetY = 4;
-
-    // OLED Black Glass Surface
-    ctx.beginPath();
-    ctx.roundRect(timerX, y, timerW, timerH, timerR);
-    const timerGrad = ctx.createLinearGradient(timerX, y, timerX, y + timerH);
-    timerGrad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
-    timerGrad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
-    timerGrad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
-    ctx.fillStyle = timerGrad;
-    ctx.fill();
-
-    // Specular Border Rim
-    ctx.shadowColor = 'transparent';
-    ctx.beginPath();
-    ctx.roundRect(timerX, y, timerW, timerH, timerR);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = badgeGlow;
-    ctx.stroke();
-
-    // Centered Timer Text
-    ctx.fillStyle = badgeCol;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(badgeText, timerX + timerW / 2, y + timerH / 2);
-    ctx.restore();
-
-    interactiveButtons.push({ id: 'nav_clock', x: timerX, y: y, w: timerW, h: timerH });
-  }
-
-  // -------------------------------------------------------------
-  // 4. Detached Call Capsule on Right Side (if active Discord/Meet call)
-  // -------------------------------------------------------------
-  if (hasActiveCall()) {
-    const callPillW = getCallCapsuleWidth();
-    const timerGap = (timerRunning || focusRunning || stopwatchRunning) ? (Math.max(76, 85) + 16) : 8;
-    const callPillX = x + w + timerGap;
-    renderRightCallCapsule(callPillX, y, callPillW, h);
+  // 3. Right Detached Call Capsule (stacked beside Antigravity if active)
+  if (hasCall && layout.rightCallX !== null) {
+    renderRightCallCapsule(layout.rightCallX, y, callW, h);
   }
 
   ctx.restore();
@@ -7497,6 +7580,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getNextPersonalizedGreeting,
     buildCapsulePath,
     drawCapsuleRim,
-    isDynamicActive
+    isDynamicActive,
+    computeSideIslandsLayout
   };
 }

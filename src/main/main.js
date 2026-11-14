@@ -192,8 +192,8 @@ function createIslandWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const screenBounds = primaryDisplay.bounds;
 
-  // Initial standby dimensions (880x420 transparent click-through canvas supports Left AI + 520px Lyric Pill + Right Call Capsule without shadow clipping)
-  const initialWidth = 880;
+  // Initial standby dimensions (1040x420 transparent click-through canvas supports Left Timer + 520px Lyric Pill + Right Antigravity + Call Capsule without clipping)
+  const initialWidth = 1040;
   const initialHeight = 420;
 
   const initialX = Math.round((screenBounds.width - initialWidth) / 2);
