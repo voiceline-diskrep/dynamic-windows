@@ -4349,21 +4349,25 @@ function computeSideIslandsLayout({ centerX, centerW, hasTimer, timerW, hasAI, a
 
 function drawDetachedPillSurface(px, py, pw, ph, radius, borderColor) {
   ctx.save();
+  const isNotch = (displayMode === 'notch' && py <= 0.1);
+  const rNum = Array.isArray(radius) ? (radius[2] || UI.COMPACT_RADIUS) : radius;
+  const topFillet = isNotch ? Math.min(10, Math.round(ph * 0.32)) : 0;
+
   drawBlurredCapsuleShadow(ctx, {
     x: px,
     y: py,
     w: pw,
     h: ph,
-    radius,
-    useBezelLump: false,
+    radius: rNum,
+    useBezelLump: isNotch,
+    topFillet,
     blur: 14,
     offsetY: 4,
     color: 'rgba(0, 0, 0, 0.55)',
     preferSprite: true
   });
 
-  ctx.beginPath();
-  ctx.roundRect(px, py, pw, ph, radius);
+  buildCapsulePath(ctx, px, py, pw, ph, rNum, isNotch, topFillet);
   const grad = ctx.createLinearGradient(px, py, px, py + ph);
   grad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
   grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
@@ -4371,8 +4375,7 @@ function drawDetachedPillSurface(px, py, pw, ph, radius, borderColor) {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  ctx.beginPath();
-  ctx.roundRect(px, py, pw, ph, radius);
+  drawCapsuleRim(ctx, px, py, pw, ph, rNum, isNotch, topFillet);
   ctx.lineWidth = 1;
   ctx.strokeStyle = borderColor;
   ctx.stroke();
@@ -4451,7 +4454,7 @@ function renderDetachedSideIslands(x, y, w, h, alpha) {
 
   const isNotch = displayMode === 'notch';
   const pillRadius = isNotch ? [0, 0, UI.COMPACT_RADIUS, UI.COMPACT_RADIUS] : Math.round(h / 2);
-  const gap = isNotch ? 16 : 8;
+  const gap = isNotch ? 22 : 8;
 
   // Prepare Left Pill metrics (Timer / Focus / Stopwatch)
   let timerText = '';
