@@ -522,6 +522,16 @@
             <span id="opacity-value-badge" style="font-size: 13px; font-weight: 700; color: #ffffff; background: rgba(37,99,235,0.25); border: 1px solid rgba(37,99,235,0.5); padding: 3px 8px; border-radius: 6px; width: 48px; text-align: center;">95%</span>
           </div>
         </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Liquid Glass Mode</span>
+            <span class="setting-desc">Translucent, frosted, light-reactive glass panels with specular edge reflections.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-liquidGlass">
+            <span class="slider"></span>
+          </label>
+        </div>
         
       </div>
 
@@ -928,6 +938,8 @@
         const opacityBadge = document.getElementById('opacity-value-badge');
         if (opacitySlider) opacitySlider.value = curOpacityPct;
         if (opacityBadge) opacityBadge.textContent = curOpacityPct + '%';
+        const elLiquidGlass = document.getElementById('setting-liquidGlass');
+        if (elLiquidGlass) elLiquidGlass.checked = !!cfg.liquidGlass;
         
 
         // General
@@ -1196,6 +1208,7 @@
       });
     }
     bindSettingChange('setting-albumColorGradient', 'albumColorGradient');
+    bindSettingChange('setting-liquidGlass', 'liquidGlass');
     bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');
     bindSettingChange('setting-autoFocusAntigravity', 'autoFocusAntigravity');
     bindSettingChange('setting-hooksPort', 'hooksPort', true);

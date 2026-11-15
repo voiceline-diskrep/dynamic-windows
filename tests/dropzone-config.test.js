@@ -88,4 +88,12 @@ test('ConfigManager: get and set settings including displayMode', () => {
   assert.strictEqual(configManager.get('albumColorGradient'), false);
   configManager.set('albumColorGradient', true);
   assert.strictEqual(configManager.get('albumColorGradient'), true);
+
+  // Test liquidGlass setting
+  const prevLiquidGlass = cur.liquidGlass;
+  assert.strictEqual(typeof prevLiquidGlass, 'boolean');
+  configManager.set('liquidGlass', true);
+  assert.strictEqual(configManager.get('liquidGlass'), true);
+  configManager.set('liquidGlass', prevLiquidGlass);
+  assert.strictEqual(configManager.get('liquidGlass'), prevLiquidGlass);
 });

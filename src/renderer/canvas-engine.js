@@ -664,6 +664,7 @@ function snoozeActiveAlarm() {
   dismissActiveAlarm();
 }
 let islandOpacity = 0.95;
+let liquidGlassEnabled = false;
 
 try {
   const savedWork = localStorage.getItem('focus_work_min');
@@ -1656,6 +1657,7 @@ canvas.addEventListener('mousemove', (e) => {
       }
       isHovered = true;
       setIgnoreMouseEventsCached(false);
+      if (liquidGlassEnabled) requestFrame();
     } else {
       if (hoveredDuringSongPopup) {
         dismissSongAnnouncement();
@@ -2527,6 +2529,12 @@ ipcRenderer.on('island-opacity-changed', (event, data) => {
     requestFrame();
   }
 });
+ipcRenderer.on('liquid-glass-toggled', (event, data) => {
+  if (data && typeof data.enabled === 'boolean') {
+    liquidGlassEnabled = data.enabled;
+    requestFrame();
+  }
+});
 ipcRenderer.on('sound-effects-config', (event, data) => {
   if (data) {
     if (typeof data.enabled === 'boolean') {
@@ -2614,6 +2622,9 @@ try {
       }
       if (typeof res.config.islandOpacity === 'number') {
         islandOpacity = Math.max(0.4, Math.min(1.0, res.config.islandOpacity));
+      }
+      if (typeof res.config.liquidGlass === 'boolean') {
+        liquidGlassEnabled = res.config.liquidGlass;
       }
       if (typeof res.config.soundEffects === 'boolean') {
         soundFX.setEnabled(res.config.soundEffects);
@@ -3391,6 +3402,144 @@ function drawBlurredCapsuleShadow(targetCtx, opts) {
   targetCtx.drawImage(entry.canvas, x - entry.padX, useBezelLump ? 0 : (y - entry.padTop));
 }
 
+function getLiquidGlassTokens(enabled = liquidGlassEnabled) {
+  if (!enabled) {
+    return {
+      enabled: false,
+      cardBg: 'rgba(255, 255, 255, 0.055)',
+      cardBgHover: 'rgba(255, 255, 255, 0.11)',
+      cardBorder: 'rgba(255, 255, 255, 0.09)',
+      navPillBg: 'rgba(255, 255, 255, 0.14)',
+      navPillBorder: 'rgba(255, 255, 255, 0.16)'
+    };
+  }
+  return {
+    enabled: true,
+    cardBg: 'rgba(255, 255, 255, 0.12)',
+    cardBgHover: 'rgba(255, 255, 255, 0.20)',
+    cardBorder: 'rgba(255, 255, 255, 0.28)',
+    navPillBg: 'rgba(255, 255, 255, 0.22)',
+    navPillBorder: 'rgba(255, 255, 255, 0.36)'
+  };
+}
+
+function paintCapsuleSurface(c, {
+  x, y, w, h,
+  radius,
+  topRadius,
+  bottomRadius,
+  topFillet = 12,
+  useBezelLump = false,
+  rimColor = 'rgba(255, 255, 255, 0.14)',
+  forceSemanticRim = false,
+  accentTintColor = null,
+  accentTintStrength = 0
+}) {
+  const tracePath = () => {
+    if (useBezelLump) {
+      buildCapsulePath(c, x, y, w, h, radius, true, topFillet);
+    } else if (topRadius !== undefined && bottomRadius !== undefined) {
+      c.beginPath();
+      c.roundRect(x, y, w, h, [topRadius, topRadius, bottomRadius, bottomRadius]);
+    } else {
+      c.beginPath();
+      c.roundRect(x, y, w, h, radius);
+    }
+  };
+
+  const traceRim = () => {
+    if (useBezelLump) {
+      drawCapsuleRim(c, x, y, w, h, radius, true, topFillet);
+    } else if (topRadius !== undefined && bottomRadius !== undefined) {
+      c.beginPath();
+      c.roundRect(x, y, w, h, [topRadius, topRadius, bottomRadius, bottomRadius]);
+    } else {
+      c.beginPath();
+      c.roundRect(x, y, w, h, radius);
+    }
+  };
+
+  if (!liquidGlassEnabled) {
+    const grad = c.createLinearGradient(x, y, x, y + h);
+    grad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
+    grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
+    grad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
+    tracePath();
+    c.fillStyle = grad;
+    c.fill();
+
+    traceRim();
+    c.lineWidth = 1;
+    c.strokeStyle = rimColor;
+    c.stroke();
+    return;
+  }
+
+  // Apple-inspired Liquid Glass Mode: translucent frosted glass, internal sheen, cursor bloom, and luminous rim
+  const baseGlassAlpha = Math.max(0.28, Math.min(0.62, islandOpacity * 0.48));
+  const bodyGrad = c.createLinearGradient(x, y, x, y + h);
+  bodyGrad.addColorStop(0.0, `rgba(210, 224, 245, ${Math.min(0.32, baseGlassAlpha * 0.56)})`);
+  bodyGrad.addColorStop(0.35, `rgba(28, 36, 52, ${baseGlassAlpha})`);
+  bodyGrad.addColorStop(1.0, `rgba(16, 22, 34, ${Math.min(0.70, baseGlassAlpha * 1.15)})`);
+
+  c.save();
+  tracePath();
+  c.fillStyle = bodyGrad;
+  c.fill();
+  c.clip();
+
+  if (accentTintStrength > 0.05 && accentTintColor) {
+    const tintGrad = c.createLinearGradient(x, y, x + w, y + h);
+    tintGrad.addColorStop(0.0, colorWithAlpha(accentTintColor, 0.24 * accentTintStrength));
+    tintGrad.addColorStop(0.6, colorWithAlpha(accentTintColor, 0.12 * accentTintStrength));
+    tintGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.04)');
+    c.fillStyle = tintGrad;
+    c.fillRect(x - 24, y, w + 48, h);
+  }
+
+  // Top specular lip reflection
+  const topSheenH = Math.min(34, Math.max(12, h * 0.42));
+  const topSheen = c.createLinearGradient(x, y, x, y + topSheenH);
+  topSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.28)');
+  topSheen.addColorStop(0.55, 'rgba(255, 255, 255, 0.07)');
+  topSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
+  c.fillStyle = topSheen;
+  c.fillRect(x - 24, y, w + 48, topSheenH);
+
+  // Bottom bounce reflection
+  const botSheenH = Math.min(24, Math.max(8, h * 0.28));
+  const botSheen = c.createLinearGradient(x, y + h - botSheenH, x, y + h);
+  botSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.0)');
+  botSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.11)');
+  c.fillStyle = botSheen;
+  c.fillRect(x - 24, y + h - botSheenH, w + 48, botSheenH);
+
+  // Light-reactive cursor bloom
+  if (mouseX >= x - 60 && mouseX <= x + w + 60 && mouseY >= y - 20 && mouseY <= y + h + 40) {
+    const bloomR = Math.max(75, Math.min(180, w * 0.42));
+    const bloom = c.createRadialGradient(mouseX, mouseY, 2, mouseX, mouseY, bloomR);
+    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.20)');
+    bloom.addColorStop(0.5, 'rgba(255, 255, 255, 0.06)');
+    bloom.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
+    c.fillStyle = bloom;
+    c.fillRect(x - 24, y, w + 48, h);
+  }
+  c.restore();
+
+  // Luminous diagonal specular glass rim
+  c.save();
+  traceRim();
+  const rimGrad = c.createLinearGradient(x, y, x + w * 0.35, y + h);
+  rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.72)');
+  rimGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.28)');
+  rimGrad.addColorStop(0.7, 'rgba(255, 255, 255, 0.16)');
+  rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.45)');
+  c.lineWidth = 1.25;
+  c.strokeStyle = forceSemanticRim ? rimColor : rimGrad;
+  c.stroke();
+  c.restore();
+}
+
 function render() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   interactiveButtons = [];
@@ -3501,38 +3650,44 @@ function render() {
       preferSprite: !isCapsuleMorphing
     });
 
-    // 2. Liquid Glass OLED Black Surface (Always true OLED dark grey/black)
-    const grad = ctx.createLinearGradient(x, y, x, y + h);
-    grad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
-    grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
-    grad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
-
-    traceCapsulePath();
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    // 3. Specular Border Rim (subtle bezel hairline on top lump, illuminated accent when active)
-    traceCapsuleRim();
-    ctx.lineWidth = 1;
+    // 2. Capsule Surface & Specular Rim (OLED Black or Liquid Glass)
+    let rimCol = `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
+    let forceSemanticRim = false;
     if (isDraggingOver) {
-      ctx.strokeStyle = 'rgba(59, 130, 246, 0.85)';
+      rimCol = 'rgba(59, 130, 246, 0.85)';
+      forceSemanticRim = true;
     } else if (hideProgress > 0.45) {
       if (isLumpHovered) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.40)';
+        rimCol = 'rgba(255, 255, 255, 0.40)';
       } else if (hasActiveCall()) {
-        ctx.strokeStyle = 'rgba(249, 115, 22, 0.55)';
+        rimCol = 'rgba(249, 115, 22, 0.55)';
+        forceSemanticRim = true;
       } else if (hasActiveAgent()) {
         const projs = getActiveProjects();
-        ctx.strokeStyle = projs.some(pr => pr.status === 'waiting') ? 'rgba(245, 158, 11, 0.50)' : 'rgba(56, 189, 248, 0.45)';
+        rimCol = projs.some(pr => pr.status === 'waiting') ? 'rgba(245, 158, 11, 0.50)' : 'rgba(56, 189, 248, 0.45)';
+        forceSemanticRim = true;
       } else {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        rimCol = 'rgba(255, 255, 255, 0.22)';
       }
     } else if (tintK > 0.05 && albumAccentColor) {
-      ctx.strokeStyle = colorWithAlpha(albumAccentColor, 0.55 * tintK + 0.15);
-    } else {
-      ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 + 0.12 * p})`;
+      rimCol = colorWithAlpha(albumAccentColor, 0.55 * tintK + 0.15);
     }
-    ctx.stroke();
+
+    paintCapsuleSurface(ctx, {
+      x,
+      y,
+      w,
+      h,
+      radius,
+      topRadius: hideT.topRadius,
+      bottomRadius: hideT.bottomRadius,
+      topFillet,
+      useBezelLump,
+      rimColor: rimCol,
+      forceSemanticRim,
+      accentTintColor: albumAccentColor,
+      accentTintStrength: tintK
+    });
 
     ctx.restore();
   }
@@ -4120,41 +4275,10 @@ function renderOrangeCallDot(dx, dy, isRinging, isSpeaking) {
 
 function renderRightCallCapsule(cx, cy, cw, ch) {
   const pillRadius = UI.COMPACT_RADIUS;
-
-  // 1. Detached OLED Liquid Glass Capsule Background
-  ctx.save();
-  drawBlurredCapsuleShadow(ctx, {
-    x: cx,
-    y: cy,
-    w: cw,
-    h: ch,
-    radius: pillRadius,
-    useBezelLump: false,
-    blur: 14,
-    offsetY: 4,
-    color: 'rgba(0, 0, 0, 0.45)',
-    preferSprite: true
-  });
-  ctx.beginPath();
-  ctx.roundRect(cx, cy, cw, ch, pillRadius);
-  const callGrad = ctx.createLinearGradient(cx, cy, cx, cy + ch);
-  callGrad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
-  callGrad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
-  callGrad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
-  ctx.fillStyle = callGrad;
-  ctx.fill();
-  ctx.restore();
-
-  // Specular rim (subtle orange tint when ringing/speaking)
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(cx, cy, cw, ch, pillRadius);
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = callState.status === 'ringing'
+  const rim = callState.status === 'ringing'
     ? 'rgba(249, 115, 22, 0.45)'
-    : 'rgba(255, 255, 255, 0.12)';
-  ctx.stroke();
-  ctx.restore();
+    : 'rgba(255, 255, 255, 0.14)';
+  drawDetachedPillSurface(cx, cy, cw, ch, pillRadius, rim);
 
   // 2. App Logo on Left
   const logoSize = 18;
@@ -4367,18 +4491,16 @@ function drawDetachedPillSurface(px, py, pw, ph, radius, borderColor) {
     preferSprite: true
   });
 
-  buildCapsulePath(ctx, px, py, pw, ph, rNum, isNotch, topFillet);
-  const grad = ctx.createLinearGradient(px, py, px, py + ph);
-  grad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
-  grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
-  grad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  drawCapsuleRim(ctx, px, py, pw, ph, rNum, isNotch, topFillet);
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = borderColor;
-  ctx.stroke();
+  paintCapsuleSurface(ctx, {
+    x: px,
+    y: py,
+    w: pw,
+    h: ph,
+    radius: rNum,
+    topFillet,
+    useBezelLump: isNotch,
+    rimColor: borderColor
+  });
   ctx.restore();
 }
 
@@ -8265,6 +8387,7 @@ if (typeof module !== 'undefined' && module.exports) {
     computeSideIslandsLayout,
     formatClockTime,
     getTopLumpHitbox,
-    computeCapsuleHideTransform
+    computeCapsuleHideTransform,
+    getLiquidGlassTokens
   };
 }

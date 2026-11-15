@@ -204,6 +204,13 @@ function registerSettingsIPC(dropZoneInstance, callbacks = {}) {
         }
       });
     }
+    if (newSettings && 'liquidGlass' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('liquid-glass-toggled', { enabled: Boolean(newSettings.liquidGlass) });
+        }
+      });
+    }
     if (newSettings && ('soundEffects' in newSettings || 'soundVolume' in newSettings || 'soundPreset' in newSettings)) {
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {

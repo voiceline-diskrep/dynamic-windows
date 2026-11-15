@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = {
   version: '1.4.35',
   animationSpeed: 1.0,
   islandOpacity: 0.95, // 0.40 to 1.00 frosted glass opacity
+  liquidGlass: false, // Apple-inspired translucent, light-reactive glass panels
   displayMode: 'island', // 'island' | 'notch'
   dynamicLyrics: true, // Smooth word-by-word progressive lyric reveal
   albumColorGradient: true, // Dynamic Island ambient fade gradient from album cover
