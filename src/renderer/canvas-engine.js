@@ -807,7 +807,71 @@ const albumImage = new Image();
 albumImage.crossOrigin = 'anonymous';
 let albumImageForUrl = '';
 let albumAccentColor = '#22c55e';
+let albumPalette = ['#e4e4e7', '#a1a1aa'];
 let tintK = 0;
+
+function computeAlbumPaletteFromPixels(d) {
+  // 12 hue buckets (30 deg each) + 1 neutral bucket
+  const buckets = Array.from({ length: 13 }, () => ({ r: 0, g: 0, b: 0, w: 0 }));
+  for (let i = 0; i < d.length; i += 4) {
+    const pr = d[i], pg = d[i + 1], pb = d[i + 2];
+    const max = Math.max(pr, pg, pb);
+    const min = Math.min(pr, pg, pb);
+    const sat = max - min;
+    const weight = (sat > 15 ? (sat / 10) : 0.15) * (max > 22 && max < 245 ? 1.5 : 0.4);
+
+    let idx = 12;
+    if (sat >= 20 && max >= 25) {
+      let h = 0;
+      if (max === pr) h = ((pg - pb) / sat) % 6;
+      else if (max === pg) h = (pb - pr) / sat + 2;
+      else h = (pr - pg) / sat + 4;
+      h = ((h * 60) + 360) % 360;
+      idx = Math.min(11, Math.floor(h / 30));
+    }
+    buckets[idx].r += pr * weight;
+    buckets[idx].g += pg * weight;
+    buckets[idx].b += pb * weight;
+    buckets[idx].w += weight;
+  }
+
+  const ranked = buckets
+    .filter(b => b.w > 0)
+    .sort((a, b) => b.w - a.w)
+    .map(b => {
+      const r = b.r / b.w;
+      const g = b.g / b.w;
+      const bl = b.b / b.w;
+      const actualMax = Math.max(r, g, bl);
+      const minVal = Math.min(r, g, bl);
+      if (actualMax < 35 || (actualMax - minVal < 22)) {
+        return { rgb: [212, 212, 216], str: '#d4d4d8', neutral: true };
+      }
+      const boost = 215 / Math.max(actualMax, 40);
+      const rgb = [r, g, bl].map(v => Math.min(255, Math.max(0, Math.round(v * boost))));
+      return { rgb, str: `rgb(${rgb.join(',')})`, neutral: false };
+    });
+
+  const picked = [];
+  for (const cand of ranked) {
+    if (picked.length === 0) {
+      picked.push(cand);
+    } else {
+      const distinct = picked.every(p => {
+        const dr = p.rgb[0] - cand.rgb[0];
+        const dg = p.rgb[1] - cand.rgb[1];
+        const db = p.rgb[2] - cand.rgb[2];
+        return (dr * dr + dg * dg + db * db) > 3200;
+      });
+      if (distinct) picked.push(cand);
+    }
+    if (picked.length >= 3) break;
+  }
+
+  if (picked.length === 0) return ['#e4e4e7', '#a1a1aa'];
+  if (picked.length === 1) return [picked[0].str, picked[0].str];
+  return picked.map(p => p.str);
+}
 
 function computeAccentColorFromPixels(d) {
   let r = 0, g = 0, b = 0, totalW = 0;
@@ -841,6 +905,7 @@ function updateAlbumArt(url) {
   if (!url) {
     albumImageForUrl = '';
     albumAccentColor = '#e4e4e7';
+    albumPalette = ['#e4e4e7', '#a1a1aa'];
     return;
   }
   if (url === albumImageForUrl) return;
@@ -854,13 +919,16 @@ function updateAlbumArt(url) {
       x.drawImage(albumImage, 0, 0, 16, 16);
       const d = x.getImageData(0, 0, 16, 16).data;
       albumAccentColor = computeAccentColorFromPixels(d);
+      albumPalette = computeAlbumPaletteFromPixels(d);
     } catch (e) {
       albumAccentColor = '#e4e4e7';
+      albumPalette = ['#e4e4e7', '#a1a1aa'];
     }
     requestFrame();
   };
   albumImage.onerror = () => {
     albumAccentColor = '#e4e4e7';
+    albumPalette = ['#e4e4e7', '#a1a1aa'];
     requestFrame();
   };
   albumImage.src = url;
@@ -3304,6 +3372,8 @@ function traceShadowShapePath(c, sx, sy, sw, sh, radius, topRadius, bottomRadius
   }
 }
 
+let morphShadowScratch = null;
+
 function drawBlurredCapsuleShadow(targetCtx, opts) {
   const {
     x,
@@ -3322,75 +3392,62 @@ function drawBlurredCapsuleShadow(targetCtx, opts) {
   } = opts;
   if (w <= 0 || h <= 0) return;
 
-  if (!preferSprite || typeof document === 'undefined' || !document.createElement) {
-    // Zero-blur 2-layer soft silhouette during 144Hz morphs (zero per-frame canvas alloc or Skia blur)
-    const layers = [
-      { padX: blur * 0.52, padY: blur * 0.45, dy: offsetY * 0.9, alpha: 0.14 },
-      { padX: blur * 0.24, padY: blur * 0.22, dy: offsetY * 0.55, alpha: 0.28 }
-    ];
-    for (let i = 0; i < layers.length; i++) {
-      const l = layers[i];
-      const lx = x - l.padX;
-      const ly = useBezelLump ? 0 : (y - l.padY * 0.35 + l.dy);
-      const lw = w + l.padX * 2;
-      const lh = useBezelLump ? (h + l.padY + l.dy) : (h + l.padY * 1.15);
-      targetCtx.save();
-      traceShadowShapePath(
-        targetCtx,
-        lx,
-        ly,
-        lw,
-        lh,
-        Array.isArray(radius) ? radius.map(r => r + l.padX * 0.5) : (radius + l.padX * 0.5),
-        topRadius !== undefined ? topRadius + l.padX * 0.5 : undefined,
-        bottomRadius !== undefined ? bottomRadius + l.padX * 0.5 : undefined,
-        useBezelLump,
-        topFillet
-      );
-      targetCtx.fillStyle = color;
-      targetCtx.globalAlpha *= l.alpha;
-      targetCtx.fill();
-      targetCtx.restore();
-    }
-    return;
-  }
+  if (typeof document === 'undefined' || !document.createElement) return;
 
   const rw = Math.round(w);
   const rh = Math.round(h);
+  const blurPad = Math.ceil(blur * 2 + 6);
+  const earPad = useBezelLump ? Math.ceil(topFillet + 2) : 0;
+  const padX = blurPad + earPad;
+  const padTop = useBezelLump ? 0 : blurPad;
+  const padBottom = blurPad + Math.ceil(Math.max(0, offsetY));
+  const cw = Math.max(1, rw + padX * 2);
+  const ch = Math.max(1, rh + padTop + padBottom);
+
+  const renderShadowToCanvas = (oc) => {
+    const octx = oc.getContext('2d');
+    if (!octx) return;
+    octx.clearRect(0, 0, oc.width, oc.height);
+    octx.save();
+    octx.shadowColor = color;
+    octx.shadowBlur = blur;
+    octx.shadowOffsetY = offsetY;
+    traceShadowShapePath(octx, padX, padTop, rw, rh, radius, topRadius, bottomRadius, useBezelLump, topFillet);
+    octx.fillStyle = '#000000';
+    octx.fill();
+    octx.restore();
+
+    // Cut out exact inner shape so semi-transparent glass never shows dark shadow underfill
+    octx.save();
+    octx.globalCompositeOperation = 'destination-out';
+    traceShadowShapePath(octx, padX, padTop, rw, rh, radius, topRadius, bottomRadius, useBezelLump, topFillet);
+    octx.fillStyle = '#000000';
+    octx.fill();
+    octx.restore();
+  };
+
+  if (!preferSprite) {
+    if (!morphShadowScratch) {
+      morphShadowScratch = document.createElement('canvas');
+    }
+    if (morphShadowScratch.width < cw || morphShadowScratch.height < ch) {
+      morphShadowScratch.width = Math.max(morphShadowScratch.width, cw);
+      morphShadowScratch.height = Math.max(morphShadowScratch.height, ch);
+    }
+    renderShadowToCanvas(morphShadowScratch);
+    targetCtx.drawImage(morphShadowScratch, 0, 0, cw, ch, x - padX, useBezelLump ? 0 : (y - padTop), cw, ch);
+    return;
+  }
+
   const rKey = Array.isArray(radius) ? radius.map(v => Math.round(v)).join(',') : Math.round(radius);
   const key = `${useBezelLump ? 1 : 0}:${rw}:${rh}:${rKey}:${Math.round(topRadius || 0)}:${Math.round(bottomRadius || 0)}:${Math.round(topFillet)}:${Math.round(blur)}:${Math.round(offsetY)}:${color}`;
 
   let entry = shadowSpriteCache.get(key);
   if (!entry) {
-    const blurPad = Math.ceil(blur * 2 + 6);
-    const earPad = useBezelLump ? Math.ceil(topFillet + 2) : 0;
-    const padX = blurPad + earPad;
-    const padTop = useBezelLump ? 0 : blurPad;
-    const padBottom = blurPad + Math.ceil(Math.max(0, offsetY));
-    const cw = Math.max(1, rw + padX * 2);
-    const ch = Math.max(1, rh + padTop + padBottom);
     const oc = document.createElement('canvas');
     oc.width = cw;
     oc.height = ch;
-    const octx = oc.getContext('2d');
-    if (octx) {
-      octx.save();
-      octx.shadowColor = color;
-      octx.shadowBlur = blur;
-      octx.shadowOffsetY = offsetY;
-      traceShadowShapePath(octx, padX, padTop, rw, rh, radius, topRadius, bottomRadius, useBezelLump, topFillet);
-      octx.fillStyle = '#000000';
-      octx.fill();
-      octx.restore();
-
-      // Cut out exact inner shape so semi-transparent glass doesn't composite black underfill
-      octx.save();
-      octx.globalCompositeOperation = 'destination-out';
-      traceShadowShapePath(octx, padX, padTop, rw, rh, radius, topRadius, bottomRadius, useBezelLump, topFillet);
-      octx.fillStyle = '#000000';
-      octx.fill();
-      octx.restore();
-    }
+    renderShadowToCanvas(oc);
     if (shadowSpriteCache.size >= 24) {
       const oldestKey = shadowSpriteCache.keys().next().value;
       shadowSpriteCache.delete(oldestKey);
@@ -3433,7 +3490,9 @@ function paintCapsuleSurface(c, {
   rimColor = 'rgba(255, 255, 255, 0.14)',
   forceSemanticRim = false,
   accentTintColor = null,
-  accentTintStrength = 0
+  accentTintPalette = null,
+  accentTintStrength = 0,
+  p = 0
 }) {
   const tracePath = () => {
     if (useBezelLump) {
@@ -3459,14 +3518,33 @@ function paintCapsuleSurface(c, {
     }
   };
 
+  const palette = (Array.isArray(accentTintPalette) && accentTintPalette.length > 0)
+    ? accentTintPalette
+    : (accentTintColor ? [accentTintColor] : null);
+
   if (!liquidGlassEnabled) {
     const grad = c.createLinearGradient(x, y, x, y + h);
     grad.addColorStop(0.0, `rgba(16, 16, 20, ${islandOpacity})`);
     grad.addColorStop(0.5, `rgba(8, 8, 10, ${islandOpacity})`);
     grad.addColorStop(1.0, `rgba(2, 2, 4, ${islandOpacity})`);
+
+    c.save();
     tracePath();
     c.fillStyle = grad;
     c.fill();
+    if (accentTintStrength > 0.05 && palette) {
+      c.clip();
+      const c0 = palette[0];
+      const c1 = palette[1] || c0;
+      const c2 = palette[2] || c1;
+      const artGrad = c.createLinearGradient(x, y, x + w, y + h);
+      artGrad.addColorStop(0.0, colorWithAlpha(c0, 0.38 * accentTintStrength));
+      artGrad.addColorStop(0.5, colorWithAlpha(c1, 0.28 * accentTintStrength));
+      artGrad.addColorStop(1.0, colorWithAlpha(c2, 0.24 * accentTintStrength));
+      c.fillStyle = artGrad;
+      c.fillRect(x - 24, y, w + 48, h);
+    }
+    c.restore();
 
     traceRim();
     c.lineWidth = 1;
@@ -3475,12 +3553,13 @@ function paintCapsuleSurface(c, {
     return;
   }
 
-  // Apple-inspired Liquid Glass Mode: translucent frosted glass, internal sheen, cursor bloom, and luminous rim
-  const baseGlassAlpha = Math.max(0.28, Math.min(0.62, islandOpacity * 0.48));
+  // Apple-inspired Liquid Glass Mode: translucent frosted glass, album palette gradient, internal sheen, cursor bloom, and luminous rim
+  const glassFactor = 0.50 + 0.28 * Math.max(0, Math.min(1, p));
+  const baseGlassAlpha = Math.max(0.38, Math.min(0.84, islandOpacity * glassFactor));
   const bodyGrad = c.createLinearGradient(x, y, x, y + h);
-  bodyGrad.addColorStop(0.0, `rgba(210, 224, 245, ${Math.min(0.32, baseGlassAlpha * 0.56)})`);
-  bodyGrad.addColorStop(0.35, `rgba(28, 36, 52, ${baseGlassAlpha})`);
-  bodyGrad.addColorStop(1.0, `rgba(16, 22, 34, ${Math.min(0.70, baseGlassAlpha * 1.15)})`);
+  bodyGrad.addColorStop(0.0, `rgba(46, 54, 72, ${Math.min(0.86, baseGlassAlpha * 0.92)})`);
+  bodyGrad.addColorStop(0.42, `rgba(20, 24, 34, ${baseGlassAlpha})`);
+  bodyGrad.addColorStop(1.0, `rgba(12, 15, 24, ${Math.min(0.88, baseGlassAlpha * 1.06)})`);
 
   c.save();
   tracePath();
@@ -3488,11 +3567,14 @@ function paintCapsuleSurface(c, {
   c.fill();
   c.clip();
 
-  if (accentTintStrength > 0.05 && accentTintColor) {
+  if (accentTintStrength > 0.05 && palette) {
+    const c0 = palette[0];
+    const c1 = palette[1] || c0;
+    const c2 = palette[2] || c1;
     const tintGrad = c.createLinearGradient(x, y, x + w, y + h);
-    tintGrad.addColorStop(0.0, colorWithAlpha(accentTintColor, 0.24 * accentTintStrength));
-    tintGrad.addColorStop(0.6, colorWithAlpha(accentTintColor, 0.12 * accentTintStrength));
-    tintGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.04)');
+    tintGrad.addColorStop(0.0, colorWithAlpha(c0, 0.42 * accentTintStrength));
+    tintGrad.addColorStop(0.5, colorWithAlpha(c1, 0.30 * accentTintStrength));
+    tintGrad.addColorStop(1.0, colorWithAlpha(c2, 0.26 * accentTintStrength));
     c.fillStyle = tintGrad;
     c.fillRect(x - 24, y, w + 48, h);
   }
@@ -3500,8 +3582,8 @@ function paintCapsuleSurface(c, {
   // Top specular lip reflection
   const topSheenH = Math.min(34, Math.max(12, h * 0.42));
   const topSheen = c.createLinearGradient(x, y, x, y + topSheenH);
-  topSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.28)');
-  topSheen.addColorStop(0.55, 'rgba(255, 255, 255, 0.07)');
+  topSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.26)');
+  topSheen.addColorStop(0.55, 'rgba(255, 255, 255, 0.06)');
   topSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
   c.fillStyle = topSheen;
   c.fillRect(x - 24, y, w + 48, topSheenH);
@@ -3510,7 +3592,7 @@ function paintCapsuleSurface(c, {
   const botSheenH = Math.min(24, Math.max(8, h * 0.28));
   const botSheen = c.createLinearGradient(x, y + h - botSheenH, x, y + h);
   botSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.0)');
-  botSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.11)');
+  botSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.10)');
   c.fillStyle = botSheen;
   c.fillRect(x - 24, y + h - botSheenH, w + 48, botSheenH);
 
@@ -3518,22 +3600,31 @@ function paintCapsuleSurface(c, {
   if (mouseX >= x - 60 && mouseX <= x + w + 60 && mouseY >= y - 20 && mouseY <= y + h + 40) {
     const bloomR = Math.max(75, Math.min(180, w * 0.42));
     const bloom = c.createRadialGradient(mouseX, mouseY, 2, mouseX, mouseY, bloomR);
-    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.20)');
-    bloom.addColorStop(0.5, 'rgba(255, 255, 255, 0.06)');
+    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.18)');
+    bloom.addColorStop(0.5, 'rgba(255, 255, 255, 0.05)');
     bloom.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
     c.fillStyle = bloom;
     c.fillRect(x - 24, y, w + 48, h);
   }
   c.restore();
 
-  // Luminous diagonal specular glass rim
+  // Luminous diagonal specular glass rim (subtly tinted by album palette when active)
   c.save();
   traceRim();
-  const rimGrad = c.createLinearGradient(x, y, x + w * 0.35, y + h);
-  rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.72)');
-  rimGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.28)');
-  rimGrad.addColorStop(0.7, 'rgba(255, 255, 255, 0.16)');
-  rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.45)');
+  const rimGrad = c.createLinearGradient(x, y, x + w * 0.45, y + h);
+  if (accentTintStrength > 0.05 && palette) {
+    const c0 = palette[0];
+    const c1 = palette[1] || c0;
+    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.68)');
+    rimGrad.addColorStop(0.4, colorWithAlpha(c0, 0.55 * accentTintStrength));
+    rimGrad.addColorStop(0.8, colorWithAlpha(c1, 0.40 * accentTintStrength));
+    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.45)');
+  } else {
+    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.72)');
+    rimGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.28)');
+    rimGrad.addColorStop(0.7, 'rgba(255, 255, 255, 0.16)');
+    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.45)');
+  }
   c.lineWidth = 1.25;
   c.strokeStyle = forceSemanticRim ? rimColor : rimGrad;
   c.stroke();
@@ -3686,7 +3777,9 @@ function render() {
       rimColor: rimCol,
       forceSemanticRim,
       accentTintColor: albumAccentColor,
-      accentTintStrength: tintK
+      accentTintPalette: albumPalette,
+      accentTintStrength: tintK,
+      p
     });
 
     ctx.restore();
