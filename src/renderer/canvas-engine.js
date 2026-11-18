@@ -504,7 +504,8 @@ function computeCapsuleHideTransform({
   normalY = 0,
   normalRadius = 16,
   normalTopFillet = 10,
-  isNotch = false
+  isNotch = false,
+  isHiding
 } = {}) {
   const k = Math.max(0, Math.min(1, Number(hideProgress) || 0));
   if (k <= 0.001) {
@@ -526,9 +527,21 @@ function computeCapsuleHideTransform({
   const lumpBottomRadius = 3;
   const lumpTopFillet = 8;
 
-  const w = normalW + (lumpW - normalW) * k;
-  const h = normalH + (lumpH - normalH) * k;
-  const y = normalY * (1 - k);
+  let kGeo = k;
+  if (typeof isHiding === 'boolean' && k > 0.001 && k < 0.999) {
+    const c1 = 0.75;
+    const c3 = c1 + 1;
+    if (isHiding) {
+      kGeo = 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2);
+    } else {
+      const inv = 1 - k;
+      kGeo = 1 - (1 + c3 * Math.pow(inv - 1, 3) + c1 * Math.pow(inv - 1, 2));
+    }
+  }
+
+  const w = Math.max(40, normalW + (lumpW - normalW) * kGeo);
+  const h = Math.max(4, normalH + (lumpH - normalH) * kGeo);
+  const y = Math.max(0, normalY * (1 - kGeo));
   const bottomRadius = normalRadius + (lumpBottomRadius - normalRadius) * k;
   const topRadius = isNotch ? 0 : Math.max(0, normalRadius * (1 - k * 1.35));
   const topFillet = normalTopFillet + (lumpTopFillet - normalTopFillet) * k;
@@ -1546,6 +1559,25 @@ resizeCanvas();
 function easeOutQuart(x) {
   return 1 - Math.pow(1 - x, 3.6);
 }
+
+// Helper: Subtle Ease-Out Back (overshoot on both open and close)
+function easeOutBack(x, s = 0.85) {
+  const t = Math.max(0, Math.min(1, x));
+  const c1 = s;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+function easeOpenCloseBack(p, isOpening = true, s = 0.85) {
+  const t = Math.max(0, Math.min(1, p));
+  if (t <= 0.0001) return 0;
+  if (t >= 0.9999) return 1;
+  return isOpening ? easeOutBack(t, s) : (1 - easeOutBack(1 - t, s));
+}
+
+let isCapsuleOpening = true;
+let isSongPopupOpening = true;
+let isPeekHidingDir = false;
 
 // Helper: Point in Rounded Rect
 function pointInRect(px, py, rx, ry, rw, rh) {
@@ -2990,6 +3022,9 @@ function animate(now) {
   }
 
   // Fluid Spring / Lerp towards targetProgress
+  if (Math.abs(targetProgress - animProgress) > 0.001) {
+    isCapsuleOpening = targetProgress >= animProgress;
+  }
   const speed = (targetProgress > animProgress ? 8.5 : 9.5) * animSpeedMultiplier;
   if (Math.abs(targetProgress - animProgress) <= 0.001) {
     animProgress = targetProgress;
@@ -3000,6 +3035,9 @@ function animate(now) {
   // Critically damped peek-hide / reveal animation (~170ms fast hide into lump, ~220ms reveal)
   const wantHiddenNow = isShouldBeHidden();
   const targetHide = wantHiddenNow ? 1.0 : 0.0;
+  if (Math.abs(targetHide - hideProgress) > 0.002) {
+    isPeekHidingDir = targetHide >= hideProgress;
+  }
   const hideRate = (targetHide > hideProgress ? 18.0 : 13.5) * animSpeedMultiplier;
   if (Math.abs(targetHide - hideProgress) <= 0.002) {
     hideProgress = targetHide;
@@ -3032,6 +3070,9 @@ function animate(now) {
   }
   const isSongPopupActive = songPopupActiveUntil > now && animProgress < 0.2;
   const targetSongPopupProgress = isSongPopupActive ? 1.0 : 0.0;
+  if (Math.abs(targetSongPopupProgress - songPopupProgress) > 0.002) {
+    isSongPopupOpening = targetSongPopupProgress >= songPopupProgress;
+  }
   const songSpringSpeed = (targetSongPopupProgress > songPopupProgress ? 9.5 : 7.0) * animSpeedMultiplier;
   if (Math.abs(targetSongPopupProgress - songPopupProgress) <= 0.002) {
     songPopupProgress = targetSongPopupProgress;
@@ -3260,11 +3301,12 @@ function getRestingWidth() {
 
 function getTargetWidth(p) {
   const restW = getRestingWidth();
-  const normalW = restW + (UI.EXPANDED_W - restW) * easeOutQuart(p);
+  const e = easeOpenCloseBack(p, isCapsuleOpening, 0.85);
+  const normalW = Math.max(44, restW + (UI.EXPANDED_W - restW) * e);
   if (songPopupProgress > 0.001 && p < 0.2) {
-    const popK = easeOutQuart(songPopupProgress);
+    const popK = easeOpenCloseBack(songPopupProgress, isSongPopupOpening, 0.85);
     const targetW = displayMode === 'notch' ? UI.EXPANDED_W : SONG_POPUP_WIDTH;
-    return normalW + (targetW - normalW) * popK;
+    return Math.max(44, normalW + (targetW - normalW) * popK);
   }
   return normalW;
 }
@@ -3285,10 +3327,11 @@ function getTargetHeight(p) {
   }
 
   const expH = currentExpandedH;
-  const normalH = restH + (expH - restH) * easeOutQuart(p);
+  const e = easeOpenCloseBack(p, isCapsuleOpening, 0.85);
+  const normalH = Math.max(20, restH + (expH - restH) * e);
   if (songPopupProgress > 0.001 && p < 0.2) {
-    const popK = easeOutQuart(songPopupProgress);
-    return normalH + (SONG_POPUP_HEIGHT - normalH) * popK;
+    const popK = easeOpenCloseBack(songPopupProgress, isSongPopupOpening, 0.85);
+    return Math.max(20, normalH + (SONG_POPUP_HEIGHT - normalH) * popK);
   }
   return normalH;
 }
@@ -3658,7 +3701,8 @@ function render() {
     normalY,
     normalRadius,
     normalTopFillet,
-    isNotch
+    isNotch,
+    isHiding: isPeekHidingDir
   });
 
   const w = hideT.w;
@@ -8481,6 +8525,7 @@ if (typeof module !== 'undefined' && module.exports) {
     formatClockTime,
     getTopLumpHitbox,
     computeCapsuleHideTransform,
-    getLiquidGlassTokens
+    getLiquidGlassTokens,
+    easeOpenCloseBack
   };
 }

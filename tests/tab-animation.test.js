@@ -127,3 +127,26 @@ test('TabAnimationEngine: liquid height smooth spring transition', () => {
   }
   assert.ok(curH > 310, 'Height approaches target smoothly');
 });
+
+test('OpenCloseAnimation: easeOpenCloseBack provides subtle overshoot on both open and close', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'canvas-engine.js'), 'utf8');
+  const start = src.indexOf('function easeOutBack(');
+  const end = src.indexOf('\nlet isCapsuleOpening', start);
+  const fn = new vm.Script(`${src.slice(start, end)}; easeOpenCloseBack;`).runInNewContext({});
+
+  assert.strictEqual(fn(0, true), 0);
+  assert.strictEqual(fn(1, true), 1);
+  assert.strictEqual(fn(0, false), 0);
+  assert.strictEqual(fn(1, false), 1);
+
+  // Opening overshoots slightly above 1.0 around p=0.78
+  const openPeak = fn(0.78, true, 0.85);
+  assert.ok(openPeak > 1.01 && openPeak < 1.06, `Expected subtle open overshoot, got ${openPeak}`);
+
+  // Closing overshoots slightly below 0.0 around p=0.22
+  const closeDip = fn(0.22, false, 0.85);
+  assert.ok(closeDip < -0.01 && closeDip > -0.06, `Expected subtle close overshoot, got ${closeDip}`);
+});
