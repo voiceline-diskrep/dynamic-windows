@@ -10,4 +10,5 @@ build/
 installer_output/
 *.log
 src-tauri/target/
+src-rust/target/
 

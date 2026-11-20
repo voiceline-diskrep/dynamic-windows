@@ -1,7 +1,7 @@
 'use strict';
 /**
- * Dynamic Windows - Full App Staging & Zip Packager
- * Copies Electron binary, renames to DynamicWindows.exe, bundles app in resources/app,
+ * Dynamic Windows - Native Rust Distribution Staging & Zip Packager
+ * Compiles src-rust (release), bundles DynamicWindows.exe + WebView2Loader.dll + icons,
  * and creates dist/DynamicWindows-<version>.zip
  */
 
@@ -14,49 +14,48 @@ const version = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf
 const dist = path.join(repo, 'dist');
 const stage = path.join(dist, 'full-stage');
 const top = path.join(stage, 'DynamicWindows');
+const rustDir = path.join(repo, 'src-rust');
 
-console.log(`--- Staging Full Electron Distribution (v${version}) ---`);
+console.log(`--- Building Native Rust Distribution (v${version}) ---`);
 
+// Sync Cargo.toml version with package.json
+const cargoTomlPath = path.join(rustDir, 'Cargo.toml');
+let cargoToml = fs.readFileSync(cargoTomlPath, 'utf8');
+cargoToml = cargoToml.replace(/^version\s*=\s*"[^"]*"/m, `version = "${version}"`);
+fs.writeFileSync(cargoTomlPath, cargoToml, 'utf8');
+
+// 1. Compile Rust release binary
+console.log('Step 1: Compiling Rust release binary (cargo build --release)...');
+execFileSync('cargo', ['build', '--release'], { cwd: rustDir, stdio: 'inherit' });
+
+const builtExe = path.join(rustDir, 'target', 'release', 'dynamic-windows.exe');
+if (!fs.existsSync(builtExe)) {
+  console.error(`Rust release binary not found at ${builtExe}`);
+  process.exit(1);
+}
+
+// 2. Stage clean distribution directory
 if (!fs.existsSync(dist)) fs.mkdirSync(dist, { recursive: true });
 fs.rmSync(stage, { recursive: true, force: true });
 fs.mkdirSync(top, { recursive: true });
 
-// 1. Copy Electron Runtime
-const electronDist = path.join(repo, 'node_modules', 'electron', 'dist');
-console.log(`Copying Electron runtime from ${electronDist}...`);
-fs.cpSync(electronDist, top, { recursive: true });
+fs.copyFileSync(builtExe, path.join(top, 'DynamicWindows.exe'));
 
-// 2. Rename electron.exe -> DynamicWindows.exe
-console.log('Renaming electron.exe -> DynamicWindows.exe...');
-const electronExe = path.join(top, 'electron.exe');
-const targetExe = path.join(top, 'DynamicWindows.exe');
-if (fs.existsSync(electronExe)) {
-  fs.renameSync(electronExe, targetExe);
+const dllSrc = path.join(rustDir, 'vendor', 'WebView2Loader.dll');
+if (!fs.existsSync(dllSrc)) {
+  console.error(`WebView2Loader.dll not found at ${dllSrc}`);
+  process.exit(1);
 }
+fs.copyFileSync(dllSrc, path.join(top, 'WebView2Loader.dll'));
 
-// 3. Remove default demo app
-const defaultApp = path.join(top, 'resources', 'default_app.asar');
-if (fs.existsSync(defaultApp)) {
-  fs.rmSync(defaultApp, { force: true });
-}
-
-// 4. Copy app files into resources/app
-console.log('Bundling application files into resources/app...');
-const appDir = path.join(top, 'resources', 'app');
-fs.mkdirSync(appDir, { recursive: true });
-
-// Copy package.json, icons, logos
-['package.json', 'app_icon.png', 'app_icon.ico', 'antigravity_logo.png'].forEach(f => {
+['app_icon.ico', 'app_icon.png'].forEach(f => {
   const src = path.join(repo, f);
   if (fs.existsSync(src)) {
-    fs.copyFileSync(src, path.join(appDir, f));
+    fs.copyFileSync(src, path.join(top, f));
   }
 });
 
-// Copy src directory recursively
-fs.cpSync(path.join(repo, 'src'), path.join(appDir, 'src'), { recursive: true });
-
-// 5. Create Zip Archive via Windows native tar.exe
+// 3. Create Zip Archive via Windows native tar.exe
 const zipPath = path.join(dist, `DynamicWindows-${version}.zip`);
 if (fs.existsSync(zipPath)) fs.rmSync(zipPath, { force: true });
 
@@ -65,4 +64,4 @@ const tarExe = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'tar.e
 execFileSync(tarExe, ['-a', '-c', '-f', zipPath, '-C', stage, 'DynamicWindows'], { stdio: 'inherit' });
 
 const stat = fs.statSync(zipPath);
-console.log(`✓ Full distribution zip ready: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
+console.log(`Native Rust zip ready: ${(stat.size / 1024 / 1024).toFixed(2)} MB (${stat.size} bytes)`);

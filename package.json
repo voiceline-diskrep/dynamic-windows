@@ -1,12 +1,13 @@
 {
   "name": "dynamic-windows",
-  "version": "1.4.45",
-  "description": "Dynamic Windows: Apple Dynamic Island & Notch for Windows with Google Antigravity & Liner Synced Lyrics",
+  "version": "2.0.0",
+  "description": "Dynamic Windows: Native Rust Apple Dynamic Island & Notch for Windows with Google Antigravity & Liner Synced Lyrics",
   "main": "src/main/main.js",
   "type": "commonjs",
   "scripts": {
     "start": "electron .",
     "test": "node --test tests/antigravity.test.js tests/hooks.test.js tests/dropzone-config.test.js tests/mcp.test.js tests/media.test.js tests/sys-helper.test.js tests/call-monitor.test.js tests/user-data.test.js tests/notification-monitor.test.js tests/sound-fx.test.js tests/font-config.test.js tests/alarm.test.js tests/personalization.test.js tests/notch-geometry.test.js tests/tab-animation.test.js tests/rolling-number-wheel.test.js tests/battery.test.js tests/top-nav-exit.test.js tests/idle-throttling.test.js tests/side-islands.test.js tests/hover-hide-and-clock.test.js",
+    "build:rust": "cargo build --release --manifest-path src-rust/Cargo.toml",
     "build:setup": "node tools/make-setup.cjs"
   },
   "keywords": [

@@ -10,11 +10,11 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Dynamic Windows Setup")]
 [assembly: AssemblyProduct("Dynamic Windows")]
 [assembly: AssemblyCompany("voiceline-diskrep")]
-[assembly: AssemblyVersion("1.4.45.0")]
-[assembly: AssemblyFileVersion("1.4.45.0")]
+[assembly: AssemblyVersion("2.0.0.0")]
+[assembly: AssemblyFileVersion("2.0.0.0")]
 
 static class Setup {
-    public const string VERSION = "1.4.45";
+    public const string VERSION = "2.0.0";
     public static string Home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "DynamicWindows");
     public static bool NoStart, Quiet;
 
@@ -159,12 +159,23 @@ static class Installer {
             }
         } catch { }
 
-        // Clean up any legacy root package.json or src/ next to executable
+        // Clean up legacy Electron runtime files & old root folders when upgrading to native Rust build
         try {
-            string rootPkg = Path.Combine(targetDir, "package.json");
-            if (File.Exists(rootPkg)) File.Delete(rootPkg);
-            string rootSrc = Path.Combine(targetDir, "src");
-            if (Directory.Exists(rootSrc)) Directory.Delete(rootSrc, true);
+            string[] legacyDirs = new[] { "resources", "locales", "src" };
+            foreach (var d in legacyDirs) {
+                string dp = Path.Combine(targetDir, d);
+                if (Directory.Exists(dp)) Directory.Delete(dp, true);
+            }
+            string[] legacyFiles = new[] {
+                "package.json", "chrome_100_percent.pak", "chrome_200_percent.pak", "resources.pak",
+                "icudtl.dat", "v8_context_snapshot.bin", "snapshot_blob.bin", "vk_swiftshader_icd.json",
+                "ffmpeg.dll", "d3dcompiler_47.dll", "libEGL.dll", "libGLESv2.dll", "vk_swiftshader.dll",
+                "vulkan-1.dll", "LICENSE", "LICENSES.chromium.html", "version"
+            };
+            foreach (var f in legacyFiles) {
+                string fp = Path.Combine(targetDir, f);
+                if (File.Exists(fp)) File.Delete(fp);
+            }
         } catch { }
 
         Stream zipStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("DynamicWindows.zip");
