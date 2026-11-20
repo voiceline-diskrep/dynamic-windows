@@ -2964,7 +2964,8 @@ function animate(now) {
     idleFrameTimeout = null;
   }
   const rawDt = Math.max(0, (now - lastTime) / 1000);
-  const dt = Math.min(rawDt, 0.05);
+  // Prevent first waking frame after 0 FPS idle sleep from jumping 50ms in one step
+  const dt = rawDt > 0.06 ? (1 / 120) : Math.min(rawDt, 0.05);
   lastTime = now;
   currentDt = dt;
 
@@ -3021,28 +3022,30 @@ function animate(now) {
     return;
   }
 
-  // Fluid Spring / Lerp towards targetProgress
+  // Normalized linear progress step fed into easeOpenCloseBack (~340ms open, ~280ms close at 1.0x)
   if (Math.abs(targetProgress - animProgress) > 0.001) {
     isCapsuleOpening = targetProgress >= animProgress;
   }
-  const speed = (targetProgress > animProgress ? 8.5 : 9.5) * animSpeedMultiplier;
-  if (Math.abs(targetProgress - animProgress) <= 0.001) {
+  const openCloseDuration = targetProgress > animProgress ? 0.34 : 0.28;
+  const progressStep = (dt / openCloseDuration) * animSpeedMultiplier;
+  if (Math.abs(targetProgress - animProgress) <= progressStep) {
     animProgress = targetProgress;
   } else {
-    animProgress += (targetProgress - animProgress) * (1 - Math.exp(-speed * dt));
+    animProgress += Math.sign(targetProgress - animProgress) * progressStep;
   }
 
-  // Critically damped peek-hide / reveal animation (~170ms fast hide into lump, ~220ms reveal)
+  // Peek-hide / reveal animation (~220ms hide into lump, ~260ms reveal at 1.0x)
   const wantHiddenNow = isShouldBeHidden();
   const targetHide = wantHiddenNow ? 1.0 : 0.0;
   if (Math.abs(targetHide - hideProgress) > 0.002) {
     isPeekHidingDir = targetHide >= hideProgress;
   }
-  const hideRate = (targetHide > hideProgress ? 18.0 : 13.5) * animSpeedMultiplier;
-  if (Math.abs(targetHide - hideProgress) <= 0.002) {
+  const hideDuration = targetHide > hideProgress ? 0.22 : 0.26;
+  const hideStep = (dt / hideDuration) * animSpeedMultiplier;
+  if (Math.abs(targetHide - hideProgress) <= hideStep) {
     hideProgress = targetHide;
   } else {
-    hideProgress += (targetHide - hideProgress) * (1 - Math.exp(-hideRate * dt));
+    hideProgress += Math.sign(targetHide - hideProgress) * hideStep;
   }
 
   // Sound FX expansion state tracking
@@ -3073,11 +3076,12 @@ function animate(now) {
   if (Math.abs(targetSongPopupProgress - songPopupProgress) > 0.002) {
     isSongPopupOpening = targetSongPopupProgress >= songPopupProgress;
   }
-  const songSpringSpeed = (targetSongPopupProgress > songPopupProgress ? 9.5 : 7.0) * animSpeedMultiplier;
-  if (Math.abs(targetSongPopupProgress - songPopupProgress) <= 0.002) {
+  const songDuration = targetSongPopupProgress > songPopupProgress ? 0.30 : 0.26;
+  const songStep = (dt / songDuration) * animSpeedMultiplier;
+  if (Math.abs(targetSongPopupProgress - songPopupProgress) <= songStep) {
     songPopupProgress = targetSongPopupProgress;
   } else {
-    songPopupProgress += (targetSongPopupProgress - songPopupProgress) * (1 - Math.exp(-songSpringSpeed * dt));
+    songPopupProgress += Math.sign(targetSongPopupProgress - songPopupProgress) * songStep;
   }
 
   // Auto-collapse notification banner after 4s unless hovered
@@ -3285,7 +3289,7 @@ function getTargetRestingWidth() {
     const timeW = ctx.measureText(timeStr).width;
     ctx.restore();
     if (batteryState && batteryState.hasBattery) {
-      mainPillW = Math.max(122, Math.round(timeW + 76));
+      mainPillW = Math.max(134, Math.round(timeW + 84));
     } else {
       mainPillW = Math.max(66, Math.round(timeW + 26));
     }
@@ -3299,10 +3303,31 @@ function getRestingWidth() {
   return currentRestingWidth;
 }
 
+function getNotificationBannerWidth() {
+  if (!activeNotification) return 360;
+  const appText = String(activeNotification.app || 'Notification');
+  const titleText = String(activeNotification.title || activeNotification.body || 'New Notification');
+  const bodyText = (activeNotification.title && activeNotification.body) ? String(activeNotification.body) : '';
+  let maxTextW = 180;
+  try {
+    ctx.save();
+    ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+    const appW = ctx.measureText(appText).width;
+    ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+    const titleW = ctx.measureText(titleText).width;
+    ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
+    const bodyW = bodyText ? ctx.measureText(bodyText).width : 0;
+    ctx.restore();
+    maxTextW = Math.max(appW, titleW, bodyW);
+  } catch (e) {}
+  return Math.max(320, Math.min(440, Math.round(maxTextW + 108)));
+}
+
 function getTargetWidth(p) {
   const restW = getRestingWidth();
   const e = easeOpenCloseBack(p, isCapsuleOpening, 0.85);
-  const normalW = Math.max(44, restW + (UI.EXPANDED_W - restW) * e);
+  const expandedTargetW = (currentView === 'notification_banner') ? getNotificationBannerWidth() : UI.EXPANDED_W;
+  const normalW = Math.max(44, restW + (expandedTargetW - restW) * e);
   if (songPopupProgress > 0.001 && p < 0.2) {
     const popK = easeOpenCloseBack(songPopupProgress, isSongPopupOpening, 0.85);
     const targetW = displayMode === 'notch' ? UI.EXPANDED_W : SONG_POPUP_WIDTH;
@@ -3532,6 +3557,7 @@ function paintCapsuleSurface(c, {
   useBezelLump = false,
   rimColor = 'rgba(255, 255, 255, 0.14)',
   forceSemanticRim = false,
+  forcePureBlack = false,
   accentTintColor = null,
   accentTintPalette = null,
   accentTintStrength = 0,
@@ -3560,6 +3586,17 @@ function paintCapsuleSurface(c, {
       c.roundRect(x, y, w, h, radius);
     }
   };
+
+  if (forcePureBlack) {
+    tracePath();
+    c.fillStyle = '#000000';
+    c.fill();
+    traceRim();
+    c.lineWidth = 1;
+    c.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+    c.stroke();
+    return;
+  }
 
   const palette = (Array.isArray(accentTintPalette) && accentTintPalette.length > 0)
     ? accentTintPalette
@@ -3820,6 +3857,7 @@ function render() {
       useBezelLump,
       rimColor: rimCol,
       forceSemanticRim,
+      forcePureBlack: currentView === 'notification_banner' && p > 0.15,
       accentTintColor: albumAccentColor,
       accentTintPalette: albumPalette,
       accentTintStrength: tintK,
@@ -5392,37 +5430,6 @@ function renderTopNav(x, y, w) {
   const modeX = exitX - modeW - 6;
   const isModeHov = hoveredButtonId === 'toggle_display_mode';
 
-  // Laptop Battery Indicator Pill on Top Bar (Green >40%, Yellow 20-40%, Red 0-20%)
-  if (batteryState && batteryState.hasBattery) {
-    const battPillW = batteryState.isCharging ? 66 : 56;
-    const battPillH = 22;
-    const battPillX = modeX - battPillW - 6;
-    const isBattHov = hoveredButtonId === 'btn_battery_status';
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(battPillX, topY, battPillW, battPillH, 11);
-    ctx.fillStyle = isBattHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)';
-    ctx.fill();
-
-    drawBatteryIndicator(ctx, battPillX + 7, topY + battPillH / 2, batteryState, {
-      radius: 4.2,
-      showText: true,
-      font: '600 10.5px "Segoe UI Variable Text", Inter, sans-serif',
-      textColor: isBattHov ? '#ffffff' : '#e4e4e7',
-      isHovered: isBattHov
-    });
-    ctx.restore();
-
-    interactiveButtons.push({
-      id: 'btn_battery_status',
-      x: battPillX,
-      y: topY,
-      w: battPillW,
-      h: battPillH
-    });
-  }
-
   ctx.beginPath();
   ctx.roundRect(modeX, topY, modeW, modeH, 11);
   ctx.fillStyle = isModeHov ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.06)';
@@ -6876,36 +6883,6 @@ function renderHomeView(x, y, w, h) {
     h: greetH
   });
 
-  // Companion laptop battery status badge next to greeting
-  if (batteryState && batteryState.hasBattery) {
-    const homeBattX = clockX + greetW + 8;
-    const homeBattW = batteryState.isCharging ? 64 : 54;
-    const isHomeBattHov = hoveredButtonId === 'home_battery_badge';
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(homeBattX, greetY, homeBattW, greetH, 6);
-    ctx.fillStyle = isHomeBattHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.08)';
-    ctx.fill();
-
-    drawBatteryIndicator(ctx, homeBattX + 6, greetY + greetH / 2, batteryState, {
-      radius: 3.8,
-      showText: true,
-      font: '600 10px "Segoe UI Variable Text", Inter, sans-serif',
-      textColor: isHomeBattHov ? '#ffffff' : '#cbd5e1',
-      isHovered: isHomeBattHov
-    });
-    ctx.restore();
-
-    interactiveButtons.push({
-      id: 'home_battery_badge',
-      x: homeBattX,
-      y: greetY,
-      w: homeBattW,
-      h: greetH
-    });
-  }
-
   // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation
   const isHomeClockHov = hoveredButtonId === 'home_clock_display';
   const homeClockFontSize = (!clock24h && showAmPm) ? 23 : 27;
@@ -6931,7 +6908,41 @@ function renderHomeView(x, y, w, h) {
   ctx.fillStyle = '#94a3b8';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(dateStr, clockX, y + 93);
+  if (batteryState && batteryState.hasBattery) {
+    const shortDateStr = now.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    ctx.fillText(shortDateStr, clockX, y + 92);
+
+    const homeBattW = 60;
+    const homeBattH = 18;
+    const homeBattX = clockX + 132 - homeBattW;
+    const homeBattY = y + 89;
+    const isHomeBattHov = hoveredButtonId === 'home_battery_badge';
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(homeBattX, homeBattY, homeBattW, homeBattH, 5);
+    ctx.fillStyle = isHomeBattHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.07)';
+    ctx.fill();
+
+    drawBatteryIndicator(ctx, homeBattX + 5, homeBattY + homeBattH / 2, batteryState, {
+      radius: 3.6,
+      showText: true,
+      font: '600 9.5px "Segoe UI Variable Text", Inter, sans-serif',
+      textColor: isHomeBattHov ? '#ffffff' : '#e4e4e7',
+      isHovered: isHomeBattHov
+    });
+    ctx.restore();
+
+    interactiveButtons.push({
+      id: 'home_battery_badge',
+      x: homeBattX,
+      y: homeBattY,
+      w: homeBattW,
+      h: homeBattH
+    });
+  } else {
+    ctx.fillText(dateStr, clockX, y + 93);
+  }
 
   // 1b. Latest Notification Card below Digital Clock
   const notifCardX = clockX;
@@ -8433,44 +8444,40 @@ function renderNotificationBannerView(x, y, w, h) {
   const isNotch = displayMode === 'notch';
   const cornerR = UI.COMPACT_RADIUS + 8;
 
-  // Background glow
+  // Solid Pure Black background (no blue gradient wash)
   ctx.save();
   buildCapsulePath(ctx, x, y, w, h, cornerR, isNotch, 12);
-  ctx.clip();
-  const glowGrad = ctx.createRadialGradient(x + 50, y + h / 2, 5, x + 50, y + h / 2, 120);
-  glowGrad.addColorStop(0.0, 'rgba(56, 189, 248, 0.28)');
-  glowGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = glowGrad;
-  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#000000';
+  ctx.fill();
   ctx.restore();
 
-  // App Icon circle on left
-  const iconSize = 36;
+  // App Icon circle on left (quiet dark neutral)
+  const iconSize = 34;
   const iconX = x + 16;
   const iconY = y + (h - iconSize) / 2;
 
   ctx.save();
   ctx.beginPath();
   ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize / 2, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
   ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
 
-  ctx.font = '20px "Segoe UI Emoji", sans-serif';
+  ctx.font = '18px "Segoe UI Emoji", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(notif.icon || '🔔', iconX + iconSize / 2, iconY + iconSize / 2);
   ctx.restore();
 
   // Content Column
-  const textX = iconX + iconSize + 14;
-  const maxW = w - textX - 44;
+  const textX = iconX + iconSize + 12;
+  const maxW = Math.max(80, w - (textX - x) - 44);
 
-  // Line 1: App Name & relative time
+  // Line 1: App Name (quiet neutral)
   ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = '#38bdf8';
+  ctx.fillStyle = '#a1a1aa';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillText(notif.app || 'Notification', textX, y + 14);

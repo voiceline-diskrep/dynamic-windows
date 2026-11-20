@@ -93,7 +93,7 @@ test('NotificationMonitor: processRawOutput safely handles dirty JSON with ASCII
   assert.strictEqual(updatedList.length, 1);
   assert.strictEqual(updatedList[0].app, 'TwoCode');
   assert.strictEqual(updatedList[0].title, 'Shortcut in use');
-  assert.strictEqual(updatedList[0].body, 'Settings   Shortcuts');
+  assert.strictEqual(updatedList[0].body, 'Settings Shortcuts');
 });
 
 test('NotificationMonitor: processRawOutput emits new-notification for new items after initialization', () => {
@@ -109,4 +109,20 @@ test('NotificationMonitor: processRawOutput emits new-notification for new items
   assert.strictEqual(newNotif.id, 'win_101');
   assert.strictEqual(newNotif.app, 'Discord');
   assert.strictEqual(nm.getNotifications().length, 2);
+});
+
+test('NotificationMonitor: sanitizeNotificationText strips BiDi isolates and OEM question-mark artifacts around WhatsApp sender messages', () => {
+  const sanitize = NotificationMonitor.sanitizeNotificationText;
+  assert.strictEqual(
+    sanitize('CORE TEAM | BJC — ~\u2068Alex\u2069: \u200EPhoto\u200F'),
+    'CORE TEAM | BJC — ~Alex: Photo'
+  );
+  assert.strictEqual(
+    sanitize('CORE TEAM | BJC — ~?Alex?: Photo?'),
+    'CORE TEAM | BJC — ~Alex: Photo'
+  );
+  assert.strictEqual(
+    sanitize('CORE TEAM | BJC — ~????: Photo?'),
+    'CORE TEAM | BJC — ~: Photo'
+  );
 });

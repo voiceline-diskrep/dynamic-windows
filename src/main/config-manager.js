@@ -33,6 +33,7 @@ const DEFAULT_CONFIG = {
   clock24h: false,
   showSeconds: false,
   showAmPm: true,
+  suppressWindowsToasts: false, // Suppress duplicate native Windows toast popups
   antigravityMonitor: true,
   autoFocusAntigravity: true,
   hooksPort: 47823,

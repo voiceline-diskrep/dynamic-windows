@@ -662,6 +662,16 @@
             <span class="slider"></span>
           </label>
         </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Suppress Native Windows Notification Popups</span>
+            <span class="setting-desc">Hide duplicate Windows bottom-right toast popups so notifications only appear inside Dynamic Island.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-suppressWindowsToasts">
+            <span class="slider"></span>
+          </label>
+        </div>
       </div>
 
       <div class="card">
@@ -949,6 +959,8 @@
         if (elStartup) elStartup.checked = !!cfg.startup;
         const elGameMode = document.getElementById('setting-gameMode');
         if (elGameMode) elGameMode.checked = cfg.gameMode !== false;
+        const elSuppressToasts = document.getElementById('setting-suppressWindowsToasts');
+        if (elSuppressToasts) elSuppressToasts.checked = !!cfg.suppressWindowsToasts;
         const elClock24 = document.getElementById('setting-clock24h');
         if (elClock24) elClock24.checked = !!cfg.clock24h;
         const elShowAmPm = document.getElementById('setting-showAmPm');
@@ -1044,6 +1056,7 @@
 
     bindSettingChange('setting-startup', 'startup');
     bindSettingChange('setting-gameMode', 'gameMode');
+    bindSettingChange('setting-suppressWindowsToasts', 'suppressWindowsToasts');
     ipcRenderer.on('game-mode-toggled', (event, data) => {
       if (data && typeof data.enabled === 'boolean') {
         const el = document.getElementById('setting-gameMode');

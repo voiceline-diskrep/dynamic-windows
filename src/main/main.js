@@ -1118,7 +1118,12 @@ app.whenReady().then(() => {
   userDataManager = new UserDataManager();
   userDataManager.registerIpc(ipcMain, () => mainWindow);
   registerSettingsIPC(dropZone, {
-    onGameModeChange: (val) => setGameMode(val, 'settings')
+    onGameModeChange: (val) => setGameMode(val, 'settings'),
+    onSuppressWindowsToastsChange: (val) => {
+      if (notificationMonitor && typeof notificationMonitor.setSuppressWindowsToasts === 'function') {
+        notificationMonitor.setSuppressWindowsToasts(val);
+      }
+    }
   });
   startClipboardMonitor();
 
@@ -1135,7 +1140,9 @@ app.whenReady().then(() => {
   callMonitor.on('changed', () => sendCallState());
 
   // 2c. Windows & Universal Notification Monitor
-  notificationMonitor = new NotificationMonitor();
+  notificationMonitor = new NotificationMonitor({
+    suppressWindowsToasts: Boolean(configManager.get('suppressWindowsToasts'))
+  });
   notificationMonitor.on('new-notification', (notif) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('notification-received', notif);

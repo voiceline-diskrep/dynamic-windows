@@ -211,6 +211,11 @@ function registerSettingsIPC(dropZoneInstance, callbacks = {}) {
         }
       });
     }
+    if (newSettings && 'suppressWindowsToasts' in newSettings) {
+      if (callbacks && typeof callbacks.onSuppressWindowsToastsChange === 'function') {
+        callbacks.onSuppressWindowsToastsChange(Boolean(newSettings.suppressWindowsToasts));
+      }
+    }
     if (newSettings && ('soundEffects' in newSettings || 'soundVolume' in newSettings || 'soundPreset' in newSettings)) {
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {

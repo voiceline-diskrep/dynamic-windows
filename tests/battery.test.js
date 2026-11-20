@@ -63,12 +63,16 @@ test('BatteryIndicator: drawBatteryIndicator safely renders in headless mock can
     save: () => mockCalls.push('save'),
     restore: () => mockCalls.push('restore'),
     beginPath: () => mockCalls.push('beginPath'),
+    roundRect: (...args) => mockCalls.push({ call: 'roundRect', args }),
     arc: (...args) => mockCalls.push({ call: 'arc', args }),
     fill: () => mockCalls.push('fill'),
+    stroke: () => mockCalls.push('stroke'),
     fillText: (...args) => mockCalls.push({ call: 'fillText', args }),
     measureText: (text) => ({ width: text.length * 6 }),
     globalAlpha: 1.0,
     fillStyle: '#000',
+    strokeStyle: '#000',
+    lineWidth: 1,
     font: '',
     textAlign: '',
     textBaseline: '',
@@ -81,6 +85,6 @@ test('BatteryIndicator: drawBatteryIndicator safely renders in headless mock can
   assert.ok(dim.height > 0);
   assert.ok(mockCalls.includes('save'));
   assert.ok(mockCalls.includes('restore'));
-  assert.ok(mockCalls.some(c => c.call === 'arc'));
+  assert.ok(mockCalls.some(c => c.call === 'roundRect'));
   assert.ok(mockCalls.some(c => c.call === 'fillText'));
 });

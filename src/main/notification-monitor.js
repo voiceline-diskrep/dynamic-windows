@@ -1,8 +1,10 @@
 const EventEmitter = require('events');
 const { spawn } = require('child_process');
-const path = require('path');
 
-const PS_NOTIFICATION_SCRIPT = `
+function buildPsNotificationScript(suppressToasts = false) {
+  return `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 $ProgressPreference = 'SilentlyContinue'
 try {
   Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -16,13 +18,13 @@ try {
     $list = @()
     foreach ($n in $notifs) {
       $app = ''
-      try { $app = ($n.AppInfo.DisplayInfo.DisplayName -replace '[\\p{Cc}]+', ' ').Trim() } catch {}
+      try { $app = ($n.AppInfo.DisplayInfo.DisplayName -replace '[\\p{Cc}\\p{Cf}]+', '').Trim() } catch {}
       $binding = $n.Notification.Visual.GetBinding([Windows.UI.Notifications.KnownNotificationBindings]::ToastGeneric)
       $texts = @()
       if ($binding) {
         foreach ($t in $binding.GetTextElements()) {
           if ($t.Text) {
-            $cleaned = ($t.Text -replace '[\\p{Cc}]+', ' ').Trim()
+            $cleaned = ($t.Text -replace '[\\p{Cc}\\p{Cf}]+', '').Trim()
             if ($cleaned) { $texts += $cleaned }
           }
         }
@@ -36,6 +38,7 @@ try {
         body = $body
         creationTime = $n.CreationTime.ToString('o')
       }
+      ${suppressToasts ? 'try { $listener.RemoveNotification($n.Id) } catch {}' : ''}
     }
     $list | ConvertTo-Json -Compress
   }
@@ -43,13 +46,30 @@ try {
   [Console]::Error.WriteLine($_.Exception.ToString())
 }
 `;
+}
 
-const PS_ENCODED = Buffer.from(PS_NOTIFICATION_SCRIPT, 'utf16le').toString('base64');
+function sanitizeNotificationText(input) {
+  if (!input || typeof input !== 'string') return '';
+  let s = input
+    // Strip Unicode BiDi directional isolates / marks & replacement chars
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF\uFFFD]/g, '')
+    // Strip '?...?' wrapping around sender names produced by OEM codepage fallback for BiDi isolates
+    .replace(/(^|[\s~—\-|])\?+([^\s?][^?]*?)\?+(?=\s*:|$)/g, '$1$2')
+    // Strip leading/trailing '?' adjacent to '~' sender prefix or before ':' in sender headers
+    .replace(/~\?+/g, '~')
+    .replace(/\?+:/g, ':')
+    // Strip trailing '?' added by OEM fallback after standard WhatsApp/messenger media attachment labels
+    .replace(/\b(Photo|Video|Audio|Sticker|GIF|Document|Voice message|Location|Contact card|Poll)\?(?=$|\s)/gi, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s;
+}
 
 class NotificationMonitor extends EventEmitter {
   constructor(options = {}) {
     super();
     this.pollIntervalMs = options.pollIntervalMs || 10000;
+    this.suppressWindowsToasts = Boolean(options.suppressWindowsToasts);
     this.notifications = [];
     this.knownIds = new Set();
     this.isPolling = false;
@@ -59,11 +79,41 @@ class NotificationMonitor extends EventEmitter {
 
   start() {
     this.paused = false;
+    if (this.suppressWindowsToasts) {
+      this.applyWindowsToastSuppressionRegistry(true);
+    }
     this.poll();
     if (!this.pollTimer) {
       this.pollTimer = setInterval(() => this.poll(), this.pollIntervalMs);
       if (this.pollTimer.unref) this.pollTimer.unref();
     }
+  }
+
+  setSuppressWindowsToasts(enabled) {
+    const next = Boolean(enabled);
+    if (this.suppressWindowsToasts === next) return;
+    this.suppressWindowsToasts = next;
+    this.applyWindowsToastSuppressionRegistry(next);
+  }
+
+  applyWindowsToastSuppressionRegistry(suppress) {
+    if (process.platform !== 'win32') return;
+    try {
+      const val = suppress ? 0 : 1;
+      const psCmd = `
+        $path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings'
+        if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+        Set-ItemProperty -Path $path -Name 'NOC_GLOBAL_SETTING_TOASTS_ENABLED' -Value ${val} -Type DWord -Force
+      `;
+      const encoded = Buffer.from(psCmd, 'utf16le').toString('base64');
+      const child = spawn('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-EncodedCommand', encoded
+      ], { windowsHide: true });
+      child.on('error', () => {});
+    } catch (e) {}
   }
 
   setPaused(paused) {
@@ -84,6 +134,9 @@ class NotificationMonitor extends EventEmitter {
 
   stop() {
     this.paused = true;
+    if (this.suppressWindowsToasts) {
+      this.applyWindowsToastSuppressionRegistry(false);
+    }
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -95,14 +148,19 @@ class NotificationMonitor extends EventEmitter {
     this.isPolling = true;
 
     try {
+      const script = buildPsNotificationScript(this.suppressWindowsToasts);
+      const psEncoded = Buffer.from(script, 'utf16le').toString('base64');
       const child = spawn('powershell.exe', [
         '-NoProfile',
         '-NonInteractive',
         '-ExecutionPolicy', 'Bypass',
-        '-EncodedCommand', PS_ENCODED
+        '-EncodedCommand', psEncoded
       ], { windowsHide: true });
 
       let stdout = '';
+      if (child.stdout && typeof child.stdout.setEncoding === 'function') {
+        child.stdout.setEncoding('utf8');
+      }
       const timer = setTimeout(() => {
         try { child.kill(); } catch (e) {}
       }, 5500);
@@ -135,8 +193,10 @@ class NotificationMonitor extends EventEmitter {
       let anyNew = false;
       for (const item of items) {
         if (!item || !item.id) continue;
-        const appName = (item.app || 'Windows').trim();
-        const checkText = `${appName} ${item.title || ''} ${item.body || ''}`.toLowerCase();
+        const appName = sanitizeNotificationText(item.app || 'Windows') || 'Windows';
+        const cleanTitle = sanitizeNotificationText(item.title || '');
+        const cleanBody = sanitizeNotificationText(item.body || '');
+        const checkText = `${appName} ${cleanTitle} ${cleanBody}`.toLowerCase();
         if (checkText.includes('antigravity')) continue;
 
         const idStr = `win_${item.id}`;
@@ -146,8 +206,8 @@ class NotificationMonitor extends EventEmitter {
         const notif = {
           id: idStr,
           app: appName,
-          title: (item.title || '').trim(),
-          body: (item.body || '').trim(),
+          title: cleanTitle,
+          body: cleanBody,
           timestamp: item.creationTime ? new Date(item.creationTime).getTime() : Date.now(),
           icon: this.getIconForApp(appName),
           read: !isNew || !this.initialized
@@ -174,15 +234,17 @@ class NotificationMonitor extends EventEmitter {
 
   addNotification(entry) {
     if (!entry) return null;
-    const app = (entry.app || 'Dynamic Windows').trim();
-    const checkText = `${app} ${entry.title || ''} ${entry.body || ''}`.toLowerCase();
+    const app = sanitizeNotificationText(entry.app || 'Dynamic Windows') || 'Dynamic Windows';
+    const cleanTitle = sanitizeNotificationText(entry.title || '');
+    const cleanBody = sanitizeNotificationText(entry.body || '');
+    const checkText = `${app} ${cleanTitle} ${cleanBody}`.toLowerCase();
     if (checkText.includes('antigravity')) return null;
 
     const notif = {
       id: entry.id || `app_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       app: app,
-      title: entry.title || '',
-      body: entry.body || '',
+      title: cleanTitle,
+      body: cleanBody,
       timestamp: entry.timestamp || Date.now(),
       icon: entry.icon || this.getIconForApp(app),
       read: false
@@ -237,4 +299,5 @@ class NotificationMonitor extends EventEmitter {
   }
 }
 
+NotificationMonitor.sanitizeNotificationText = sanitizeNotificationText;
 module.exports = NotificationMonitor;
