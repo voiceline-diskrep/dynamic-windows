@@ -102,11 +102,73 @@ function drawBatteryIcon(ctx, x, cy, bodyW, bodyH, percent, isCharging, alpha = 
   ctx.restore();
 }
 
-// Keep drawBatteryCircle exported as backwards-compatible wrapper around drawBatteryIcon
+// Apple-style circular battery gauge ring for compact/active media pill
+function drawBatteryRing(ctx, cx, cy, radius, percent, isCharging, alpha = 1.0) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  const pct = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  const color = getBatteryColor(pct);
+  const r = Math.max(5.5, radius || 6.2);
+  const lineW = Math.max(1.5, r * 0.26);
+
+  // Open-bottom Apple gauge arc (135 deg -> 405 deg = 270 deg sweep)
+  const startAngle = Math.PI * 0.75;
+  const totalSweep = Math.PI * 1.5;
+  const endAngle = startAngle + totalSweep;
+
+  // 1. Muted track ring
+  ctx.beginPath();
+  if (typeof ctx.arc === 'function') {
+    ctx.arc(cx, cy, r, startAngle, endAngle, false);
+  }
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+  ctx.lineWidth = lineW;
+  ctx.lineCap = 'round';
+  if (typeof ctx.stroke === 'function') ctx.stroke();
+
+  // 2. Colored charge progress arc
+  if (pct > 0) {
+    const fillEnd = startAngle + totalSweep * (pct / 100);
+    ctx.beginPath();
+    if (typeof ctx.arc === 'function') {
+      ctx.arc(cx, cy, r, startAngle, fillEnd, false);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineW;
+    ctx.lineCap = 'round';
+    if (typeof ctx.stroke === 'function') ctx.stroke();
+  }
+
+  // 3. Center indicator: crisp vector bolt when charging, or compact percentage number
+  if (isCharging) {
+    const s = r * 0.52;
+    ctx.beginPath();
+    ctx.moveTo(cx + s * 0.15, cy - s);
+    ctx.lineTo(cx - s * 0.65, cy + s * 0.1);
+    ctx.lineTo(cx - s * 0.05, cy + s * 0.1);
+    ctx.lineTo(cx - s * 0.2, cy + s);
+    ctx.lineTo(cx + s * 0.65, cy - s * 0.1);
+    ctx.lineTo(cx + s * 0.05, cy - s * 0.1);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    if (typeof ctx.fill === 'function') ctx.fill();
+  } else {
+    ctx.fillStyle = '#f4f4f5';
+    ctx.font = `700 ${Math.max(6, Math.round(r * 0.95))}px "Segoe UI Variable Text", Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (typeof ctx.fillText === 'function') {
+      ctx.fillText(String(pct), cx, cy + 0.4);
+    }
+  }
+
+  ctx.restore();
+}
+
+// Keep drawBatteryCircle exported as alias to drawBatteryRing for compact active pill
 function drawBatteryCircle(ctx, cx, cy, radius, percent, isCharging, alpha = 1.0) {
-  const bodyW = Math.max(16, Math.round((radius || 4.2) * 4.4));
-  const bodyH = Math.max(9, Math.round((radius || 4.2) * 2.2));
-  drawBatteryIcon(ctx, cx - bodyW / 2, cy, bodyW, bodyH, percent, isCharging, alpha);
+  drawBatteryRing(ctx, cx, cy, Math.max(6.2, radius || 6.2), percent, isCharging, alpha);
 }
 
 function drawBatteryIndicator(ctx, startX, cy, batteryState, options = {}) {
@@ -159,6 +221,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getBatteryColor,
     getBatteryDisplay,
     drawBatteryIcon,
+    drawBatteryRing,
     drawBatteryCircle,
     drawBatteryIndicator
   };

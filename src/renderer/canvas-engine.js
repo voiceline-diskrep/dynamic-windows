@@ -4697,8 +4697,8 @@ function renderRestingPill(x, y, w, h, alpha) {
     let clockStartX = x + 12;
 
     if (batteryState && batteryState.hasBattery) {
-      drawBatteryCircle(ctx, x + 14, y + h / 2, 4.0, batteryState.percent, batteryState.isCharging, alpha);
-      clockStartX = x + 24;
+      drawBatteryCircle(ctx, x + 16, y + h / 2, 6.2, batteryState.percent, batteryState.isCharging, alpha);
+      clockStartX = x + 29;
     }
 
     drawRollingTime(ctx, 'resting_media_clock', timeStr, clockStartX, y + h / 2, {
