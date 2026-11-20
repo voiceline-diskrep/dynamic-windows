@@ -532,6 +532,26 @@
             <span class="slider"></span>
           </label>
         </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Lite Mode (Performance)</span>
+            <span class="setting-desc">Turns off transparency, album gradients, and word-by-word lyrics (switches to line-by-line), enables Reduced Motion, and updates the clock instantly.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-liteMode">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Reduced Motion</span>
+            <span class="setting-desc">Disable opening/closing springs, tab slide animations, and rolling clock animations for instant updates.</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="setting-reducedMotion">
+            <span class="slider"></span>
+          </label>
+        </div>
         
       </div>
 
@@ -950,6 +970,10 @@
         if (opacityBadge) opacityBadge.textContent = curOpacityPct + '%';
         const elLiquidGlass = document.getElementById('setting-liquidGlass');
         if (elLiquidGlass) elLiquidGlass.checked = !!cfg.liquidGlass;
+        const elLiteMode = document.getElementById('setting-liteMode');
+        if (elLiteMode) elLiteMode.checked = !!cfg.liteMode;
+        const elReducedMotion = document.getElementById('setting-reducedMotion');
+        if (elReducedMotion) elReducedMotion.checked = !!cfg.reducedMotion;
         
 
         // General
@@ -1222,6 +1246,8 @@
     }
     bindSettingChange('setting-albumColorGradient', 'albumColorGradient');
     bindSettingChange('setting-liquidGlass', 'liquidGlass');
+    bindSettingChange('setting-liteMode', 'liteMode');
+    bindSettingChange('setting-reducedMotion', 'reducedMotion');
     bindSettingChange('setting-antigravityMonitor', 'antigravityMonitor');
     bindSettingChange('setting-autoFocusAntigravity', 'autoFocusAntigravity');
     bindSettingChange('setting-hooksPort', 'hooksPort', true);

@@ -211,6 +211,16 @@ function registerSettingsIPC(dropZoneInstance, callbacks = {}) {
         }
       });
     }
+    if (newSettings && ('liteMode' in newSettings || 'reducedMotion' in newSettings)) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('performance-settings-changed', {
+            liteMode: Boolean(configManager.get('liteMode')),
+            reducedMotion: Boolean(configManager.get('reducedMotion'))
+          });
+        }
+      });
+    }
     if (newSettings && 'suppressWindowsToasts' in newSettings) {
       if (callbacks && typeof callbacks.onSuppressWindowsToastsChange === 'function') {
         callbacks.onSuppressWindowsToastsChange(Boolean(newSettings.suppressWindowsToasts));

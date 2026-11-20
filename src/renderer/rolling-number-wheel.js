@@ -298,17 +298,43 @@ function getRollingWheel(slotId) {
   return wheelRegistry.get(slotId);
 }
 
+let rollingReducedMotion = false;
+
+function setRollingReducedMotion(enabled) {
+  rollingReducedMotion = Boolean(enabled);
+}
+
 function drawRollingTime(ctx, slotId, text, x, y, options = {}) {
+  if (rollingReducedMotion) {
+    const {
+      font = '600 12px "Segoe UI Variable Display", Inter, sans-serif',
+      fillStyle = '#ffffff',
+      align = 'left',
+      baseline = 'middle',
+      alpha = 1.0
+    } = options;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = font;
+    ctx.fillStyle = fillStyle;
+    ctx.textAlign = align;
+    ctx.textBaseline = baseline;
+    ctx.fillText(String(text || ''), x, y);
+    ctx.restore();
+    return;
+  }
   const wheel = getRollingWheel(slotId);
   wheel.render(ctx, text, x, y, options);
 }
 
 function triggerRollingWheelSpin(slotId, steps = 3) {
+  if (rollingReducedMotion) return;
   const wheel = getRollingWheel(slotId);
   wheel.triggerSpin(performance.now(), steps);
 }
 
 function hasActiveTumblerRoll() {
+  if (rollingReducedMotion) return false;
   const now = performance.now();
   for (const wheel of wheelRegistry.values()) {
     if (!wheel.columns) continue;
@@ -328,6 +354,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     RollingNumberWheel,
     getRollingWheel,
+    setRollingReducedMotion,
     drawRollingTime,
     triggerRollingWheelSpin,
     hasActiveTumblerRoll,

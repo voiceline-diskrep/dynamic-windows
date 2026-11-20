@@ -31,7 +31,7 @@ const {
   computeLiquidHeightStep,
   getTargetExpandedHeight
 } = require('./tab-animation-engine');
-const { drawRollingTime, triggerRollingWheelSpin, hasActiveTumblerRoll } = require('./rolling-number-wheel');
+const { setRollingReducedMotion, drawRollingTime, triggerRollingWheelSpin, hasActiveTumblerRoll } = require('./rolling-number-wheel');
 const {
   getBatteryColor,
   getBatteryDisplay,
@@ -692,6 +692,18 @@ function snoozeActiveAlarm() {
 }
 let islandOpacity = 0.95;
 let liquidGlassEnabled = false;
+let liteModeEnabled = false;
+let reducedMotionEnabled = false;
+
+function isReducedMotionActive() {
+  return Boolean(reducedMotionEnabled || liteModeEnabled);
+}
+
+function syncReducedMotionState() {
+  if (typeof setRollingReducedMotion === 'function') {
+    setRollingReducedMotion(isReducedMotionActive());
+  }
+}
 
 try {
   const savedWork = localStorage.getItem('focus_work_min');
@@ -1161,7 +1173,7 @@ function getProgressiveLyricState(timed, index) {
   const fullText = (lineObj.text || '').trim();
   if (!fullText) return null;
 
-  if (!dynamicLyricsEnabled) {
+  if (!dynamicLyricsEnabled || liteModeEnabled) {
     return {
       revealed: fullText,
       remaining: '',
@@ -2797,6 +2809,14 @@ ipcRenderer.on('liquid-glass-toggled', (event, data) => {
     requestFrame();
   }
 });
+ipcRenderer.on('performance-settings-changed', (event, data) => {
+  if (data && typeof data === 'object') {
+    if (typeof data.liteMode === 'boolean') liteModeEnabled = data.liteMode;
+    if (typeof data.reducedMotion === 'boolean') reducedMotionEnabled = data.reducedMotion;
+    syncReducedMotionState();
+    requestFrame();
+  }
+});
 ipcRenderer.on('sound-effects-config', (event, data) => {
   if (data) {
     if (typeof data.enabled === 'boolean') {
@@ -2888,6 +2908,13 @@ try {
       if (typeof res.config.liquidGlass === 'boolean') {
         liquidGlassEnabled = res.config.liquidGlass;
       }
+      if (typeof res.config.liteMode === 'boolean') {
+        liteModeEnabled = res.config.liteMode;
+      }
+      if (typeof res.config.reducedMotion === 'boolean') {
+        reducedMotionEnabled = res.config.reducedMotion;
+      }
+      syncReducedMotionState();
       if (typeof res.config.soundEffects === 'boolean') {
         soundFX.setEnabled(res.config.soundEffects);
       }
@@ -3043,7 +3070,7 @@ function getDynamicStateSnapshot(nowMs) {
   const now = typeof nowMs === 'number' ? nowMs : performance.now();
   const d = new Date();
   const hasMediaTrack = Boolean(mediaState && mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing');
-  const wantTint = (albumColorGradientEnabled && hasMediaTrack && hideProgress < 0.5) ? 1.0 : 0.0;
+  const wantTint = (albumColorGradientEnabled && !liteModeEnabled && hasMediaTrack && hideProgress < 0.5) ? 1.0 : 0.0;
   const tabDuration = Math.max(120, 220 / (animSpeedMultiplier || 1.0));
   const isTabTransitioning = Boolean(tabTransitionStartTime > 0 && (now - tabTransitionStartTime) < tabDuration && previousView && previousView !== currentView);
   const parts = callState && Array.isArray(callState.participants) ? callState.participants : [];
@@ -3185,12 +3212,13 @@ function animate(now) {
   }
 
   // Normalized linear progress step fed into easeOpenCloseBack (~340ms open, ~280ms close at 1.0x)
+  const reducedMotion = isReducedMotionActive();
   if (Math.abs(targetProgress - animProgress) > 0.001) {
     isCapsuleOpening = targetProgress >= animProgress;
   }
   const openCloseDuration = targetProgress > animProgress ? 0.34 : 0.28;
   const progressStep = (dt / openCloseDuration) * animSpeedMultiplier;
-  if (Math.abs(targetProgress - animProgress) <= progressStep) {
+  if (reducedMotion || Math.abs(targetProgress - animProgress) <= progressStep) {
     animProgress = targetProgress;
   } else {
     animProgress += Math.sign(targetProgress - animProgress) * progressStep;
@@ -3204,7 +3232,7 @@ function animate(now) {
   }
   const hideDuration = targetHide > hideProgress ? 0.22 : 0.26;
   const hideStep = (dt / hideDuration) * animSpeedMultiplier;
-  if (Math.abs(targetHide - hideProgress) <= hideStep) {
+  if (reducedMotion || Math.abs(targetHide - hideProgress) <= hideStep) {
     hideProgress = targetHide;
   } else {
     hideProgress += Math.sign(targetHide - hideProgress) * hideStep;
@@ -3222,7 +3250,7 @@ function animate(now) {
   // Smooth Dynamic Spring transition for resting pill width
   const targetRestW = getTargetRestingWidth();
   const restSpeed = (targetRestW > currentRestingWidth ? 8.5 : 7.0) * animSpeedMultiplier;
-  if (Math.abs(targetRestW - currentRestingWidth) <= 0.5) {
+  if (reducedMotion || Math.abs(targetRestW - currentRestingWidth) <= 0.5) {
     currentRestingWidth = targetRestW;
   } else {
     currentRestingWidth += (targetRestW - currentRestingWidth) * (1 - Math.exp(-restSpeed * dt));
@@ -3240,7 +3268,7 @@ function animate(now) {
   }
   const songDuration = targetSongPopupProgress > songPopupProgress ? 0.30 : 0.26;
   const songStep = (dt / songDuration) * animSpeedMultiplier;
-  if (Math.abs(targetSongPopupProgress - songPopupProgress) <= songStep) {
+  if (reducedMotion || Math.abs(targetSongPopupProgress - songPopupProgress) <= songStep) {
     songPopupProgress = targetSongPopupProgress;
   } else {
     songPopupProgress += Math.sign(targetSongPopupProgress - songPopupProgress) * songStep;
@@ -3266,7 +3294,7 @@ function animate(now) {
 
   // Liquid spring transition for expanded view height
   const targetExpH = getTargetExpandedHeightForView(currentView);
-  if (animProgress < 0.05) {
+  if (reducedMotion || animProgress < 0.05) {
     currentExpandedH = targetExpH;
   } else {
     currentExpandedH = computeLiquidHeightStep(currentExpandedH, targetExpH, dt, animSpeedMultiplier);
@@ -3408,7 +3436,7 @@ function getTargetRestingWidth() {
     const roll = getPillRollingLyric();
     let textToMeasure = '';
     if (roll && roll.text) {
-      if (dynamicLyricsEnabled && roll.progressive && roll.progressive.words && roll.progressive.words.length > 1) {
+      if (dynamicLyricsEnabled && !liteModeEnabled && roll.progressive && roll.progressive.words && roll.progressive.words.length > 1) {
         const prog = roll.progressive;
         const words = prog.words;
         const activeIdx = prog.activeWordIndex;
@@ -3621,7 +3649,7 @@ function drawBlurredCapsuleShadow(targetCtx, opts) {
     color = 'rgba(0, 0, 0, 0.5)',
     preferSprite = true
   } = opts;
-  if (w <= 0 || h <= 0) return;
+  if (liteModeEnabled || w <= 0 || h <= 0) return;
 
   if (typeof document === 'undefined' || !document.createElement) return;
 
@@ -3750,7 +3778,7 @@ function paintCapsuleSurface(c, {
     }
   };
 
-  if (forcePureBlack) {
+  if (forcePureBlack || liteModeEnabled) {
     tracePath();
     c.fillStyle = '#000000';
     c.fill();
@@ -3971,7 +3999,7 @@ function render() {
 
     // 1. Ambient Drop Shadow (cached offscreen blur when settled, zero-blur silhouette when morphing)
     const hasMediaTrack = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
-    const wantTint = (albumColorGradientEnabled && hasMediaTrack && hideProgress < 0.5) ? 1.0 : 0.0;
+    const wantTint = (albumColorGradientEnabled && !liteModeEnabled && hasMediaTrack && hideProgress < 0.5) ? 1.0 : 0.0;
     const tintStep = 1 - Math.exp(-10.0 * currentDt);
     if (Math.abs(wantTint - tintK) <= 0.004) {
       tintK = wantTint;
@@ -4382,7 +4410,7 @@ function drawAnimatedRestingLyric(textStartX, cy, maxTextW, roll, alpha) {
   const lineAlpha = alpha * roll.k;
   const prog = roll.progressive;
 
-  if (dynamicLyricsEnabled && prog && Array.isArray(prog.words) && prog.words.length > 0) {
+  if (dynamicLyricsEnabled && !liteModeEnabled && prog && Array.isArray(prog.words) && prog.words.length > 0) {
     const words = prog.words;
     let activeIdx = words.findIndex(w => w.isActive);
     if (activeIdx === -1) {
@@ -7706,7 +7734,7 @@ function renderMediaView(x, y, w, h) {
   const toggleH = 16;
   const toggleX = metaX + badgeTextW + 8;
   const toggleY = artY + 39;
-  const isDyn = Boolean(dynamicLyricsEnabled);
+  const isDyn = Boolean(dynamicLyricsEnabled && !liteModeEnabled);
   const isHovToggle = hoveredButtonId === 'toggle_dynamic_lyrics';
 
   ctx.save();
@@ -7759,7 +7787,7 @@ function renderMediaView(x, y, w, h) {
     ctx.globalAlpha = 0.4 + 0.6 * around.k;
     ctx.font = '700 12.5px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#ffffff';
-    if (around.progressive && around.progressive.words && around.progressive.words.length > 0 && dynamicLyricsEnabled) {
+    if (around.progressive && around.progressive.words && around.progressive.words.length > 0 && dynamicLyricsEnabled && !liteModeEnabled) {
       const words = around.progressive.words;
       const fullText = around.progressive.fullText;
       const fullW = ctx.measureText(fullText).width;
