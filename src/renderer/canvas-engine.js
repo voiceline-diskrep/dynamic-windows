@@ -375,6 +375,20 @@ try {
     }
   });
 
+  ipcRenderer.invoke('notes-get-all').then(list => {
+    if (Array.isArray(list)) {
+      notesList = list;
+      requestFrame();
+    }
+  }).catch(() => {});
+
+  ipcRenderer.on('notes-updated', (event, list) => {
+    if (Array.isArray(list)) {
+      notesList = list;
+      requestFrame();
+    }
+  });
+
   ipcRenderer.invoke('clock-get-state').then(st => {
     if (st && st.timer) {
       timerDurationSec = st.timer.durationSec || 300;
@@ -697,12 +711,130 @@ try {
   if (savedGoal) focusGoalTag = savedGoal;
 } catch (e) {}
 
-// To-Do State
+// Notes & To-Do State
+let notesSubMode = 'notes'; // 'notes' | 'todo'
+let notesList = [];
 let todoData = {
   categories: ['Personal', 'Work', 'Island'],
   tasks: []
 };
 let todoSelectedCategory = 'All';
+
+// Custom Vector Symbol Renderer (zero emojis — pure Canvas 2D geometry)
+function drawVectorSymbol(c, type, cx, cy, size = 12, color = '#e4e4e7') {
+  const s = size / 2;
+  c.save();
+  c.strokeStyle = color;
+  c.fillStyle = color;
+  c.lineWidth = Math.max(1.2, size * 0.11);
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+
+  if (type === 'bolt') {
+    c.beginPath();
+    c.moveTo(cx + s * 0.15, cy - s * 0.95);
+    c.lineTo(cx - s * 0.65, cy + s * 0.1);
+    c.lineTo(cx - s * 0.05, cy + s * 0.1);
+    c.lineTo(cx - s * 0.2, cy + s * 0.95);
+    c.lineTo(cx + s * 0.65, cy - s * 0.1);
+    c.lineTo(cx + s * 0.05, cy - s * 0.1);
+    c.closePath();
+    c.fill();
+  } else if (type === 'pin') {
+    c.beginPath();
+    c.moveTo(cx - s * 0.45, cy - s * 0.75);
+    c.lineTo(cx + s * 0.45, cy - s * 0.75);
+    c.lineTo(cx + s * 0.35, cy - s * 0.1);
+    c.lineTo(cx + s * 0.65, cy + s * 0.2);
+    c.lineTo(cx - s * 0.65, cy + s * 0.2);
+    c.lineTo(cx - s * 0.35, cy - s * 0.1);
+    c.closePath();
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx, cy + s * 0.2);
+    c.lineTo(cx, cy + s * 0.9);
+    c.stroke();
+  } else if (type === 'folder') {
+    c.beginPath();
+    c.moveTo(cx - s * 0.85, cy - s * 0.6);
+    c.lineTo(cx - s * 0.25, cy - s * 0.6);
+    c.lineTo(cx - s * 0.05, cy - s * 0.35);
+    c.lineTo(cx + s * 0.85, cy - s * 0.35);
+    c.lineTo(cx + s * 0.85, cy + s * 0.65);
+    c.lineTo(cx - s * 0.85, cy + s * 0.65);
+    c.closePath();
+    c.stroke();
+  } else if (type === 'file') {
+    c.beginPath();
+    c.moveTo(cx - s * 0.65, cy - s * 0.85);
+    c.lineTo(cx + s * 0.2, cy - s * 0.85);
+    c.lineTo(cx + s * 0.65, cy - s * 0.4);
+    c.lineTo(cx + s * 0.65, cy + s * 0.85);
+    c.lineTo(cx - s * 0.65, cy + s * 0.85);
+    c.closePath();
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx + s * 0.2, cy - s * 0.85);
+    c.lineTo(cx + s * 0.2, cy - s * 0.4);
+    c.lineTo(cx + s * 0.65, cy - s * 0.4);
+    c.stroke();
+  } else if (type === 'inbox') {
+    c.beginPath();
+    c.moveTo(cx - s * 0.8, cy + s * 0.1);
+    c.lineTo(cx - s * 0.8, cy + s * 0.7);
+    c.lineTo(cx + s * 0.8, cy + s * 0.7);
+    c.lineTo(cx + s * 0.8, cy + s * 0.1);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx, cy - s * 0.8);
+    c.lineTo(cx, cy + s * 0.25);
+    c.moveTo(cx - s * 0.4, cy - s * 0.1);
+    c.lineTo(cx, cy + s * 0.3);
+    c.lineTo(cx + s * 0.4, cy - s * 0.1);
+    c.stroke();
+  } else if (type === 'note') {
+    c.beginPath();
+    c.roundRect(cx - s * 0.7, cy - s * 0.8, s * 1.4, s * 1.6, 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx - s * 0.4, cy - s * 0.3);
+    c.lineTo(cx + s * 0.4, cy - s * 0.3);
+    c.moveTo(cx - s * 0.4, cy + s * 0.05);
+    c.lineTo(cx + s * 0.4, cy + s * 0.05);
+    c.moveTo(cx - s * 0.4, cy + s * 0.4);
+    c.lineTo(cx + s * 0.15, cy + s * 0.4);
+    c.stroke();
+  } else if (type === 'check') {
+    c.beginPath();
+    c.arc(cx, cy, s * 0.82, 0, Math.PI * 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx - s * 0.38, cy + s * 0.02);
+    c.lineTo(cx - s * 0.1, cy + s * 0.32);
+    c.lineTo(cx + s * 0.42, cy - s * 0.28);
+    c.stroke();
+  } else if (type === 'bell') {
+    c.beginPath();
+    c.arc(cx, cy - s * 0.15, s * 0.55, Math.PI, 0, false);
+    c.lineTo(cx + s * 0.7, cy + s * 0.45);
+    c.lineTo(cx - s * 0.7, cy + s * 0.45);
+    c.closePath();
+    c.stroke();
+    c.beginPath();
+    c.arc(cx, cy + s * 0.68, s * 0.16, 0, Math.PI * 2);
+    c.fill();
+  } else if (type === 'alarm' || type === 'clock') {
+    c.beginPath();
+    c.arc(cx, cy, s * 0.78, 0, Math.PI * 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx, cy - s * 0.45);
+    c.lineTo(cx, cy);
+    c.lineTo(cx + s * 0.35, cy + s * 0.2);
+    c.stroke();
+  }
+  c.restore();
+}
 
 let clipboardHistory = [];
 let clipboardFilter = '';
@@ -1826,11 +1958,12 @@ canvas.addEventListener('mousemove', (e) => {
 
   // Shelf drag-out trigger
   if (shelfDragCandidate && Math.hypot(mouseX - shelfDragCandidate.x, mouseY - shelfDragCandidate.y) > 6) {
-    const p = shelfDragCandidate.path;
+    const candidate = { ...shelfDragCandidate };
     wasShelfDragging = true;
+    lastDraggedShelfCandidate = candidate;
     shelfDragCandidate = null;
     canvas.draggable = false;
-    ipcRenderer.send('shelf-drag-start', p);
+    ipcRenderer.send('shelf-drag-start', { filePath: candidate.path, oneTime: Boolean(candidate.oneTime) });
     needsFrame = true;
   }
 
@@ -1925,7 +2058,10 @@ canvas.addEventListener('dragstart', (e) => {
     wasShelfDragging = true;
     lastDraggedShelfCandidate = { ...shelfDragCandidate };
     e.preventDefault();
-    ipcRenderer.send('shelf-drag-start', shelfDragCandidate.path);
+    ipcRenderer.send('shelf-drag-start', {
+      filePath: shelfDragCandidate.path,
+      oneTime: Boolean(shelfDragCandidate.oneTime)
+    });
     shelfDragCandidate = null;
     canvas.draggable = false;
   }
@@ -2255,6 +2391,32 @@ function handleButtonClick(id, data) {
     soundFX.play('tap');
   } else if (id === 'nav_todo') {
     switchTab('todo');
+  } else if (id === 'notes_submode_notes') {
+    notesSubMode = 'notes';
+    soundFX.play('tap');
+  } else if (id === 'notes_submode_todo') {
+    notesSubMode = 'todo';
+    soundFX.play('tap');
+  } else if (id === 'notes_add_btn') {
+    showInlineModal('New Note', 'Write your note...', null, (noteText) => {
+      if (noteText && noteText.trim()) {
+        ipcRenderer.invoke('notes-add', { title: noteText.trim().slice(0, 40), body: noteText.trim() });
+      }
+    });
+  } else if (id && id.startsWith('notes_open_')) {
+    const targetNote = (notesList || []).find(n => n.id === data);
+    if (targetNote) {
+      showInlineModal('Edit Note', 'Update your note...', null, (noteText) => {
+        if (noteText && noteText.trim()) {
+          ipcRenderer.invoke('notes-update', { id: targetNote.id, title: noteText.trim().slice(0, 40), body: noteText.trim() });
+        }
+      });
+      if (inlineModalInputEl) {
+        inlineModalInputEl.value = targetNote.body || targetNote.title || '';
+      }
+    }
+  } else if (id && id.startsWith('notes_del_')) {
+    ipcRenderer.invoke('notes-delete', data);
   } else if (id && id.startsWith('todo_cat_')) {
     todoSelectedCategory = data;
   } else if (id === 'todo_add_category_btn') {
@@ -5335,7 +5497,7 @@ function renderTopNav(x, y, w) {
     { id: 'nav_notif', label: hasUnreadNotifs ? 'Notif •' : 'Notif', w: 46 },
     { id: 'nav_calendar', label: 'Calendar', w: 48 },
     { id: 'nav_clock', label: 'Clock', w: 40 },
-    { id: 'nav_todo', label: 'To-Do', w: 42 },
+    { id: 'nav_todo', label: 'Notes', w: 42 },
     { id: 'nav_media', label: 'Media', w: 44 },
     { id: 'nav_agent', label: 'Ai', w: 30 }
   ];
@@ -5895,12 +6057,12 @@ function renderClockTabView(x, y, w, h) {
   const contentW = w - padding * 2;
   const contentX = x + padding;
 
-  // Sub-mode switcher pills at top: [ Timer ] [ Stopwatch ] [ Focus Mode ] [ Alarm ]
+  // Sub-mode switcher pills at top: [ Timer ] [ Stopwatch ] [ Focus Mode ] [ Alarm ] (zero emojis)
   const modes = [
-    { id: 'timer', label: '⏳ Timer', w: 80 },
-    { id: 'stopwatch', label: '⏱️ Stopwatch', w: 92 },
-    { id: 'focus', label: '🎯 Focus Mode', w: 98 },
-    { id: 'alarm', label: '⏰ Alarm', w: 82 }
+    { id: 'timer', label: 'Timer', w: 72 },
+    { id: 'stopwatch', label: 'Stopwatch', w: 86 },
+    { id: 'focus', label: 'Focus Mode', w: 92 },
+    { id: 'alarm', label: 'Alarm', w: 72 }
   ];
   const modeH = 22;
   let curX = contentX;
@@ -6188,7 +6350,7 @@ function renderClockTabView(x, y, w, h) {
     ctx.fillStyle = isBreak ? '#10b981' : '#f59e0b';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(isBreak ? `☕ Break (${focusBreakDurationMin}m)` : `🎯 ${focusGoalTag} (${focusWorkDurationMin}m)`, midX, stageY + 31);
+    ctx.fillText(isBreak ? `Break (${focusBreakDurationMin}m)` : `${focusGoalTag} (${focusWorkDurationMin}m)`, midX, stageY + 31);
 
     ctx.font = '700 42px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = focusRunning ? (isBreak ? '#34d399' : '#38bdf8') : '#ffffff';
@@ -6318,13 +6480,13 @@ function renderClockTabView(x, y, w, h) {
       ctx.stroke();
       ctx.restore();
 
-      // Pulsing Icon & Alarm Title
+      // Pulsing Alarm Title (no emoji)
       ctx.save();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
       ctx.fillStyle = '#fca5a5';
-      ctx.fillText('⏰ ALARM RINGING', bannerX + bannerW / 2, bannerY + 28);
+      ctx.fillText('ALARM RINGING', bannerX + bannerW / 2, bannerY + 28);
 
       ctx.font = '700 36px "Segoe UI Variable Display", Inter, sans-serif';
       ctx.fillStyle = '#ffffff';
@@ -6350,7 +6512,7 @@ function renderClockTabView(x, y, w, h) {
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('💤 Snooze (+5m)', snzX + snzW / 2, btnY + btnH / 2);
+      ctx.fillText('Snooze (+5m)', snzX + snzW / 2, btnY + btnH / 2);
       interactiveButtons.push({ id: 'alarm_snooze', x: snzX, y: btnY, w: snzW, h: btnH });
 
       const isDsmHov = hoveredButtonId === 'alarm_dismiss';
@@ -6533,10 +6695,9 @@ function renderClockTabView(x, y, w, h) {
 
       if (alarmsList.length === 0) {
         ctx.save();
+        drawVectorSymbol(ctx, 'alarm', listCardX + listCardW / 2, listCardY + 62, 22, '#64748b');
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.font = '22px "Segoe UI Emoji", sans-serif';
-        ctx.fillText('⏰', listCardX + listCardW / 2, listCardY + 62);
 
         ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
         ctx.fillStyle = '#94a3b8';
@@ -6631,21 +6792,153 @@ function renderTodoTabView(x, y, w, h) {
   const contentW = w - padding * 2;
   const contentX = x + padding;
 
-  // 1. Category Filter Chips Row
+  // 0. 2-Tab Sub-Switcher: [ Notes ] [ To-Do ]
+  const subTabs = [
+    { id: 'notes', label: 'Notes', w: 58 },
+    { id: 'todo', label: 'To-Do', w: 58 }
+  ];
+  const subH = 22;
+  let subX = contentX;
+  subTabs.forEach(st => {
+    const isCur = notesSubMode === st.id;
+    const isHov = hoveredButtonId === `notes_submode_${st.id}`;
+    ctx.beginPath();
+    ctx.roundRect(subX, topY, st.w, subH, 6);
+    ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+    ctx.fill();
+
+    ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(st.label, subX + st.w / 2, topY + subH / 2);
+
+    interactiveButtons.push({ id: `notes_submode_${st.id}`, x: subX, y: topY, w: st.w, h: subH });
+    subX += st.w + 6;
+  });
+
+  if (notesSubMode === 'notes') {
+    // + Add Note Button on top right
+    const addNoteW = 68;
+    const addNoteX = contentX + contentW - addNoteW;
+    const isAddNoteHov = hoveredButtonId === 'notes_add_btn';
+    ctx.beginPath();
+    ctx.roundRect(addNoteX, topY, addNoteW, subH, 6);
+    ctx.fillStyle = isAddNoteHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
+    ctx.strokeStyle = isAddNoteHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isAddNoteHov ? '#ffffff' : '#93c5fd';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('+ Note', addNoteX + addNoteW / 2, topY + subH / 2);
+    interactiveButtons.push({ id: 'notes_add_btn', x: addNoteX, y: topY, w: addNoteW, h: subH });
+
+    const listY = topY + 32;
+    const items = Array.isArray(notesList) ? notesList : [];
+
+    if (items.length === 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(contentX, listY, contentW, 200, 10);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      drawVectorSymbol(ctx, 'note', contentX + contentW / 2, listY + 72, 24, '#64748b');
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '600 12.5px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText('No notes yet', contentX + contentW / 2, listY + 108);
+
+      ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('Click + Note to jot down quick ideas', contentX + contentW / 2, listY + 128);
+      ctx.restore();
+      return;
+    }
+
+    const rowH = 38;
+    const rowGap = 6;
+    const maxRows = Math.min(items.length, 5);
+    for (let i = 0; i < maxRows; i++) {
+      const note = items[i];
+      const ry = listY + i * (rowH + rowGap);
+      const isRowHov = hoveredButtonId === `notes_open_${note.id}`;
+      const delSize = 20;
+      const delX = contentX + contentW - delSize - 10;
+      const delY = ry + (rowH - delSize) / 2;
+      const isDelHov = hoveredButtonId === `notes_del_${note.id}`;
+
+      ctx.beginPath();
+      ctx.roundRect(contentX, ry, contentW, rowH, 8);
+      ctx.fillStyle = isRowHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.035)';
+      ctx.strokeStyle = isRowHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      drawVectorSymbol(ctx, 'note', contentX + 18, ry + rowH / 2, 13, '#94a3b8');
+
+      ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#f4f4f5';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const maxTextW = contentW - 76;
+      ctx.fillText(truncateToWidth(note.title || note.body || 'Untitled', maxTextW, ctx.font), contentX + 34, ry + rowH / 2 - 6);
+
+      ctx.font = '400 10px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#71717a';
+      ctx.fillText(truncateToWidth(note.body || '', maxTextW, ctx.font), contentX + 34, ry + rowH / 2 + 8);
+
+      interactiveButtons.push({
+        id: `notes_open_${note.id}`,
+        data: note.id,
+        x: contentX,
+        y: ry,
+        w: contentW - delSize - 18,
+        h: rowH
+      });
+
+      ctx.beginPath();
+      ctx.arc(delX + delSize / 2, delY + delSize / 2, delSize / 2, 0, Math.PI * 2);
+      ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.05)';
+      ctx.fill();
+      ctx.font = '600 10px sans-serif';
+      ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✕', delX + delSize / 2, delY + delSize / 2);
+
+      interactiveButtons.push({ id: `notes_del_${note.id}`, data: note.id, x: delX, y: delY, w: delSize, h: delSize });
+    }
+    return;
+  }
+
+  // --- Sub-tab 2: To-Do ---
+  // 1. Category Filter Chips Row (placed to the right of the Notes/To-Do switcher)
   const allCategories = ['All', ...(todoData.categories || [])];
   const chipH = 22;
-  let curX = contentX;
+  let curX = subX + 8;
 
   allCategories.forEach(cat => {
     ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
     const textW = ctx.measureText(cat).width;
-    const chipW = Math.max(38, textW + 18);
+    const chipW = Math.max(36, textW + 14);
+    if (curX + chipW > contentX + contentW - 122) return;
     const isCur = todoSelectedCategory === cat;
     const isHov = hoveredButtonId === `todo_cat_${cat}`;
 
     ctx.beginPath();
     ctx.roundRect(curX, topY, chipW, chipH, 6);
-    ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+    ctx.fillStyle = isCur ? 'rgba(255, 255, 255, 0.16)' : (isHov ? 'rgba(255, 255, 255, 0.10)' : 'rgba(255, 255, 255, 0.04)');
     ctx.fill();
 
     ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
@@ -6654,25 +6947,27 @@ function renderTodoTabView(x, y, w, h) {
     ctx.fillText(cat, curX + chipW / 2, topY + chipH / 2);
 
     interactiveButtons.push({ id: `todo_cat_${cat}`, data: cat, x: curX, y: topY, w: chipW, h: chipH });
-    curX += chipW + 6;
+    curX += chipW + 5;
   });
 
   // + New Category button
-  const addCatW = 46;
+  const addCatW = 44;
   const isAddCatHov = hoveredButtonId === 'todo_add_category_btn';
-  ctx.beginPath();
-  ctx.roundRect(curX, topY, addCatW, chipH, 6);
-  ctx.fillStyle = isAddCatHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
-  ctx.fill();
-  ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = isAddCatHov ? '#ffffff' : '#94a3b8';
-  ctx.textAlign = 'center';
-  ctx.fillText('+ Cat', curX + addCatW / 2, topY + chipH / 2);
-  interactiveButtons.push({ id: 'todo_add_category_btn', x: curX, y: topY, w: addCatW, h: chipH });
-  curX += addCatW + 6;
+  if (curX + addCatW <= contentX + contentW - 74) {
+    ctx.beginPath();
+    ctx.roundRect(curX, topY, addCatW, chipH, 6);
+    ctx.fillStyle = isAddCatHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
+    ctx.fill();
+    ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isAddCatHov ? '#ffffff' : '#94a3b8';
+    ctx.textAlign = 'center';
+    ctx.fillText('+ Cat', curX + addCatW / 2, topY + chipH / 2);
+    interactiveButtons.push({ id: 'todo_add_category_btn', x: curX, y: topY, w: addCatW, h: chipH });
+    curX += addCatW + 5;
+  }
 
   // Delete Category button (if custom category selected)
-  if (todoSelectedCategory !== 'All' && !['Personal', 'Work', 'Island'].includes(todoSelectedCategory)) {
+  if (todoSelectedCategory !== 'All' && !['Personal', 'Work', 'Island'].includes(todoSelectedCategory) && curX + 22 <= contentX + contentW - 72) {
     const delCatW = 22;
     const isDelCatHov = hoveredButtonId === 'todo_delete_category_btn';
     ctx.beginPath();
@@ -6686,7 +6981,7 @@ function renderTodoTabView(x, y, w, h) {
   }
 
   // + Add Task Button on top right
-  const addTaskW = 68;
+  const addTaskW = 64;
   const addTaskH = 22;
   const addTaskX = contentX + contentW - addTaskW;
   const isAddTaskHov = hoveredButtonId === 'todo_add_task_btn';
@@ -6722,18 +7017,17 @@ function renderTodoTabView(x, y, w, h) {
     ctx.fill();
     ctx.stroke();
 
+    drawVectorSymbol(ctx, 'check', contentX + contentW / 2, listY + 72, 24, '#22c55e');
+
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '24px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('✅', contentX + contentW / 2, listY + 75);
-
     ctx.font = '600 12.5px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText('All caught up!', contentX + contentW / 2, listY + 110);
+    ctx.fillText('All caught up', contentX + contentW / 2, listY + 108);
 
     ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#64748b';
-    ctx.fillText('Click + Task to add something to your list', contentX + contentW / 2, listY + 130);
+    ctx.fillText('Click + Task to add something to your list', contentX + contentW / 2, listY + 128);
     ctx.restore();
   } else {
     const rowH = 34;
@@ -6844,49 +7138,12 @@ function renderHomeView(x, y, w, h) {
   const timeStr = formatClockTime(now, { clock24h, showSeconds: true, showAmPm });
   const dateStr = now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
-  // 0. Personalized Greeting & Name pill above Digital Clock
   const clockX = x + 20;
-  const greetingText = activeGreeting || (currentUserName ? `Welcome Back ${currentUserName}` : 'Welcome Back');
 
-  ctx.save();
-  ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-  const greetTextW = ctx.measureText(greetingText).width;
-  const greetW = Math.min(136, greetTextW + 24);
-  const greetH = 18;
-  const greetY = y + 40;
-  const isGreetHov = hoveredButtonId === 'btn_edit_user_name';
-
-  ctx.beginPath();
-  ctx.roundRect(clockX, greetY, greetW, greetH, 6);
-  ctx.fillStyle = isGreetHov ? 'rgba(56, 189, 248, 0.22)' : 'rgba(56, 189, 248, 0.1)';
-  ctx.strokeStyle = isGreetHov ? '#38bdf8' : 'rgba(56, 189, 248, 0.25)';
-  ctx.lineWidth = 1;
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = '#38bdf8';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(truncateToWidth(greetingText, greetW - 20, ctx.font), clockX + 6, greetY + greetH / 2);
-
-  ctx.font = '9px "Segoe UI Symbol", sans-serif';
-  ctx.fillStyle = isGreetHov ? '#ffffff' : '#7dd3fc';
-  ctx.textAlign = 'right';
-  ctx.fillText('✎', clockX + greetW - 5, greetY + greetH / 2);
-  ctx.restore();
-
-  interactiveButtons.push({
-    id: 'btn_edit_user_name',
-    x: clockX,
-    y: greetY,
-    w: greetW,
-    h: greetH
-  });
-
-  // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation
+  // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation (clean spacing, no greeting clutter)
   const isHomeClockHov = hoveredButtonId === 'home_clock_display';
   const homeClockFontSize = (!clock24h && showAmPm) ? 23 : 27;
-  const homeClockY = (!clock24h && showAmPm) ? (y + 64) : (y + 62);
+  const homeClockY = (!clock24h && showAmPm) ? (y + 44) : (y + 42);
   drawRollingTime(ctx, 'home_digital_clock', timeStr, clockX, homeClockY, {
     font: `700 ${homeClockFontSize}px "Segoe UI Variable Display", Inter, sans-serif`,
     fillStyle: isHomeClockHov ? '#38bdf8' : '#ffffff',
@@ -6899,23 +7156,24 @@ function renderHomeView(x, y, w, h) {
   interactiveButtons.push({
     id: 'home_clock_display',
     x: clockX - 4,
-    y: y + 58,
+    y: y + 40,
     w: 136,
     h: 34
   });
 
+  // 1a. Date + Laptop Battery Row (generous vertical gap below clock — zero overlap)
   ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = '#94a3b8';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   if (batteryState && batteryState.hasBattery) {
     const shortDateStr = now.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    ctx.fillText(shortDateStr, clockX, y + 92);
+    ctx.fillText(shortDateStr, clockX, y + 83);
 
     const homeBattW = 60;
     const homeBattH = 18;
     const homeBattX = clockX + 132 - homeBattW;
-    const homeBattY = y + 89;
+    const homeBattY = y + 80;
     const isHomeBattHov = hoveredButtonId === 'home_battery_badge';
 
     ctx.save();
@@ -6941,14 +7199,14 @@ function renderHomeView(x, y, w, h) {
       h: homeBattH
     });
   } else {
-    ctx.fillText(dateStr, clockX, y + 93);
+    ctx.fillText(dateStr, clockX, y + 82);
   }
 
-  // 1b. Latest Notification Card below Digital Clock
+  // 1b. Latest Notification Card below Date/Battery
   const notifCardX = clockX;
-  const notifCardY = y + 110;
+  const notifCardY = y + 106;
   const notifCardW = 132;
-  const notifCardH = 42;
+  const notifCardH = 44;
   const isNotifHov = hoveredButtonId === 'nav_notif_card';
 
   ctx.save();
@@ -6968,16 +7226,15 @@ function renderHomeView(x, y, w, h) {
 
   if (validHomeNotifs.length > 0) {
     const latestNotif = validHomeNotifs[0];
-    const appIcon = latestNotif.icon || '🔔';
     const appName = latestNotif.app || 'Notification';
     const bodySnippet = latestNotif.title || latestNotif.body || 'New alert';
 
-    // Header: icon + app name
+    drawVectorSymbol(ctx, 'bell', notifCardX + 13, notifCardY + 14, 10, '#38bdf8');
     ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = '#38bdf8';
+    ctx.fillStyle = '#e4e4e7';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${appIcon} ${truncateToWidth(appName, notifCardW - 20, ctx.font)}`, notifCardX + 8, notifCardY + 14);
+    ctx.fillText(truncateToWidth(appName, notifCardW - 28, ctx.font), notifCardX + 23, notifCardY + 14);
 
     // Body text snippet
     ctx.font = '400 9.5px "Segoe UI Variable Text", Inter, sans-serif';
@@ -7996,12 +8253,13 @@ function renderDropZoneView(x, y, w, h) {
   const contentW = w - padding * 2;
   const contentX = x + padding;
 
-  // Header Title
+  // Header Title (custom vector folder symbol, no emoji)
+  drawVectorSymbol(ctx, 'folder', contentX + 7, topY + 11, 13, '#e4e4e7');
   ctx.fillStyle = '#ffffff';
   ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(`📁 Drop Shelf (${dropZoneFiles.length})`, contentX, topY + 4);
+  ctx.fillText(`Drop Shelf (${dropZoneFiles.length})`, contentX + 20, topY + 4);
 
   // Header Actions
   const btnY = topY;
@@ -8033,7 +8291,7 @@ function renderDropZoneView(x, y, w, h) {
   ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('📂 Folder', fldX + fldW / 2, btnY + btnH / 2);
+  ctx.fillText('Folder', fldX + fldW / 2, btnY + btnH / 2);
 
   // Clear All button
   const clrW = 50;
@@ -8060,7 +8318,7 @@ function renderDropZoneView(x, y, w, h) {
     const leftX = contentX;
     const rightX = contentX + zoneW + gap;
 
-    // Left Zone: ⚡ One-Time Use
+    // Left Zone: One-Time Use (custom vector bolt)
     const isOneTimeHover = dropZoneHoverZone === 'onetime';
     ctx.save();
     ctx.setLineDash([5, 5]);
@@ -8073,10 +8331,9 @@ function renderDropZoneView(x, y, w, h) {
     ctx.stroke();
     ctx.restore();
 
+    drawVectorSymbol(ctx, 'bolt', leftX + zoneW / 2, listY + zoneH / 2 - 26, 24, isOneTimeHover ? '#fbbf24' : '#f59e0b');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '28px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('⚡', leftX + zoneW / 2, listY + zoneH / 2 - 28);
     ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = isOneTimeHover ? '#fbbf24' : '#f59e0b';
     ctx.fillText('One-Time Use', leftX + zoneW / 2, listY + zoneH / 2 + 6);
@@ -8086,7 +8343,7 @@ function renderDropZoneView(x, y, w, h) {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
     ctx.fillText('(WhatsApp, Discord, Browser, etc.)', leftX + zoneW / 2, listY + zoneH / 2 + 38);
 
-    // Right Zone: 📌 Keep
+    // Right Zone: Keep (custom vector pin)
     const isKeepHover = dropZoneHoverZone === 'keep';
     ctx.save();
     ctx.setLineDash([5, 5]);
@@ -8099,10 +8356,9 @@ function renderDropZoneView(x, y, w, h) {
     ctx.stroke();
     ctx.restore();
 
+    drawVectorSymbol(ctx, 'pin', rightX + zoneW / 2, listY + zoneH / 2 - 26, 22, isKeepHover ? '#34d399' : '#10b981');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '28px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('📌', rightX + zoneW / 2, listY + zoneH / 2 - 28);
     ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = isKeepHover ? '#34d399' : '#10b981';
     ctx.fillText('Keep on Shelf', rightX + zoneW / 2, listY + zoneH / 2 + 6);
@@ -8110,7 +8366,7 @@ function renderDropZoneView(x, y, w, h) {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
     ctx.fillText('Stays permanently on shelf', rightX + zoneW / 2, listY + zoneH / 2 + 24);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.fillText('Until you click ✖ to remove', rightX + zoneW / 2, listY + zoneH / 2 + 38);
+    ctx.fillText('Until you remove it', rightX + zoneW / 2, listY + zoneH / 2 + 38);
     return;
   }
 
@@ -8128,18 +8384,17 @@ function renderDropZoneView(x, y, w, h) {
     ctx.stroke();
     ctx.restore();
 
+    drawVectorSymbol(ctx, 'inbox', contentX + contentW / 2, listY + emptyH / 2 - 20, 24, '#71717a');
+
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '24px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('📥', contentX + contentW / 2, listY + emptyH / 2 - 20);
-
     ctx.fillStyle = '#e4e4e7';
     ctx.font = '600 13px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillText('Drop files here to store on shelf', contentX + contentW / 2, listY + emptyH / 2 + 8);
 
     ctx.fillStyle = '#71717a';
     ctx.font = '400 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillText('Split into ⚡ One-Time Use or 📌 Keep when dragging in', contentX + contentW / 2, listY + emptyH / 2 + 28);
+    ctx.fillText('Split into One-Time Use or Keep when dragging in', contentX + contentW / 2, listY + emptyH / 2 + 28);
   } else {
     // Full-width vertical rows
     const rowH = 38;
@@ -8171,12 +8426,8 @@ function renderDropZoneView(x, y, w, h) {
       ctx.strokeStyle = isRowHov ? 'rgba(59, 130, 246, 0.4)' : 'rgba(255, 255, 255, 0.06)';
       ctx.stroke();
 
-      // File Icon Glyph
-      const icon = getFileIcon(file.name);
-      ctx.font = '16px "Segoe UI Emoji", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(icon, contentX + 20, ry + rowH / 2);
+      // Custom Vector File/Folder Symbol (no emoji)
+      drawVectorSymbol(ctx, file.isDirectory ? 'folder' : 'file', contentX + 20, ry + rowH / 2, 14, '#cbd5e1');
 
       // File Name
       ctx.fillStyle = '#f4f4f5';
@@ -8191,8 +8442,8 @@ function renderDropZoneView(x, y, w, h) {
       ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.fillText(formatBytes(file.size), contentX + 38, ry + rowH / 2 + 8);
 
-      // Badge for One-Time vs Keep
-      const badgeText = file.oneTime ? '⚡ 1-Time' : '📌 Keep';
+      // Badge for One-Time vs Keep (custom vector symbol + clean text)
+      const badgeText = file.oneTime ? '1-Time' : 'Keep';
       const badgeBg = file.oneTime ? 'rgba(245, 158, 11, 0.18)' : 'rgba(16, 185, 129, 0.18)';
       const badgeBorder = file.oneTime ? 'rgba(245, 158, 11, 0.45)' : 'rgba(16, 185, 129, 0.45)';
       const badgeColor = file.oneTime ? '#fbbf24' : '#34d399';
@@ -8209,11 +8460,12 @@ function renderDropZoneView(x, y, w, h) {
       ctx.fill();
       ctx.stroke();
 
+      drawVectorSymbol(ctx, file.oneTime ? 'bolt' : 'pin', badgeX + 9, badgeY + badgeH / 2, 8, badgeColor);
       ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.fillStyle = badgeColor;
-      ctx.textAlign = 'center';
+      ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2);
+      ctx.fillText(badgeText, badgeX + 16, badgeY + badgeH / 2);
 
       // Dedicated Open ↗ Button
       const openBtnW = 50;

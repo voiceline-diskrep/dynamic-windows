@@ -83,9 +83,25 @@ test('UserDataManager: Dual-Zone Drop Shelf Metadata', async (t) => {
   manager.setFileShelfMetadata(testFile2, false); // Keep
 
   assert.equal(manager.isOneTimeFile(testFile1), true);
+  assert.equal(manager.isOneTimeFile(testFile1.toLowerCase()), true);
   assert.equal(manager.isOneTimeFile(testFile2), false);
 
-  manager.removeFileShelfMetadata(testFile1);
+  manager.removeFileShelfMetadata(testFile1.toLowerCase());
   assert.equal(manager.isOneTimeFile(testFile1), false);
   manager.removeFileShelfMetadata(testFile2);
+});
+
+test('UserDataManager: Notes CRUD (add, update, delete)', () => {
+  const manager = new UserDataManager();
+  const created = manager.addNote({ title: 'Quick idea', body: 'Ship v1.4.42' });
+  assert.ok(created && created.id);
+  assert.ok(manager.getNotes().some(n => n.id === created.id));
+
+  const updated = manager.updateNote(created.id, { title: 'Updated idea', body: 'Ship v1.4.42 today' });
+  assert.equal(updated.title, 'Updated idea');
+  assert.equal(updated.body, 'Ship v1.4.42 today');
+
+  const deleted = manager.deleteNote(created.id);
+  assert.equal(deleted, true);
+  assert.ok(!manager.getNotes().some(n => n.id === created.id));
 });

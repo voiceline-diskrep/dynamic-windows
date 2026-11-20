@@ -15,6 +15,7 @@ const DATA_DIR = process.platform === 'darwin'
 
 const CALENDAR_FILE = path.join(DATA_DIR, 'calendar_notes.json');
 const TODOS_FILE = path.join(DATA_DIR, 'todos.json');
+const NOTES_FILE = path.join(DATA_DIR, 'notes.json');
 const CLOCK_FILE = path.join(DATA_DIR, 'clock_state.json');
 const SHELF_FILE = path.join(DATA_DIR, 'drop_shelf_metadata.json');
 
@@ -86,6 +87,7 @@ class UserDataManager {
     this.ensureDir();
     this.calendarNotes = safeReadJson(CALENDAR_FILE, []);
     this.todos = safeReadJson(TODOS_FILE, DEFAULT_TODOS);
+    this.notes = safeReadJson(NOTES_FILE, []);
     this.clockState = safeReadJson(CLOCK_FILE, DEFAULT_CLOCK);
     this.shelfMetadata = safeReadJson(SHELF_FILE, {});
   }
@@ -236,16 +238,78 @@ class UserDataManager {
     return this.clockState;
   }
 
+  // --- Notes Engine ---
+
+  getNotes() {
+    return Array.isArray(this.notes) ? this.notes : [];
+  }
+
+  addNote({ title, body }) {
+    const cleanTitle = String(title || '').trim();
+    const cleanBody = String(body || '').trim();
+    if (!cleanTitle && !cleanBody) return null;
+    const item = {
+      id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      title: cleanTitle || cleanBody.slice(0, 36),
+      body: cleanBody,
+      updatedAt: Date.now()
+    };
+    this.notes.unshift(item);
+    safeWriteJson(NOTES_FILE, this.notes);
+    return item;
+  }
+
+  updateNote(id, { title, body }) {
+    const idx = this.notes.findIndex(n => n.id === id);
+    if (idx === -1) return null;
+    const cleanTitle = String(title || '').trim();
+    const cleanBody = String(body || '').trim();
+    this.notes[idx] = {
+      ...this.notes[idx],
+      title: cleanTitle || cleanBody.slice(0, 36) || 'Untitled',
+      body: cleanBody,
+      updatedAt: Date.now()
+    };
+    safeWriteJson(NOTES_FILE, this.notes);
+    return this.notes[idx];
+  }
+
+  deleteNote(id) {
+    const before = this.notes.length;
+    this.notes = this.notes.filter(n => n.id !== id);
+    if (this.notes.length !== before) {
+      safeWriteJson(NOTES_FILE, this.notes);
+      return true;
+    }
+    return false;
+  }
+
   // --- Drop Shelf Metadata (Dual-Zone: One-Time vs Keep) ---
 
   getShelfMetadata() {
     return this.shelfMetadata;
   }
 
+  _findShelfKey(filePath) {
+    if (!filePath || typeof filePath !== 'string') return null;
+    const norm = path.normalize(filePath);
+    if (this.shelfMetadata[norm]) return norm;
+    const lowerNorm = norm.toLowerCase();
+    const baseLower = path.basename(norm).toLowerCase();
+    for (const k of Object.keys(this.shelfMetadata)) {
+      if (path.normalize(k).toLowerCase() === lowerNorm) return k;
+    }
+    for (const k of Object.keys(this.shelfMetadata)) {
+      if (path.basename(k).toLowerCase() === baseLower) return k;
+    }
+    return null;
+  }
+
   setFileShelfMetadata(filePath, isOneTime) {
     if (!filePath || typeof filePath !== 'string') return;
-    const norm = path.normalize(filePath);
-    this.shelfMetadata[norm] = {
+    const existingKey = this._findShelfKey(filePath);
+    const key = existingKey || path.normalize(filePath);
+    this.shelfMetadata[key] = {
       oneTime: Boolean(isOneTime),
       addedAt: Date.now()
     };
@@ -253,16 +317,14 @@ class UserDataManager {
   }
 
   isOneTimeFile(filePath) {
-    if (!filePath || typeof filePath !== 'string') return false;
-    const norm = path.normalize(filePath);
-    return Boolean(this.shelfMetadata[norm] && this.shelfMetadata[norm].oneTime);
+    const key = this._findShelfKey(filePath);
+    return Boolean(key && this.shelfMetadata[key] && this.shelfMetadata[key].oneTime);
   }
 
   removeFileShelfMetadata(filePath) {
-    if (!filePath || typeof filePath !== 'string') return;
-    const norm = path.normalize(filePath);
-    if (this.shelfMetadata[norm]) {
-      delete this.shelfMetadata[norm];
+    const key = this._findShelfKey(filePath);
+    if (key && this.shelfMetadata[key]) {
+      delete this.shelfMetadata[key];
       safeWriteJson(SHELF_FILE, this.shelfMetadata);
     }
   }
@@ -315,6 +377,27 @@ class UserDataManager {
       const res = this.deleteTodoCategory(cat);
       const win = getMainWindow();
       if (win && !win.isDestroyed()) win.webContents.send('todo-data-updated', this.getTodos());
+      return res;
+    });
+
+    // Notes IPC
+    ipcMain.handle('notes-get-all', () => this.getNotes());
+    ipcMain.handle('notes-add', (event, note) => {
+      const created = this.addNote(note);
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('notes-updated', this.getNotes());
+      return created;
+    });
+    ipcMain.handle('notes-update', (event, { id, title, body }) => {
+      const updated = this.updateNote(id, { title, body });
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('notes-updated', this.getNotes());
+      return updated;
+    });
+    ipcMain.handle('notes-delete', (event, id) => {
+      const res = this.deleteNote(id);
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('notes-updated', this.getNotes());
       return res;
     });
 

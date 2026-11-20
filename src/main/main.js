@@ -645,6 +645,7 @@ function createIslandWindow() {
   // Native Drag Out for Drop Shelf files
   ipcMain.on('shelf-drag-start', async (event, payload) => {
     const filePath = typeof payload === 'string' ? payload : (payload && payload.filePath);
+    const payloadOneTime = Boolean(payload && typeof payload === 'object' && payload.oneTime);
     if (!filePath || typeof filePath !== 'string' || !fs.existsSync(filePath)) return;
     try {
       let icon = fileIconsCache.get(filePath);
@@ -659,7 +660,27 @@ function createIslandWindow() {
       if (!icon || icon.isEmpty()) {
         icon = nativeImage.createFromDataURL(BLANK_PNG);
       }
+      const baseName = path.basename(filePath);
+      const destPath = path.isAbsolute(filePath) ? filePath : path.join(dropZone.dir, baseName);
+      const shouldAutoClear = payloadOneTime || (userDataManager && userDataManager.isOneTimeFile(destPath));
+
       event.sender.startDrag({ file: filePath, icon });
+
+      // Native OS drag completes when startDrag returns; delay briefly so the target app finishes reading the file
+      if (shouldAutoClear && dropZone) {
+        setTimeout(() => {
+          try {
+            if (userDataManager) {
+              userDataManager.removeFileShelfMetadata(destPath);
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('shelf-metadata-updated', userDataManager.getShelfMetadata());
+              }
+            }
+            dropZone.deleteFile(baseName);
+            sendDropZoneFiles();
+          } catch (e) {}
+        }, 350);
+      }
     } catch (err) {
       console.error('[DRAG ERROR]', err);
     }
