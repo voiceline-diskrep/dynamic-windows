@@ -3400,7 +3400,8 @@ function getTargetRestingWidth() {
 
   const hasMedia = mediaState.isPlaying && mediaState.track && mediaState.track.title && mediaState.track.title !== 'No media playing';
   let mainPillW = UI.REST_W;
-  const MAX_LYRIC_PILL_W = 520;
+  const MAX_LYRIC_PILL_W = 760;
+  const mediaChromeW = (batteryState && batteryState.hasBattery) ? 178 : 148;
 
   // Active timer renders in a detached right island, so the main clock pill stays compact
   if (hasMedia) {
@@ -3419,7 +3420,7 @@ function getTargetRestingWidth() {
         const wCur = ctx.measureText(curWords).width;
         ctx.restore();
         const interpW = wPrev + (wCur - wPrev) * easeOutQuad(prog.subWordProgress);
-        mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(144 + interpW)));
+        mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(mediaChromeW + interpW)));
       } else if (roll.previous && roll.k < 1) {
         ctx.save();
         ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
@@ -3427,14 +3428,14 @@ function getTargetRestingWidth() {
         const w2 = ctx.measureText(roll.previous).width;
         ctx.restore();
         const maxW = Math.max(w1, w2);
-        mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(144 + maxW)));
+        mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(mediaChromeW + maxW)));
       } else {
         textToMeasure = roll.text;
         ctx.save();
         ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
         const textW = ctx.measureText(textToMeasure).width;
         ctx.restore();
-        mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(144 + textW)));
+        mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(mediaChromeW + textW)));
       }
     } else {
       textToMeasure = (mediaState.track.title || '').trim();
@@ -3442,7 +3443,7 @@ function getTargetRestingWidth() {
       ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
       const textW = ctx.measureText(textToMeasure).width;
       ctx.restore();
-      mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(144 + textW)));
+      mainPillW = Math.max(220, Math.min(MAX_LYRIC_PILL_W, Math.round(mediaChromeW + textW)));
     }
   } else {
     const timeStr = formatClockTime(new Date(), { clock24h, showSeconds, showAmPm });
@@ -3795,19 +3796,51 @@ function paintCapsuleSurface(c, {
     return;
   }
 
-  // Apple-inspired Liquid Glass Mode: translucent frosted glass, album palette gradient, internal sheen, cursor bloom, and luminous rim
-  const glassFactor = 0.50 + 0.28 * Math.max(0, Math.min(1, p));
-  const baseGlassAlpha = Math.max(0.38, Math.min(0.84, islandOpacity * glassFactor));
+  // Apple-inspired Liquid Glass Mode: deeply frosted translucent glass, micro-grain diffusion, album palette gradient, internal sheen, cursor bloom, and luminous rim
+  const glassFactor = 0.72 + 0.16 * Math.max(0, Math.min(1, p));
+  const baseGlassAlpha = Math.max(0.62, Math.min(0.90, islandOpacity * glassFactor));
   const bodyGrad = c.createLinearGradient(x, y, x, y + h);
-  bodyGrad.addColorStop(0.0, `rgba(46, 54, 72, ${Math.min(0.86, baseGlassAlpha * 0.92)})`);
-  bodyGrad.addColorStop(0.42, `rgba(20, 24, 34, ${baseGlassAlpha})`);
-  bodyGrad.addColorStop(1.0, `rgba(12, 15, 24, ${Math.min(0.88, baseGlassAlpha * 1.06)})`);
+  bodyGrad.addColorStop(0.0, `rgba(42, 48, 64, ${Math.min(0.92, baseGlassAlpha * 0.96)})`);
+  bodyGrad.addColorStop(0.42, `rgba(18, 22, 32, ${baseGlassAlpha})`);
+  bodyGrad.addColorStop(1.0, `rgba(11, 14, 22, ${Math.min(0.94, baseGlassAlpha * 1.04)})`);
 
   c.save();
   tracePath();
   c.fillStyle = bodyGrad;
   c.fill();
   c.clip();
+
+  // Frosted milky diffusion veil so underlying icons/text stay soft and readable
+  c.fillStyle = 'rgba(220, 232, 248, 0.075)';
+  c.fillRect(x - 24, y, w + 48, h);
+
+  // Cached 64x64 frosted micro-grain texture (zero per-frame alloc)
+  if (!paintCapsuleSurface._frostPattern && typeof document !== 'undefined' && document.createElement) {
+    try {
+      const fc = document.createElement('canvas');
+      fc.width = 64;
+      fc.height = 64;
+      const fctx = fc.getContext('2d');
+      if (fctx) {
+        const img = fctx.createImageData(64, 64);
+        let seed = 1337;
+        for (let i = 0; i < img.data.length; i += 4) {
+          seed = (seed * 16807) % 2147483647;
+          const v = 180 + (seed % 75);
+          img.data[i] = v;
+          img.data[i + 1] = v;
+          img.data[i + 2] = v;
+          img.data[i + 3] = 14 + (seed % 12);
+        }
+        fctx.putImageData(img, 0, 0);
+        paintCapsuleSurface._frostPattern = c.createPattern(fc, 'repeat');
+      }
+    } catch (e) {}
+  }
+  if (paintCapsuleSurface._frostPattern) {
+    c.fillStyle = paintCapsuleSurface._frostPattern;
+    c.fillRect(x - 24, y, w + 48, h);
+  }
 
   if (accentTintStrength > 0.05 && palette) {
     const c0 = palette[0];
