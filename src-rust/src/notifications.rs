@@ -159,6 +159,10 @@ impl NotificationMonitor {
             return (Vec::new(), false);
         }
 
+        if self.suppress_windows_toasts {
+            crate::sys_win::ensure_windows_toast_suppression_active();
+        }
+
         let raw_items = fetch_winrt_notifications(self.suppress_windows_toasts);
         let mut new_alerts = Vec::new();
         let mut any_new = false;

@@ -3521,7 +3521,37 @@ function animate(now) {
 
   const snap = getDynamicStateSnapshot(now);
   if (computeDynamicActive(snap)) {
-    requestFrame();
+    const needsNativeHighFps =
+      Math.abs((snap.targetProgress || 0) - (snap.animProgress || 0)) > 0.001 ||
+      Math.abs((snap.targetHide || 0) - (snap.hideProgress || 0)) > 0.002 ||
+      Math.abs((snap.targetRestW || 0) - (snap.currentRestingWidth || 0)) > 0.5 ||
+      ((snap.animProgress || 0) > 0.05 && Math.abs((snap.targetExpH || 0) - (snap.currentExpandedH || 0)) > 0.5) ||
+      Math.abs((snap.targetSongPopupProgress || 0) - (snap.songPopupProgress || 0)) > 0.002 ||
+      Math.abs((snap.wantTint || 0) - (snap.tintK || 0)) > 0.004 ||
+      ((snap.animProgress || 0) > 0.15 && (snap.isTabTransitioning || snap.isNavPillAnimating)) ||
+      snap.gameModeToastFading ||
+      snap.activeAlarmRinging ||
+      snap.stopwatchRunning ||
+      snap.hasActiveTumbler ||
+      snap.isDraggingOver ||
+      snap.isDraggingVolume ||
+      snap.shelfDragCandidate;
+
+    if (needsNativeHighFps) {
+      requestFrame();
+    } else if (snap.isTucked || (snap.hideProgress || 0) >= 0.98) {
+      // Capsule is tucked/hidden: skip ambient equalizer/pulse redraws (0 FPS)
+      const wakeDelay = getNextIdleWakeDelayMs(snap);
+      if (wakeDelay !== null) {
+        idleFrameTimeout = setTimeout(requestFrame, wakeDelay);
+      }
+    } else if (snap.mediaPlaying || (snap.callInCall && (snap.callRinging || snap.callSpeaking))) {
+      // Passive ambient media/equalizer/lyrics: smooth 30 FPS instead of 144Hz
+      idleFrameTimeout = setTimeout(requestFrame, 33);
+    } else {
+      // Passive ambient AI status dot pulse: gentle 12 FPS instead of 144Hz
+      idleFrameTimeout = setTimeout(requestFrame, 83);
+    }
   } else {
     if (morphShadowScratch) {
       morphShadowScratch.width = 0;

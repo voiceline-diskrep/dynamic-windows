@@ -47,7 +47,7 @@ const ISLAND_H: f64 = 420.0;
 
 // Shared lean Chromium arguments for both Island and Settings WebView2 instances
 // (identical args allow both windows to share a single WebContext / browser process).
-// Note: GPU DirectComposition is intentionally kept enabled for guaranteed window transparency.
+// Note: GPU DirectComposition and V8 JIT are kept enabled for transparency and low CPU.
 const LOW_MEM_BROWSER_ARGS: &str = concat!(
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,Translate,BackForwardCache,MediaRouter,OptimizationHints,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,AutofillServerCommunication,HeavyAdIntervention,SpellCheck,PaintHolding ",
     "--enable-features=RemoveRedirectionBitmap ",
@@ -56,7 +56,6 @@ const LOW_MEM_BROWSER_ARGS: &str = concat!(
     "--disable-client-side-phishing-detection --disable-speech-api --no-pings ",
     "--no-first-run --no-default-browser-check ",
     "--renderer-process-limit=1 --disable-site-isolation-trials ",
-    "--js-flags=--max-old-space-size=24,--optimize-for-size,--lite-mode ",
     "--gpu-program-cache-size-kb=512 --disk-cache-size=1048576 --media-cache-size=1048576"
 );
 
@@ -1677,15 +1676,18 @@ fn main() {
             while !stop.load(Ordering::SeqCst) {
                 let hwnd = hwnd_ref.load(Ordering::SeqCst);
                 if hwnd != 0 && ign.load(Ordering::SeqCst) {
-                    if let (Some((cx, cy)), Some((l, t, r, b))) =
+                    if let (Some((cx, cy)), Some((l, t, r, _b))) =
                         (sys_win::get_cursor_pos(), sys_win::get_window_rect(hwnd))
                     {
-                        let inside = cx >= l && cx < r && cy >= t && cy < b;
+                        let sc = *scale_ref.lock().unwrap();
+                        // While click-through (collapsed), only monitor the narrow top capsule strip (~96px)
+                        // so normal mouse work in the top half of the screen never triggers JS evals.
+                        let hover_band_bottom = t + (96.0 * sc).round() as i32;
+                        let inside = cx >= l && cx < r && cy >= t && cy < hover_band_bottom;
                         if inside {
                             if (cx, cy) != last_pt || !was_inside {
                                 last_pt = (cx, cy);
                                 was_inside = true;
-                                let sc = *scale_ref.lock().unwrap();
                                 let lx = (cx - l) as f64 / sc;
                                 let ly = (cy - t) as f64 / sc;
                                 let _ = p.send_event(UserEvent::EvalIsland(format!(
@@ -1693,7 +1695,7 @@ fn main() {
                                     lx, ly
                                 )));
                             }
-                            thread::sleep(Duration::from_millis(16));
+                            thread::sleep(Duration::from_millis(24));
                             continue;
                         } else if was_inside {
                             was_inside = false;
@@ -1703,9 +1705,8 @@ fn main() {
                                     .to_string(),
                             ));
                         }
-                        // Sleep longer when cursor is far from top overlay band for ~0% idle CPU
-                        let near_top = cy < b + 160;
-                        thread::sleep(Duration::from_millis(if near_top { 24 } else { 65 }));
+                        let near_top = cy < hover_band_bottom + 120;
+                        thread::sleep(Duration::from_millis(if near_top { 32 } else { 85 }));
                         continue;
                     }
                 } else {
@@ -1753,7 +1754,6 @@ fn main() {
         let last_ref = last_clip_text.clone();
         let gm = game_mode_enabled.clone();
         let full = is_fullscreen.clone();
-        let ign = ignore_mouse.clone();
         let p = proxy.clone();
 
         spawn_lean("dw-monitors", 256, move || {
@@ -1773,7 +1773,6 @@ fn main() {
             let mut last_notif = Instant::now() - Duration::from_secs(10);
             let mut last_batt = Instant::now();
             let mut initial_trim_done = false;
-            let mut last_trim = Instant::now();
 
             while !stop.load(Ordering::SeqCst) {
                 let now = Instant::now();
@@ -1880,8 +1879,16 @@ fn main() {
                     }
                 }
 
-                // WinRT Toast Notifications check (10s)
-                if now.duration_since(last_notif) >= Duration::from_secs(10) {
+                // Native WinRT Toast Notifications check (1.5s when suppressing toasts, 3s normal)
+                let notif_iv = {
+                    let g = n.lock().unwrap();
+                    if g.suppress_windows_toasts {
+                        Duration::from_millis(1500)
+                    } else {
+                        Duration::from_secs(3)
+                    }
+                };
+                if now.duration_since(last_notif) >= notif_iv {
                     last_notif = now;
                     let (alerts, updated) = {
                         let mut g = n.lock().unwrap();
@@ -1912,16 +1919,10 @@ fn main() {
                     }
                 }
 
-                // Working-set trim: once 6s after startup, then every 45s while idle/collapsed
-                if !initial_trim_done && now.duration_since(start) >= Duration::from_secs(6) {
+                // Working-set trim once after startup settles (+8s) — avoid periodic trimming
+                // during active sessions so live V8/GPU code pages are never evicted and re-faulted.
+                if !initial_trim_done && now.duration_since(start) >= Duration::from_secs(8) {
                     initial_trim_done = true;
-                    last_trim = now;
-                    sys_win::trim_process_tree_memory();
-                } else if initial_trim_done
-                    && ign.load(Ordering::SeqCst)
-                    && now.duration_since(last_trim) >= Duration::from_secs(45)
-                {
-                    last_trim = now;
                     sys_win::trim_process_tree_memory();
                 }
 

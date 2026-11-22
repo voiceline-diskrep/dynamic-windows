@@ -323,11 +323,85 @@ pub fn set_startup_registry(open_at_login: bool, startup_takeover: bool) -> bool
     }
 }
 
-pub fn set_windows_toast_suppression_registry(suppress: bool) -> bool {
+// WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED: controls Windows 10/11 Do Not Disturb (Focus Assist).
+// Values: 0 = Off, 1 = Priority Only, 2 = Alarms Only (silences native toast popups while
+// UserNotificationListener still receives every notification immediately).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WnfStateName {
+    data: [u32; 2],
+}
+
+const WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED: WnfStateName = WnfStateName {
+    data: [0xA3BF1C75, 0x0D83063E],
+};
+
+#[link(name = "ntdll")]
+extern "system" {
+    fn NtQueryWnfStateData(
+        state_name: *const WnfStateName,
+        type_id: *const std::ffi::c_void,
+        explicit_scope: *const std::ffi::c_void,
+        change_stamp: *mut u32,
+        buffer: *mut std::ffi::c_void,
+        buffer_size: *mut u32,
+    ) -> i32;
+
+    fn NtUpdateWnfStateData(
+        state_name: *const WnfStateName,
+        buffer: *const std::ffi::c_void,
+        length: u32,
+        type_id: *const std::ffi::c_void,
+        explicit_scope: *const std::ffi::c_void,
+        matching_change_stamp: u32,
+        check_stamp: i32,
+    ) -> i32;
+}
+
+static SAVED_DND_PROFILE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+pub fn query_windows_dnd_profile() -> Option<(u32, u32)> {
+    unsafe {
+        let mut stamp: u32 = 0;
+        let mut val: u32 = 0;
+        let mut size: u32 = std::mem::size_of::<u32>() as u32;
+        let status = NtQueryWnfStateData(
+            &WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED,
+            std::ptr::null(),
+            std::ptr::null(),
+            &mut stamp,
+            &mut val as *mut u32 as *mut std::ffi::c_void,
+            &mut size,
+        );
+        if status >= 0 {
+            Some((val, stamp))
+        } else {
+            None
+        }
+    }
+}
+
+pub fn set_windows_dnd_profile(profile: u32) -> bool {
+    let stamp = query_windows_dnd_profile().map(|(_, s)| s).unwrap_or(0);
+    unsafe {
+        let status = NtUpdateWnfStateData(
+            &WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED,
+            &profile as *const u32 as *const std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+            std::ptr::null(),
+            std::ptr::null(),
+            stamp,
+            0,
+        );
+        status >= 0
+    }
+}
+
+fn ensure_legacy_toast_registry_enabled() {
     let subkey =
         to_wide("Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings");
     let value_name = to_wide("NOC_GLOBAL_SETTING_TOASTS_ENABLED");
-    let dword: u32 = if suppress { 0 } else { 1 };
+    let dword: u32 = 1;
     unsafe {
         let mut hkey = HKEY::default();
         if RegCreateKeyExW(
@@ -341,15 +415,38 @@ pub fn set_windows_toast_suppression_registry(suppress: bool) -> bool {
             &mut hkey,
             None,
         )
-        .is_err()
+        .is_ok()
         {
-            return false;
+            let bytes = dword.to_le_bytes();
+            let _ = RegSetValueExW(hkey, PCWSTR(value_name.as_ptr()), 0, REG_DWORD, Some(&bytes));
+            let _ = RegCloseKey(hkey);
         }
-        let bytes = dword.to_le_bytes();
-        let ok =
-            RegSetValueExW(hkey, PCWSTR(value_name.as_ptr()), 0, REG_DWORD, Some(&bytes)).is_ok();
-        let _ = RegCloseKey(hkey);
-        ok
+    }
+}
+
+pub fn set_windows_toast_suppression_registry(suppress: bool) -> bool {
+    // Keep legacy registry key at 1 so notifications always flow into UserNotificationListener,
+    // and use Windows 10/11 Do Not Disturb (Alarms Only) to actually suppress native toast banners.
+    ensure_legacy_toast_registry_enabled();
+    if suppress {
+        if SAVED_DND_PROFILE.load(std::sync::atomic::Ordering::SeqCst) < 0 {
+            let cur = query_windows_dnd_profile().map(|(v, _)| v as i32).unwrap_or(0);
+            SAVED_DND_PROFILE.store(cur, std::sync::atomic::Ordering::SeqCst);
+        }
+        set_windows_dnd_profile(2)
+    } else {
+        let prev = SAVED_DND_PROFILE.swap(-1, std::sync::atomic::Ordering::SeqCst);
+        let restore = if prev >= 0 { prev as u32 } else { 0 };
+        set_windows_dnd_profile(restore)
+    }
+}
+
+/// Re-asserts Do Not Disturb if Windows automatically cleared it (e.g. after exiting a fullscreen game).
+pub fn ensure_windows_toast_suppression_active() {
+    if let Some((cur, _)) = query_windows_dnd_profile() {
+        if cur == 0 {
+            let _ = set_windows_dnd_profile(2);
+        }
     }
 }
 
