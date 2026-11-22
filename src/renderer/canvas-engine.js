@@ -1712,8 +1712,8 @@ let songPopupActiveUntil = 0;
 let songPopupProgress = 0.0; // 0.0 (compact) -> 1.0 (fully extended downward)
 let hoveredDuringSongPopup = false;
 const SONG_POPUP_DURATION_MS = 6000; // 6 seconds display duration approved by user
-const SONG_POPUP_HEIGHT = 124;
-const SONG_POPUP_WIDTH = 480;
+const SONG_POPUP_HEIGHT = 344;
+const SONG_POPUP_WIDTH = 280;
 
 function triggerSongAnnouncement() {
   if (isTucked) return;
@@ -3755,8 +3755,7 @@ function getTargetWidth(p) {
   const normalW = Math.max(44, restW + (expandedTargetW - restW) * e);
   if (songPopupProgress > 0.001 && p < 0.2) {
     const popK = easeOpenCloseBack(songPopupProgress, isSongPopupOpening, 0.85);
-    const targetW = displayMode === 'notch' ? UI.EXPANDED_W : SONG_POPUP_WIDTH;
-    return Math.max(44, normalW + (targetW - normalW) * popK);
+    return Math.max(44, normalW + (SONG_POPUP_WIDTH - normalW) * popK);
   }
   return normalW;
 }
@@ -4206,7 +4205,7 @@ function render() {
   const normalH = getTargetHeight(p);
   const isNotch = displayMode === 'notch';
   const normalY = isNotch ? 0 : 8; // Flush with top for notch, floating for island
-  const normalRadius = UI.COMPACT_RADIUS + (UI.EXPANDED_RADIUS - UI.COMPACT_RADIUS) * p;
+  const normalRadius = UI.COMPACT_RADIUS + (UI.EXPANDED_RADIUS - UI.COMPACT_RADIUS) * Math.max(p, songPopupProgress);
   const normalTopFillet = Math.round(10 + 4 * p);
 
   const hideT = computeCapsuleHideTransform({
@@ -4426,222 +4425,288 @@ function render() {
 }
 
 // -------------------------------------------------------------
-// Connected Downward Song Change Announcement Popup
+// Vector Beamed Music Note Icon (♫) for Compact Music Intro Header
+// -------------------------------------------------------------
+function drawPopupMusicNoteIcon(c, x, cy, color) {
+  c.save();
+  c.fillStyle = color;
+  c.strokeStyle = color;
+  c.lineWidth = 1.35;
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+
+  // Left & right noteheads
+  c.beginPath();
+  c.ellipse(x + 2.2, cy + 3.6, 2.2, 1.65, -0.35, 0, Math.PI * 2);
+  c.fill();
+  c.beginPath();
+  c.ellipse(x + 8.6, cy + 2.5, 2.2, 1.65, -0.35, 0, Math.PI * 2);
+  c.fill();
+
+  // Stems and angled top beam
+  c.beginPath();
+  c.moveTo(x + 4.0, cy + 3.2);
+  c.lineTo(x + 4.0, cy - 3.6);
+  c.lineTo(x + 10.4, cy - 4.9);
+  c.lineTo(x + 10.4, cy + 2.1);
+  c.stroke();
+
+  c.lineWidth = 2.0;
+  c.beginPath();
+  c.moveTo(x + 4.0, cy - 3.4);
+  c.lineTo(x + 10.4, cy - 4.7);
+  c.stroke();
+  c.restore();
+}
+
+// -------------------------------------------------------------
+// Connected Downward Song Change Announcement Popup (Compact Vertical Card)
 // -------------------------------------------------------------
 function renderSongAnnouncementPopup(x, y, w, h, popAlpha) {
   ctx.save();
   ctx.globalAlpha = popAlpha;
 
   const isNotch = displayMode === 'notch';
-  const cornerR = UI.COMPACT_RADIUS + 8;
+  const cornerR = UI.EXPANDED_RADIUS;
+  const reveal = Math.max(0, Math.min(1, songPopupProgress));
+  const bodyAlpha = Math.max(0, Math.min(1, (reveal - 0.16) / 0.64));
+  const bodyOffsetY = (1 - bodyAlpha) * 8;
 
-  // 1. Subtle Ambient Radial Halo around Album Art
-  if (albumAccentColor && albumAccentColor !== '#e4e4e7') {
+  const track = mediaState.track || {};
+  const songTitle = (track.title || 'Unknown Title').trim();
+  const songArtist = (track.artist || 'Unknown Artist').trim();
+  const songAlbum = (track.album || '').trim();
+  const displayAlbum = songAlbum || 'Single';
+
+  // 1. Subtle Ambient Radial Glow Behind Centered Album Art
+  if (bodyAlpha > 0.02 && albumAccentColor && albumAccentColor !== '#e4e4e7') {
     ctx.save();
     buildCapsulePath(ctx, x, y, w, h, cornerR, isNotch, 12);
     ctx.clip();
-    const glowGrad = ctx.createRadialGradient(x + 55, y + 68, 5, x + 55, y + 68, 90);
-    glowGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.12 * popAlpha));
-    glowGrad.addColorStop(0.6, colorWithAlpha(albumAccentColor, 0.02 * popAlpha));
+    const glowCx = x + w / 2;
+    const glowCy = y + 138 + bodyOffsetY;
+    const glowGrad = ctx.createRadialGradient(glowCx, glowCy, 12, glowCx, glowCy, 140);
+    glowGrad.addColorStop(0.0, colorWithAlpha(albumAccentColor, 0.16 * popAlpha * bodyAlpha));
+    glowGrad.addColorStop(0.55, colorWithAlpha(albumAccentColor, 0.04 * popAlpha * bodyAlpha));
     glowGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
     ctx.fillStyle = glowGrad;
     ctx.fillRect(x, y, w, h);
     ctx.restore();
   }
 
-  // 2. Connected Top Bar (0 to 34px)
-  const topH = 34;
+  // 2. Compact Top Header (Clock + ♫ + Title on Left; Visualizer + Close on Right)
+  const topH = 40;
+  const headerCy = y + topH / 2 + (isNotch ? 2 : 0);
+  const padX = 16;
   const now = new Date();
   const timeStr = formatClockTime(now, { clock24h, showSeconds, showAmPm });
 
   // Digital Clock on Left
   ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
-  ctx.fillStyle = '#e4e4e7';
+  ctx.fillStyle = '#f4f4f5';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(timeStr, x + 16, y + topH / 2);
+  ctx.fillText(timeStr, x + padX, headerCy);
   const clockW = ctx.measureText(timeStr).width;
 
-  // Close / Dismiss button on Top Right
-  const closeBtnSize = 16;
-  const closeBtnX = x + w - closeBtnSize - 14;
-  const closeBtnY = y + (topH - closeBtnSize) / 2;
-  const isCloseHov = pointInRect(mouseX, mouseY, closeBtnX - 4, closeBtnY - 4, closeBtnSize + 8, closeBtnSize + 8);
+  // Circular Close Button ("X") on Top Right
+  const closeBtnSize = 18;
+  const closeBtnX = x + w - closeBtnSize - padX;
+  const closeBtnY = headerCy - closeBtnSize / 2;
+  const isCloseHov = pointInRect(mouseX, mouseY, closeBtnX - 5, closeBtnY - 5, closeBtnSize + 10, closeBtnSize + 10);
   interactiveButtons.push({
     id: 'song_popup_dismiss',
-    x: closeBtnX - 4,
-    y: closeBtnY - 4,
-    w: closeBtnSize + 8,
-    h: closeBtnSize + 8
+    x: closeBtnX - 5,
+    y: closeBtnY - 5,
+    w: closeBtnSize + 10,
+    h: closeBtnSize + 10
   });
 
   ctx.save();
   ctx.beginPath();
   ctx.arc(closeBtnX + closeBtnSize / 2, closeBtnY + closeBtnSize / 2, closeBtnSize / 2, 0, Math.PI * 2);
-  ctx.fillStyle = isCloseHov ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.08)';
+  ctx.fillStyle = isCloseHov ? 'rgba(255, 255, 255, 0.24)' : 'rgba(255, 255, 255, 0.12)';
   ctx.fill();
-  ctx.fillStyle = isCloseHov ? '#ffffff' : 'rgba(255, 255, 255, 0.6)';
-  ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('✕', closeBtnX + closeBtnSize / 2, closeBtnY + closeBtnSize / 2);
+  const cxBtn = closeBtnX + closeBtnSize / 2;
+  const cyBtn = closeBtnY + closeBtnSize / 2;
+  const xArm = 3.2;
+  ctx.beginPath();
+  ctx.moveTo(cxBtn - xArm, cyBtn - xArm);
+  ctx.lineTo(cxBtn + xArm, cyBtn + xArm);
+  ctx.moveTo(cxBtn + xArm, cyBtn - xArm);
+  ctx.lineTo(cxBtn - xArm, cyBtn + xArm);
+  ctx.strokeStyle = isCloseHov ? '#ffffff' : 'rgba(255, 255, 255, 0.72)';
+  ctx.lineWidth = 1.45;
+  ctx.lineCap = 'round';
+  ctx.stroke();
   ctx.restore();
 
-  // Animated 5-Bar Audio Equalizer to the left of close button
+  // Animated 5-Bar Audio Visualizer to the left of Close button
   const eqW = 22;
-  const eqX = closeBtnX - eqW - 10;
-  drawEqualizer('popup_top', eqX, y + topH / 2, eqW, 11, albumAccentColor, 5);
+  const eqX = closeBtnX - eqW - 9;
+  const eqColor = (albumAccentColor && albumAccentColor !== '#e4e4e7') ? albumAccentColor : '#f59e0b';
+  drawEqualizer('popup_top', eqX, headerCy, eqW, 11, eqColor, 5);
 
-  // Center Rolling Lyric or Title Snippet
-  const roll = getPillRollingLyric();
-  const lyricStartX = x + 16 + clockW + 12;
-  const lyricMaxW = Math.max(30, eqX - 12 - lyricStartX);
+  // Music Note Icon (♫) + Track Title Snippet between Clock and Visualizer
+  const noteX = x + padX + clockW + 10;
+  const titleX = noteX + 15;
+  const headerTitleMaxW = Math.max(24, eqX - 8 - titleX);
+  const noteColor = (albumAccentColor && albumAccentColor !== '#e4e4e7') ? albumAccentColor : '#818cf8';
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(lyricStartX, y + 2, lyricMaxW, topH - 4);
-  ctx.clip();
-  ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-
-  const lyricText = (roll && roll.text) ? roll.text : (mediaState.track ? mediaState.track.title : 'Now Playing');
-  ctx.fillStyle = albumAccentColor;
-  ctx.fillText('🎵', lyricStartX, y + topH / 2);
-  ctx.fillStyle = '#cbd5e1';
-  ctx.fillText(truncateToWidth(lyricText, lyricMaxW - 18, ctx.font), lyricStartX + 18, y + topH / 2);
-  ctx.restore();
-
-  // 1px Subtle Seam between Top Bar and Announcement Body
-  ctx.beginPath();
-  ctx.moveTo(x + 14, y + topH);
-  ctx.lineTo(x + w - 14, y + topH);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // 3. Lower Body Metadata & Profile Art
-  const track = mediaState.track || {};
-  const songTitle = (track.title || 'Unknown Title').trim();
-  const songArtist = (track.artist || 'Unknown Artist').trim();
-  const songAlbum = (track.album || '').trim();
-
-  // Square Album Profile Art (68x68 rounded 10px)
-  const artSize = 68;
-  const artX = x + 16;
-  const artY = y + 42;
-  const artR = 10;
-
-  drawBlurredCapsuleShadow(ctx, {
-    x: artX,
-    y: artY,
-    w: artSize,
-    h: artSize,
-    radius: artR,
-    useBezelLump: false,
-    blur: 14,
-    offsetY: 4,
-    color: colorWithAlpha(albumAccentColor, 0.45 * popAlpha),
-    preferSprite: popAlpha >= 0.99
-  });
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(artX, artY, artSize, artSize, artR);
-  ctx.clip();
-
-  if (albumImage && albumImage.complete && albumImage.naturalWidth > 0) {
-    ctx.drawImage(albumImage, artX, artY, artSize, artSize);
-  } else {
-    const artGrad = ctx.createLinearGradient(artX, artY, artX + artSize, artY + artSize);
-    artGrad.addColorStop(0.0, '#312e81');
-    artGrad.addColorStop(0.5, '#4f46e5');
-    artGrad.addColorStop(1.0, '#7c3aed');
-    ctx.fillStyle = artGrad;
-    ctx.fillRect(artX, artY, artSize, artSize);
-    ctx.font = '24px "Segoe UI Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText('🎵', artX + artSize / 2, artY + artSize / 2);
-  }
-  ctx.restore();
-
-  // 1px Glass Rim around Album Art
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(artX, artY, artSize, artSize, artR);
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
-  ctx.stroke();
-  ctx.restore();
-
-  // Right Column Stacked Metadata
-  const metaX = artX + artSize + 16;
-  const metaW = Math.max(40, x + w - 18 - metaX);
-
-  // Row 1: Song Title (Bold White)
-  const titleY = artY + 2;
-  ctx.font = '700 13.5px "Segoe UI Variable Display", Inter, sans-serif';
-  ctx.fillStyle = '#ffffff';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(truncateToWidth(songTitle, metaW, ctx.font), metaX, titleY);
-
-  // Row 2: Artist (Reduced Opacity White ~70%)
-  const artistY = titleY + 18;
-  ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.70)';
-  ctx.fillText(truncateToWidth(songArtist, metaW, ctx.font), metaX, artistY);
-
-  // Row 3: Album (Subtle Opacity White ~45%)
-  const albumY = artistY + 16;
-  ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-  const displayAlbum = songAlbum || 'Single';
-  ctx.fillText(truncateToWidth(displayAlbum, metaW, ctx.font), metaX, albumY);
-
-  // Row 4: Total Song Time & Live Progress Bar
-  const durY = albumY + 16;
-  const posMs = getLiveMediaPositionMs();
-  const durMs = track.duration || mediaState.duration_ms || 0;
-  const posText = formatTimeMs(posMs);
-  const durText = formatTimeMs(durMs);
-
-  ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
-  ctx.fillText(posText, metaX, durY);
-  const posW = ctx.measureText(posText).width;
-
-  const durW = ctx.measureText(durText).width;
-  ctx.fillText(durText, metaX + metaW - durW, durY);
-
-  // Progress Bar Track
-  const barX = metaX + posW + 8;
-  const barW = Math.max(10, (metaX + metaW - durW - 8) - barX);
-  const barH = 4;
-  const barY = durY + 3.5;
-
-  ctx.beginPath();
-  ctx.roundRect(barX, barY, barW, barH, 2);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-  ctx.fill();
-
-  // Progress Bar Fill
-  if (durMs > 0) {
-    const k = Math.min(1.0, Math.max(0.0, posMs / durMs));
-    const fillW = Math.max(barH, barW * k);
-    const progGrad = ctx.createLinearGradient(barX, barY, barX + fillW, barY);
-    progGrad.addColorStop(0.0, '#ec4899');
-    progGrad.addColorStop(1.0, albumAccentColor || '#c084fc');
-
+  if (headerTitleMaxW > 18) {
+    ctx.save();
     ctx.beginPath();
-    ctx.roundRect(barX, barY, fillW, barH, 2);
-    ctx.fillStyle = progGrad;
-    ctx.fill();
+    ctx.rect(noteX - 2, y + 2, (eqX - 6) - (noteX - 2), topH);
+    ctx.clip();
+    drawPopupMusicNoteIcon(ctx, noteX, headerCy, noteColor);
+    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.68)';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(truncateToWidth(songTitle, headerTitleMaxW, ctx.font), titleX, headerCy);
+    ctx.restore();
   }
 
-  // Interactive Target to Open Media Tab
+  // 3. Vertical Card Body (Centered Album Art + Stacked Text + Bottom Scrubber)
+  if (bodyAlpha > 0.01) {
+    ctx.save();
+    ctx.globalAlpha = popAlpha * bodyAlpha;
+
+    // Centered Square Album Art (184x184, rounded 16px, object-fit: cover)
+    const artSize = Math.min(184, Math.max(120, Math.round(w - 96)));
+    const artX = x + (w - artSize) / 2;
+    const artY = y + topH + (isNotch ? 6 : 4) + bodyOffsetY;
+    const artR = 16;
+
+    drawBlurredCapsuleShadow(ctx, {
+      x: artX,
+      y: artY,
+      w: artSize,
+      h: artSize,
+      radius: artR,
+      useBezelLump: false,
+      blur: 18,
+      offsetY: 6,
+      color: 'rgba(0, 0, 0, 0.48)',
+      preferSprite: bodyAlpha >= 0.99 && popAlpha >= 0.99
+    });
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(artX, artY, artSize, artSize, artR);
+    ctx.clip();
+
+    if (albumImage && albumImage.complete && albumImage.naturalWidth > 0 && albumImage.naturalHeight > 0) {
+      // object-fit: cover — center-crop to square so artwork never letterboxes or squishes
+      const nw = albumImage.naturalWidth;
+      const nh = albumImage.naturalHeight;
+      const srcSize = Math.min(nw, nh);
+      const sx = (nw - srcSize) / 2;
+      const sy = (nh - srcSize) / 2;
+      ctx.drawImage(albumImage, sx, sy, srcSize, srcSize, artX, artY, artSize, artSize);
+    } else {
+      const artGrad = ctx.createLinearGradient(artX, artY, artX + artSize, artY + artSize);
+      artGrad.addColorStop(0.0, '#1e1b4b');
+      artGrad.addColorStop(0.5, '#312e81');
+      artGrad.addColorStop(1.0, '#4c1d95');
+      ctx.fillStyle = artGrad;
+      ctx.fillRect(artX, artY, artSize, artSize);
+      // Clean vector fallback music emblem
+      ctx.save();
+      ctx.translate(artX + artSize / 2 - 16, artY + artSize / 2);
+      ctx.scale(2.8, 2.8);
+      drawPopupMusicNoteIcon(ctx, 0, 0, 'rgba(255, 255, 255, 0.82)');
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // Subtle 1px Glass Rim around Album Art
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(artX, artY, artSize, artSize, artR);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+    ctx.stroke();
+    ctx.restore();
+
+    // 4. Stacked Centered Metadata Directly Beneath Artwork
+    const cx = x + w / 2;
+    const textMaxW = Math.max(80, w - 36);
+
+    // Song Title (High-Contrast Bold White)
+    const titleY = artY + artSize + 18;
+    ctx.font = '700 17px "Segoe UI Variable Display", Inter, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(truncateToWidth(songTitle, textMaxW, ctx.font), cx, titleY);
+
+    // Artist Name (Muted Light Gray)
+    const artistY = titleY + 23;
+    ctx.font = '500 13px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.68)';
+    ctx.fillText(truncateToWidth(songArtist, textMaxW, ctx.font), cx, artistY);
+
+    // Album / Single Metadata (Smaller Muted Gray)
+    const albumY = artistY + 18;
+    ctx.font = '400 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.44)';
+    ctx.fillText(truncateToWidth(displayAlbum, textMaxW, ctx.font), cx, albumY);
+
+    // 5. Bottom Progress Scrubber (Flanked by Elapsed and Duration)
+    const scrubberCy = y + SONG_POPUP_HEIGHT - 22 + bodyOffsetY;
+    const posMs = getLiveMediaPositionMs();
+    const durMs = track.duration || mediaState.duration_ms || 0;
+    const posText = formatTimeMs(posMs);
+    const durText = formatTimeMs(durMs);
+
+    ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.68)';
+    ctx.textBaseline = 'middle';
+
+    ctx.textAlign = 'left';
+    ctx.fillText(posText, x + 18, scrubberCy);
+    const posW = ctx.measureText(posText).width;
+
+    ctx.textAlign = 'right';
+    ctx.fillText(durText, x + w - 18, scrubberCy);
+    const durW = ctx.measureText(durText).width;
+
+    const barX = x + 18 + posW + 10;
+    const barEndX = x + w - 18 - durW - 10;
+    const barW = Math.max(24, barEndX - barX);
+    const barH = 3.5;
+    const barY = scrubberCy - barH / 2;
+
+    // Track Background
+    ctx.beginPath();
+    ctx.roundRect(barX, barY, barW, barH, barH / 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.fill();
+
+    // Pink Progress Fill + Pink Tracker Dot
+    const k = durMs > 0 ? Math.min(1.0, Math.max(0.0, posMs / durMs)) : 0;
+    const fillW = barW * k;
+    if (fillW > 0.5) {
+      const progGrad = ctx.createLinearGradient(barX, barY, barX + Math.max(8, fillW), barY);
+      progGrad.addColorStop(0.0, '#f472b6');
+      progGrad.addColorStop(1.0, '#fb7185');
+      ctx.beginPath();
+      ctx.roundRect(barX, barY, fillW, barH, barH / 2);
+      ctx.fillStyle = progGrad;
+      ctx.fill();
+    }
+
+    const knobX = barX + fillW;
+    ctx.beginPath();
+    ctx.arc(knobX, scrubberCy, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#f472b6';
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // Interactive Target to Open Media Tab (pushed after close button so "X" takes priority)
   interactiveButtons.push({ id: 'song_popup_open_media', x, y, w, h });
 
   ctx.restore();
