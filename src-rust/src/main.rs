@@ -27,7 +27,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tao::dpi::{LogicalSize, PhysicalPosition};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
@@ -37,10 +37,35 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{Icon as TrayIconImg, TrayIcon, TrayIconBuilder};
 use user_data::UserDataManager;
 use wry::http::{header::CONTENT_TYPE, Response, StatusCode};
-use wry::{DragDropEvent, WebContext, WebView, WebViewBuilder};
+use wry::{
+    DragDropEvent, MemoryUsageLevel, WebContext, WebView, WebViewBuilder,
+    WebViewBuilderExtWindows, WebViewExtWindows,
+};
 
 const ISLAND_W: f64 = 1040.0;
 const ISLAND_H: f64 = 420.0;
+
+// Shared lean Chromium arguments for both Island and Settings WebView2 instances
+// (identical args allow both windows to share a single WebContext / browser process).
+// Note: GPU DirectComposition is intentionally kept enabled for guaranteed window transparency.
+const LOW_MEM_BROWSER_ARGS: &str = concat!(
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,Translate,BackForwardCache,MediaRouter,OptimizationHints,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,AutofillServerCommunication,HeavyAdIntervention,SpellCheck,PaintHolding ",
+    "--enable-features=RemoveRedirectionBitmap ",
+    "--disable-extensions --disable-sync --disable-background-networking ",
+    "--disable-component-update --disable-default-apps --disable-domain-reliability ",
+    "--disable-client-side-phishing-detection --disable-speech-api --no-pings ",
+    "--no-first-run --no-default-browser-check ",
+    "--renderer-process-limit=1 --disable-site-isolation-trials ",
+    "--js-flags=--max-old-space-size=24,--optimize-for-size,--lite-mode ",
+    "--gpu-program-cache-size-kb=512 --disk-cache-size=1048576 --media-cache-size=1048576"
+);
+
+fn spawn_lean<F: FnOnce() + Send + 'static>(name: &str, stack_kb: usize, f: F) {
+    let _ = thread::Builder::new()
+        .name(name.into())
+        .stack_size(stack_kb * 1024)
+        .spawn(f);
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WindowTarget {
@@ -280,6 +305,10 @@ fn build_settings_window(
     let window = wb.build(elwt).ok()?;
     let p_ipc = proxy.clone();
     let webview = WebViewBuilder::with_web_context(web_ctx)
+        .with_additional_browser_args(LOW_MEM_BROWSER_ARGS)
+        .with_default_context_menus(false)
+        .with_browser_accelerator_keys(false)
+        .with_browser_extensions_enabled(false)
         .with_initialization_script(init_state_js)
         .with_custom_protocol("dw".into(), |_id, req| serve_protocol(req.uri().path()))
         .with_ipc_handler(move |req| {
@@ -289,6 +318,7 @@ fn build_settings_window(
         .with_devtools(cfg!(debug_assertions))
         .build(&window)
         .ok()?;
+    let _ = webview.set_memory_usage_level(MemoryUsageLevel::Low);
     Some((window, webview))
 }
 
@@ -1496,6 +1526,10 @@ fn main() {
     let scale_dd = overlay_scale.clone();
 
     let island_webview = WebViewBuilder::with_web_context(&mut web_ctx)
+        .with_additional_browser_args(LOW_MEM_BROWSER_ARGS)
+        .with_default_context_menus(false)
+        .with_browser_accelerator_keys(false)
+        .with_browser_extensions_enabled(false)
         .with_transparent(true)
         .with_initialization_script(&init_state_js)
         .with_custom_protocol("dw".into(), |_id, req| serve_protocol(req.uri().path()))
@@ -1531,6 +1565,7 @@ fn main() {
         .with_devtools(cfg!(debug_assertions))
         .build(&island_window)
         .expect("Failed to initialize WebView2");
+    let _ = island_webview.set_memory_usage_level(MemoryUsageLevel::Low);
 
     // System Tray
     let tray_menu = Menu::new();
@@ -1566,7 +1601,7 @@ fn main() {
         });
 
     let p_menu = proxy.clone();
-    thread::spawn(move || {
+    spawn_lean("dw-tray", 128, move || {
         let rx = MenuEvent::receiver();
         while let Ok(ev) = rx.recv() {
             let _ = p_menu.send_event(UserEvent::TrayMenu(ev.id.0));
@@ -1587,7 +1622,7 @@ fn main() {
         let _ = mgr.register(hk_tuck);
     }
     let p_hk = proxy.clone();
-    thread::spawn(move || {
+    spawn_lean("dw-hotkeys", 128, move || {
         let rx = GlobalHotKeyEvent::receiver();
         while let Ok(ev) = rx.recv() {
             if ev.state == HotKeyState::Pressed {
@@ -1636,7 +1671,7 @@ fn main() {
         let hwnd_ref = overlay_hwnd.clone();
         let scale_ref = overlay_scale.clone();
         let p = proxy.clone();
-        thread::spawn(move || {
+        spawn_lean("dw-cursor", 256, move || {
             let mut was_inside = false;
             let mut last_pt = (i32::MIN, i32::MIN);
             while !stop.load(Ordering::SeqCst) {
@@ -1681,45 +1716,7 @@ fn main() {
         });
     }
 
-    // 2. Fullscreen Game Mode detector thread (500ms)
-    {
-        let stop = stop_all.clone();
-        let hwnd_ref = overlay_hwnd.clone();
-        let p = proxy.clone();
-        thread::spawn(move || {
-            let mut last_full = false;
-            while !stop.load(Ordering::SeqCst) {
-                let f = sys_win::is_fullscreen_app(hwnd_ref.load(Ordering::SeqCst));
-                if f != last_full {
-                    last_full = f;
-                    let _ = p.send_event(UserEvent::FullscreenChanged(f));
-                }
-                thread::sleep(Duration::from_millis(500));
-            }
-        });
-    }
-
-    // 3. Antigravity transcript monitor thread (400ms active / 1500ms idle)
-    {
-        let stop = stop_all.clone();
-        let ag = antigravity.clone();
-        let p = proxy.clone();
-        thread::spawn(move || {
-            while !stop.load(Ordering::SeqCst) {
-                let (changed, active) = {
-                    let mut g = ag.lock().unwrap();
-                    let c = g.poll();
-                    (c, g.has_active())
-                };
-                if changed {
-                    let _ = p.send_event(UserEvent::AntigravityChanged);
-                }
-                thread::sleep(Duration::from_millis(if active { 400 } else { 1500 }));
-            }
-        });
-    }
-
-    // 4. Native WinRT GSMTC Media + Periodic Sync Thread (450ms poll, 1500ms tick)
+    // 2. Native WinRT GSMTC Media + Periodic Sync Thread (450ms poll, 1500ms tick)
     {
         let stop = stop_all.clone();
         let m = media.clone();
@@ -1728,7 +1725,7 @@ fn main() {
         let on_lyrics = Arc::new(move || {
             let _ = p_lyrics.send_event(UserEvent::MediaChanged);
         });
-        thread::spawn(move || {
+        spawn_lean("dw-media", 256, move || {
             let mut tick_accum = 0u64;
             while !stop.load(Ordering::SeqCst) {
                 if m.poll_gsmtc(on_lyrics.clone()) {
@@ -1744,163 +1741,199 @@ fn main() {
         });
     }
 
-    // 5. Call Monitor thread (800ms in call / 3000ms idle)
+    // 3. Consolidated background monitors & idle working-set trimmer (single 256 KB thread)
     {
         let stop = stop_all.clone();
+        let hwnd_ref = overlay_hwnd.clone();
+        let ag = antigravity.clone();
         let c = calls.clone();
-        let p = proxy.clone();
-        thread::spawn(move || {
-            while !stop.load(Ordering::SeqCst) {
-                let (changed, in_call) = {
-                    let mut g = c.lock().unwrap();
-                    let ch = g.poll();
-                    (ch, g.is_in_call())
-                };
-                if changed {
-                    let _ = p.send_event(UserEvent::CallChanged);
-                }
-                thread::sleep(Duration::from_millis(if in_call { 800 } else { 3000 }));
-            }
-        });
-    }
-
-    // 6. Native WinRT Toast Notifications Monitor thread (10s)
-    {
-        let stop = stop_all.clone();
         let n = notifications.clone();
-        let p = proxy.clone();
-        thread::spawn(move || {
-            while !stop.load(Ordering::SeqCst) {
-                let (alerts, updated) = {
-                    let mut g = n.lock().unwrap();
-                    g.poll()
-                };
-                if updated || !alerts.is_empty() {
-                    let _ = p.send_event(UserEvent::NotificationsPollResult(alerts, updated));
-                }
-                for _ in 0..20 {
-                    if stop.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    thread::sleep(Duration::from_millis(500));
-                }
-            }
-        });
-    }
-
-    // 7. Battery Monitor thread (15s; stops polling on battery-less desktop PCs)
-    {
-        let stop = stop_all.clone();
         let batt_ref = battery.clone();
-        let gm = game_mode_enabled.clone();
-        let full = is_fullscreen.clone();
-        let p = proxy.clone();
-        thread::spawn(move || {
-            let first = sys_win::get_battery_status();
-            let has_batt = first.has_battery;
-            *batt_ref.lock().unwrap() = first.clone();
-            let _ = p.send_event(UserEvent::BatteryChanged(first));
-            if !has_batt {
-                return;
-            }
-            while !stop.load(Ordering::SeqCst) {
-                for _ in 0..30 {
-                    if stop.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    thread::sleep(Duration::from_millis(500));
-                }
-                if gm.load(Ordering::SeqCst) && full.load(Ordering::SeqCst) {
-                    continue;
-                }
-                let next = sys_win::get_battery_status();
-                let changed = {
-                    let mut g = batt_ref.lock().unwrap();
-                    if *g != next {
-                        *g = next.clone();
-                        true
-                    } else {
-                        false
-                    }
-                };
-                if changed {
-                    let _ = p.send_event(UserEvent::BatteryChanged(next));
-                }
-            }
-        });
-    }
-
-    // 8. Clipboard Monitor thread (checks cheap GetClipboardSequenceNumber every 1s)
-    {
-        let stop = stop_all.clone();
         let hist_ref = clipboard_history.clone();
         let last_ref = last_clip_text.clone();
         let gm = game_mode_enabled.clone();
         let full = is_fullscreen.clone();
+        let ign = ignore_mouse.clone();
         let p = proxy.clone();
-        thread::spawn(move || {
+
+        spawn_lean("dw-monitors", 256, move || {
+            let first_batt = sys_win::get_battery_status();
+            let has_batt = first_batt.has_battery;
+            *batt_ref.lock().unwrap() = first_batt.clone();
+            let _ = p.send_event(UserEvent::BatteryChanged(first_batt));
+
+            let mut last_full = false;
             let mut last_seq = sys_win::clipboard_sequence_number();
+            let start = Instant::now();
+            let mut last_ag = Instant::now() - Duration::from_secs(10);
+            let mut ag_active = false;
+            let mut last_call = Instant::now() - Duration::from_secs(10);
+            let mut in_call = false;
+            let mut last_clip = Instant::now();
+            let mut last_notif = Instant::now() - Duration::from_secs(10);
+            let mut last_batt = Instant::now();
+            let mut initial_trim_done = false;
+            let mut last_trim = Instant::now();
+
             while !stop.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_secs(1));
-                if gm.load(Ordering::SeqCst) && full.load(Ordering::SeqCst) {
-                    continue;
+                let now = Instant::now();
+
+                // Fullscreen Game Mode check (~500ms)
+                let f = sys_win::is_fullscreen_app(hwnd_ref.load(Ordering::SeqCst));
+                if f != last_full {
+                    last_full = f;
+                    let _ = p.send_event(UserEvent::FullscreenChanged(f));
                 }
-                let seq = sys_win::clipboard_sequence_number();
-                if seq == last_seq {
-                    continue;
-                }
-                last_seq = seq;
-                let Some(text) = sys_win::clipboard_read_text() else {
-                    continue;
+
+                // Antigravity transcript check (500ms active / 1500ms idle)
+                let ag_iv = if ag_active {
+                    Duration::from_millis(500)
+                } else {
+                    Duration::from_millis(1500)
                 };
-                if text.is_empty() || *last_ref.lock().unwrap() == text {
-                    continue;
-                }
-                *last_ref.lock().unwrap() = text.clone();
-                let clean = text.trim().to_string();
-                if clean.is_empty() || clean.len() > 50_000 {
-                    continue;
-                }
-                let json_list = {
-                    let mut hist = hist_ref.lock().unwrap();
-                    let was_pinned = hist
-                        .iter()
-                        .find(|c| c.text == clean)
-                        .map(|c| c.pinned)
-                        .unwrap_or(false);
-                    hist.retain(|c| c.text != clean);
-                    let item = ClipboardItem {
-                        id: format!("clip_{}_{:x}", now_ms(), seq),
-                        text: clean,
-                        time: now_ms(),
-                        pinned: was_pinned,
+                if now.duration_since(last_ag) >= ag_iv {
+                    last_ag = now;
+                    let (changed, active) = {
+                        let mut g = ag.lock().unwrap();
+                        let ch = g.poll();
+                        (ch, g.has_active())
                     };
-                    let mut pinned: Vec<_> = hist.iter().filter(|c| c.pinned).cloned().collect();
-                    let unpinned: Vec<_> = hist.iter().filter(|c| !c.pinned).cloned().collect();
-                    let mut next = Vec::with_capacity(25);
-                    if was_pinned {
-                        next.push(item);
-                        next.extend(pinned);
-                        next.extend(unpinned);
-                    } else {
-                        next.append(&mut pinned);
-                        next.push(item);
-                        next.extend(unpinned);
+                    ag_active = active;
+                    if changed {
+                        let _ = p.send_event(UserEvent::AntigravityChanged);
                     }
-                    next.truncate(25);
-                    let arr = Value::Array(next.iter().map(|c| c.to_json()).collect());
-                    *hist = next;
-                    arr
+                }
+
+                // Clipboard check (1s)
+                if now.duration_since(last_clip) >= Duration::from_secs(1) {
+                    last_clip = now;
+                    if !(gm.load(Ordering::SeqCst) && full.load(Ordering::SeqCst)) {
+                        let seq = sys_win::clipboard_sequence_number();
+                        if seq != last_seq {
+                            last_seq = seq;
+                            if let Some(text) = sys_win::clipboard_read_text() {
+                                if !text.is_empty() && *last_ref.lock().unwrap() != text {
+                                    *last_ref.lock().unwrap() = text.clone();
+                                    let clean = text.trim().to_string();
+                                    if !clean.is_empty() && clean.len() <= 50_000 {
+                                        let json_list = {
+                                            let mut hist = hist_ref.lock().unwrap();
+                                            let was_pinned = hist
+                                                .iter()
+                                                .find(|it| it.text == clean)
+                                                .map(|it| it.pinned)
+                                                .unwrap_or(false);
+                                            hist.retain(|it| it.text != clean);
+                                            let item = ClipboardItem {
+                                                id: format!("clip_{}_{:x}", now_ms(), seq),
+                                                text: clean,
+                                                time: now_ms(),
+                                                pinned: was_pinned,
+                                            };
+                                            let mut pinned: Vec<_> =
+                                                hist.iter().filter(|it| it.pinned).cloned().collect();
+                                            let unpinned: Vec<_> = hist
+                                                .iter()
+                                                .filter(|it| !it.pinned)
+                                                .cloned()
+                                                .collect();
+                                            let mut next = Vec::with_capacity(25);
+                                            if was_pinned {
+                                                next.push(item);
+                                                next.extend(pinned);
+                                                next.extend(unpinned);
+                                            } else {
+                                                next.append(&mut pinned);
+                                                next.push(item);
+                                                next.extend(unpinned);
+                                            }
+                                            next.truncate(25);
+                                            let arr =
+                                                Value::Array(next.iter().map(|it| it.to_json()).collect());
+                                            *hist = next;
+                                            arr
+                                        };
+                                        let _ = p.send_event(UserEvent::ClipboardChanged(json_list));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Call check (1s in call / 3s idle)
+                let call_iv = if in_call {
+                    Duration::from_secs(1)
+                } else {
+                    Duration::from_secs(3)
                 };
-                let _ = p.send_event(UserEvent::ClipboardChanged(json_list));
+                if now.duration_since(last_call) >= call_iv {
+                    last_call = now;
+                    let (changed, active_call) = {
+                        let mut g = c.lock().unwrap();
+                        let ch = g.poll();
+                        (ch, g.is_in_call())
+                    };
+                    in_call = active_call;
+                    if changed {
+                        let _ = p.send_event(UserEvent::CallChanged);
+                    }
+                }
+
+                // WinRT Toast Notifications check (10s)
+                if now.duration_since(last_notif) >= Duration::from_secs(10) {
+                    last_notif = now;
+                    let (alerts, updated) = {
+                        let mut g = n.lock().unwrap();
+                        g.poll()
+                    };
+                    if updated || !alerts.is_empty() {
+                        let _ = p.send_event(UserEvent::NotificationsPollResult(alerts, updated));
+                    }
+                }
+
+                // Battery check (15s on laptops only)
+                if has_batt && now.duration_since(last_batt) >= Duration::from_secs(15) {
+                    last_batt = now;
+                    if !(gm.load(Ordering::SeqCst) && full.load(Ordering::SeqCst)) {
+                        let next = sys_win::get_battery_status();
+                        let changed = {
+                            let mut g = batt_ref.lock().unwrap();
+                            if *g != next {
+                                *g = next.clone();
+                                true
+                            } else {
+                                false
+                            }
+                        };
+                        if changed {
+                            let _ = p.send_event(UserEvent::BatteryChanged(next));
+                        }
+                    }
+                }
+
+                // Working-set trim: once 6s after startup, then every 45s while idle/collapsed
+                if !initial_trim_done && now.duration_since(start) >= Duration::from_secs(6) {
+                    initial_trim_done = true;
+                    last_trim = now;
+                    sys_win::trim_process_tree_memory();
+                } else if initial_trim_done
+                    && ign.load(Ordering::SeqCst)
+                    && now.duration_since(last_trim) >= Duration::from_secs(45)
+                {
+                    last_trim = now;
+                    sys_win::trim_process_tree_memory();
+                }
+
+                thread::sleep(Duration::from_millis(500));
             }
         });
     }
 
-    // 9. Startup GitHub Update Check (+3.5s)
+    // 4. Startup GitHub Update Check (+3.5s)
     if auto_check_updates {
         let p = proxy.clone();
-        thread::spawn(move || {
+        spawn_lean("dw-updater", 256, move || {
             thread::sleep(Duration::from_millis(3500));
             let res = updater::check_for_github_update(&repo_owner, &repo_name, APP_VERSION);
             if res
@@ -1959,6 +1992,11 @@ fn main() {
                     .unwrap_or(false)
                 {
                     settings_pair = None;
+                    let _ = island_webview.set_memory_usage_level(MemoryUsageLevel::Low);
+                    spawn_lean("dw-trim", 128, || {
+                        thread::sleep(Duration::from_millis(800));
+                        sys_win::trim_process_tree_memory();
+                    });
                 }
             }
             Event::WindowEvent {

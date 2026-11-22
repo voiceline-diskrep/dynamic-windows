@@ -1056,6 +1056,10 @@ const callAvatarCache = new Map();
 function getCallAvatarImage(url) {
   if (!url) return null;
   if (callAvatarCache.has(url)) return callAvatarCache.get(url);
+  if (callAvatarCache.size >= 4) {
+    const oldestKey = callAvatarCache.keys().next().value;
+    if (oldestKey !== undefined) callAvatarCache.delete(oldestKey);
+  }
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.src = url;
@@ -1827,9 +1831,8 @@ function getAntigravityProgress(state) {
   };
 }
 
-// Preload Antigravity Logo
-const antigravityLogo = new Image();
-antigravityLogo.src = '../../antigravity_logo.png';
+// Lazy Antigravity Logo placeholder (not preloaded at startup to save decoded bitmap RAM)
+const antigravityLogo = { complete: false, naturalWidth: 0 };
 
 // High-DPI Canvas Resizing
 let dpr = 1;
@@ -3520,6 +3523,11 @@ function animate(now) {
   if (computeDynamicActive(snap)) {
     requestFrame();
   } else {
+    if (morphShadowScratch) {
+      morphShadowScratch.width = 0;
+      morphShadowScratch.height = 0;
+      morphShadowScratch = null;
+    }
     const wakeDelay = getNextIdleWakeDelayMs(snap);
     if (wakeDelay !== null) {
       idleFrameTimeout = setTimeout(requestFrame, wakeDelay);
@@ -3813,6 +3821,21 @@ function drawCapsuleRim(c, x, y, w, h, radius, isNotch = false, topFillet = 12) 
 
 const shadowSpriteCache = new Map();
 
+function releaseShadowCaches() {
+  for (const entry of shadowSpriteCache.values()) {
+    if (entry && entry.canvas) {
+      entry.canvas.width = 0;
+      entry.canvas.height = 0;
+    }
+  }
+  shadowSpriteCache.clear();
+  if (morphShadowScratch) {
+    morphShadowScratch.width = 0;
+    morphShadowScratch.height = 0;
+    morphShadowScratch = null;
+  }
+}
+
 function traceShadowShapePath(c, sx, sy, sw, sh, radius, topRadius, bottomRadius, useBezelLump, topFillet) {
   if (useBezelLump) {
     buildCapsulePath(c, sx, sy, sw, sh, bottomRadius !== undefined ? bottomRadius : radius, true, topFillet);
@@ -3904,8 +3927,13 @@ function drawBlurredCapsuleShadow(targetCtx, opts) {
     oc.width = cw;
     oc.height = ch;
     renderShadowToCanvas(oc);
-    if (shadowSpriteCache.size >= 24) {
+    if (shadowSpriteCache.size >= 4) {
       const oldestKey = shadowSpriteCache.keys().next().value;
+      const oldest = shadowSpriteCache.get(oldestKey);
+      if (oldest && oldest.canvas) {
+        oldest.canvas.width = 0;
+        oldest.canvas.height = 0;
+      }
       shadowSpriteCache.delete(oldestKey);
     }
     entry = { canvas: oc, padX, padTop };

@@ -25,6 +25,22 @@ class SoundFXManager {
     this.audioCtx = null;
     this.masterGain = null;
     this._lastPlayTimes = {};
+    this._idleCloseTimer = null;
+  }
+
+  _scheduleIdleClose() {
+    if (this._idleCloseTimer) clearTimeout(this._idleCloseTimer);
+    this._idleCloseTimer = setTimeout(() => {
+      this._idleCloseTimer = null;
+      if (this.audioCtx) {
+        const ctx = this.audioCtx;
+        this.audioCtx = null;
+        this.masterGain = null;
+        try {
+          ctx.close().catch(() => {});
+        } catch (e) {}
+      }
+    }, 4000);
   }
 
   initContext() {
@@ -93,6 +109,7 @@ class SoundFXManager {
     if (!ctx) return;
 
     const doPlay = () => {
+      this._scheduleIdleClose();
       try {
         switch (soundType) {
           case 'expand':

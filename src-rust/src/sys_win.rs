@@ -37,8 +37,12 @@ use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
     KEY_SET_VALUE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
+use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
 use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::System::Threading::{
+    CreateMutexW, GetCurrentProcess, GetCurrentProcessId, OpenProcess,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
+};
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
     OPENFILENAMEW,
@@ -225,6 +229,7 @@ pub fn set_click_through(hwnd_raw: isize, ignore: bool) {
     }
 }
 
+#[allow(dead_code)]
 pub fn show_inactive_topmost(hwnd_raw: isize) {
     unsafe {
         let hwnd = HWND(hwnd_raw as *mut _);
@@ -241,6 +246,7 @@ pub fn show_inactive_topmost(hwnd_raw: isize) {
     }
 }
 
+#[allow(dead_code)]
 pub fn hide_window(hwnd_raw: isize) {
     unsafe {
         let hwnd = HWND(hwnd_raw as *mut _);
@@ -1062,7 +1068,6 @@ pub fn set_mic_mute(muted: bool) -> Value {
 
 unsafe fn get_active_capture_apps() -> Vec<String> {
     let mut list = Vec::new();
-    let procs = snapshot_process_names();
     let dev = get_default_device(eCapture, eCommunications)
         .or_else(|| get_default_device(eCapture, eMultimedia));
     let Some(dev) = dev else { return list };
@@ -1073,6 +1078,7 @@ unsafe fn get_active_capture_apps() -> Vec<String> {
         return list;
     };
     let count = enumerator.GetCount().unwrap_or(0);
+    let mut active_pids = Vec::new();
     for i in 0..count {
         let Ok(ctl) = enumerator.GetSession(i) else {
             continue;
@@ -1082,17 +1088,77 @@ unsafe fn get_active_capture_apps() -> Vec<String> {
         };
         if ctl2.GetState().ok() == Some(AudioSessionStateActive) {
             let pid = ctl2.GetProcessId().unwrap_or(0);
-            if let Some(name) = procs.get(&pid) {
-                if !name.is_empty()
-                    && !name.eq_ignore_ascii_case("audiodg")
-                    && !list.contains(name)
-                {
-                    list.push(name.clone());
-                }
+            if pid != 0 && !active_pids.contains(&pid) {
+                active_pids.push(pid);
+            }
+        }
+    }
+    if active_pids.is_empty() {
+        return list;
+    }
+    let procs = snapshot_process_names();
+    for pid in active_pids {
+        if let Some(name) = procs.get(&pid) {
+            if !name.is_empty()
+                && !name.eq_ignore_ascii_case("audiodg")
+                && !list.contains(name)
+            {
+                list.push(name.clone());
             }
         }
     }
     list
+}
+
+/// Trims cold working-set pages from this process and its descendant WebView2 subprocesses.
+pub fn trim_process_tree_memory() {
+    unsafe {
+        let _ = K32EmptyWorkingSet(GetCurrentProcess());
+        let self_pid = GetCurrentProcessId();
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return;
+        };
+        let mut pairs: Vec<(u32, u32)> = Vec::with_capacity(256);
+        let mut pe = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snap, &mut pe).is_ok() {
+            loop {
+                pairs.push((pe.th32ProcessID, pe.th32ParentProcessID));
+                if Process32NextW(snap, &mut pe).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snap);
+
+        let mut tree = HashSet::new();
+        tree.insert(self_pid);
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &(pid, ppid) in &pairs {
+                if tree.contains(&ppid) && tree.insert(pid) {
+                    changed = true;
+                }
+            }
+        }
+        tree.remove(&self_pid);
+
+        for pid in tree {
+            if let Ok(h) = OpenProcess(
+                PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                pid,
+            ) {
+                if !h.is_invalid() {
+                    let _ = K32EmptyWorkingSet(h);
+                    let _ = CloseHandle(h);
+                }
+            }
+        }
+    }
 }
 
 #[allow(dead_code)]
