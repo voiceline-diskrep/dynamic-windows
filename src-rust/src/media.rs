@@ -1661,7 +1661,7 @@ impl MediaController {
                 "duration_ms": 0,
                 "track": {
                     "title": "No media playing",
-                    "artist": "Open Liner, Spotify, or Media Player",
+                    "artist": "No active player",
                     "source": "none",
                     "album": "",
                     "image_url": "",

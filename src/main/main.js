@@ -1055,16 +1055,9 @@ function setupTray() {
         }
       },
       {
-        label: '⚙️ Settings & Preferences...',
+        label: 'Settings & Preferences...',
         click: () => {
           createSettingsWindow(dropZone);
-        }
-      },
-      { type: 'separator' },
-      {
-        label: 'Focus Google Antigravity',
-        click: () => {
-          if (antigravityMonitor) antigravityMonitor.focusAntigravityWindow();
         }
       },
       { type: 'separator' },

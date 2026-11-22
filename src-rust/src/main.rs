@@ -393,6 +393,7 @@ fn push_initial_states(state: &AppState, proxy: &EventLoopProxy<UserEvent>) {
         display_mode,
         anim_speed,
         dyn_lyrics,
+        live_lyrics,
         album_grad,
         opacity,
         liquid_glass,
@@ -412,6 +413,7 @@ fn push_initial_states(state: &AppState, proxy: &EventLoopProxy<UserEvent>) {
             cfg.get_str("displayMode", "island"),
             cfg.get_f64("animationSpeed", 1.0),
             cfg.get_bool("dynamicLyrics", true),
+            cfg.get_bool("liveLyrics", true),
             cfg.get_bool("albumColorGradient", true),
             cfg.get_f64("islandOpacity", 0.95),
             cfg.get_bool("liquidGlass", false),
@@ -431,6 +433,7 @@ fn push_initial_states(state: &AppState, proxy: &EventLoopProxy<UserEvent>) {
     send("display-mode", json!(display_mode));
     send("animation-speed", json!(anim_speed));
     send("dynamic-lyrics-toggled", json!({ "enabled": dyn_lyrics }));
+    send("live-lyrics-toggled", json!({ "enabled": live_lyrics }));
     send(
         "album-color-gradient-toggled",
         json!({ "enabled": album_grad }),
@@ -566,6 +569,9 @@ fn handle_ipc_message(
                 if let Some(dl) = patch.get("dynamicLyrics").and_then(|v| v.as_bool()) {
                     bcast("dynamic-lyrics-toggled", json!({ "enabled": dl }));
                 }
+                if let Some(ll) = patch.get("liveLyrics").and_then(|v| v.as_bool()) {
+                    bcast("live-lyrics-toggled", json!({ "enabled": ll }));
+                }
                 if let Some(ag) = patch.get("albumColorGradient").and_then(|v| v.as_bool()) {
                     bcast("album-color-gradient-toggled", json!({ "enabled": ag }));
                 }
@@ -679,17 +685,41 @@ fn handle_ipc_message(
                 let notes = state.user_data.lock().unwrap().get_calendar_notes();
                 reply(notes);
             }
+            "calendar-get-categories" => {
+                let cats = state.user_data.lock().unwrap().get_calendar_categories();
+                reply(cats);
+            }
+            "calendar-add-category" => {
+                let cat = arg0.as_str().unwrap_or("");
+                let (ok, cats) = {
+                    let mut ud = state.user_data.lock().unwrap();
+                    let r = ud.add_calendar_category(cat);
+                    (r, ud.get_calendar_categories())
+                };
+                let _ = proxy.send_event(UserEvent::DispatchJs {
+                    target: WindowTarget::Island,
+                    channel: "calendar-categories-updated".into(),
+                    payload: cats,
+                });
+                reply(json!(ok));
+            }
             "calendar-add-note" => {
-                let (created, all) = {
+                let (created, all, cats) = {
                     let mut ud = state.user_data.lock().unwrap();
                     let c = ud.add_calendar_note(&arg0);
                     let a = ud.get_calendar_notes();
-                    (c, a)
+                    let cs = ud.get_calendar_categories();
+                    (c, a, cs)
                 };
                 let _ = proxy.send_event(UserEvent::DispatchJs {
                     target: WindowTarget::Island,
                     channel: "calendar-notes-updated".into(),
                     payload: all,
+                });
+                let _ = proxy.send_event(UserEvent::DispatchJs {
+                    target: WindowTarget::Island,
+                    channel: "calendar-categories-updated".into(),
+                    payload: cats,
                 });
                 reply(created);
             }
@@ -1514,16 +1544,12 @@ fn main() {
     let item_dropzone = MenuItem::with_id("tray_dropzone", "Open Drop Zone Folder", true, None);
     let item_settings =
         MenuItem::with_id("tray_settings", "Settings & Preferences...", true, None);
-    let item_antigravity =
-        MenuItem::with_id("tray_antigravity", "Focus Google Antigravity", true, None);
     let item_exit = MenuItem::with_id("tray_exit", "Exit Dynamic Windows", true, None);
     let _ = tray_menu.append_items(&[
         &item_game_mode,
         &PredefinedMenuItem::separator(),
         &item_dropzone,
         &item_settings,
-        &PredefinedMenuItem::separator(),
-        &item_antigravity,
         &PredefinedMenuItem::separator(),
         &item_exit,
     ]);

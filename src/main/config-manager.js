@@ -23,6 +23,7 @@ const DEFAULT_CONFIG = {
   reducedMotion: false, // Instant transitions and instant clock updates without animations
   displayMode: 'island', // 'island' | 'notch'
   dynamicLyrics: true, // Smooth word-by-word progressive lyric reveal
+  liveLyrics: true, // Show synchronized lyrics in media view and pill
   albumColorGradient: true, // Dynamic Island ambient fade gradient from album cover
   gameMode: true, // Auto-hide in full-screen games (default on)
   soundEffects: true, // Tactical Web Audio UI sound effects

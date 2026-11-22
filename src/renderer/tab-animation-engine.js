@@ -118,7 +118,10 @@ function getTargetExpandedHeight(view, options = {}) {
     return cardCount === 1 ? UI.AGENT_H : 216;
   }
   if (view === 'call') return UI.CALL_H;
-  if (view === 'media') return UI.MEDIA_H + 34; // 254px (includes speed pill bar)
+  if (view === 'media') {
+    if (options.liveLyricsEnabled === false) return 156;
+    return 216;
+  }
   if (view === 'dropzone') return UI.DROPZONE_H;
   if (view === 'clipboard') return UI.CLIPBOARD_H;
   if (view === 'prompt') return UI.PROMPT_H;

@@ -115,12 +115,17 @@ let isInlineModalOpen = false;
 let inlineModalCallback = null;
 let inlineModalSelectedChip = null;
 
-function showInlineModal(title, placeholder, extraChips, callback) {
+function showInlineModal(title, placeholder, extraChips, callback, options = {}) {
   const modal = document.getElementById('inline-modal');
   const backdrop = document.getElementById('inline-modal-backdrop');
   const modalTitle = document.getElementById('inline-modal-title');
   const modalInput = document.getElementById('inline-modal-input');
+  const modalDesc = document.getElementById('inline-modal-desc');
   const modalExtra = document.getElementById('inline-modal-extra');
+  const modalCatLabel = document.getElementById('inline-modal-cat-label');
+  const modalCats = document.getElementById('inline-modal-categories');
+  const modalColorLabel = document.getElementById('inline-modal-color-label');
+  const modalColors = document.getElementById('inline-modal-colors');
   const btnCancel = document.getElementById('inline-modal-cancel');
   const btnSubmit = document.getElementById('inline-modal-submit');
 
@@ -135,17 +140,35 @@ function showInlineModal(title, placeholder, extraChips, callback) {
 
   modalTitle.textContent = title || 'Input';
   modalInput.placeholder = placeholder || 'Enter value...';
-  modalInput.value = '';
+  modalInput.value = options.initialValue || '';
   inlineModalCallback = callback;
   inlineModalSelectedChip = (extraChips && extraChips[0]) ? extraChips[0].id : null;
 
-  if (Array.isArray(extraChips) && extraChips.length > 0) {
+  let selectedCategory = (Array.isArray(options.categories) && options.categories[0]) ? options.categories[0] : 'General';
+  let selectedColor = options.defaultColor || '#3b82f6';
+
+  if (modalDesc) {
+    if (options.descriptionPlaceholder) {
+      modalDesc.style.display = 'block';
+      modalDesc.placeholder = options.descriptionPlaceholder;
+      modalDesc.value = '';
+    } else {
+      modalDesc.style.display = 'none';
+      modalDesc.value = '';
+    }
+  }
+
+  if (Array.isArray(extraChips) && extraChips.length > 0 && modalExtra) {
     modalExtra.innerHTML = '';
     modalExtra.style.display = 'flex';
     extraChips.forEach((ch, idx) => {
       const chipEl = document.createElement('div');
       chipEl.className = 'modal-chip' + (idx === 0 ? ' active' : '');
-      chipEl.textContent = ch.label;
+      if (ch.iconSvg) {
+        chipEl.innerHTML = `${ch.iconSvg}<span>${ch.label}</span>`;
+      } else {
+        chipEl.textContent = ch.label;
+      }
       chipEl.onclick = (e) => {
         e.stopPropagation();
         modalExtra.querySelectorAll('.modal-chip').forEach(el => el.classList.remove('active'));
@@ -156,6 +179,95 @@ function showInlineModal(title, placeholder, extraChips, callback) {
     });
   } else if (modalExtra) {
     modalExtra.style.display = 'none';
+  }
+
+  if (modalCats && modalCatLabel) {
+    if (Array.isArray(options.categories) && options.categories.length > 0) {
+      modalCatLabel.style.display = 'block';
+      modalCats.style.display = 'flex';
+      const renderCatChips = (catList) => {
+        modalCats.innerHTML = '';
+        catList.forEach((cat) => {
+          const el = document.createElement('div');
+          el.className = 'modal-chip' + (cat === selectedCategory ? ' active' : '');
+          el.textContent = cat;
+          el.onclick = (e) => {
+            e.stopPropagation();
+            selectedCategory = cat;
+            renderCatChips(catList);
+          };
+          modalCats.appendChild(el);
+        });
+        const addBtn = document.createElement('div');
+        addBtn.className = 'modal-chip';
+        addBtn.textContent = '+ New';
+        addBtn.onclick = (e) => {
+          e.stopPropagation();
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.className = 'modal-cat-add-input';
+          inp.placeholder = 'Category...';
+          addBtn.replaceWith(inp);
+          inp.focus();
+          const commitCat = () => {
+            const name = inp.value.trim();
+            if (name) {
+              if (!catList.some(c => c.toLowerCase() === name.toLowerCase())) {
+                catList.push(name);
+                if (typeof options.onAddCategory === 'function') options.onAddCategory(name);
+              }
+              selectedCategory = name;
+            }
+            renderCatChips(catList);
+          };
+          inp.onkeydown = (ev) => {
+            ev.stopPropagation();
+            if (ev.key === 'Enter') { ev.preventDefault(); commitCat(); }
+            else if (ev.key === 'Escape') { ev.preventDefault(); renderCatChips(catList); }
+          };
+          inp.onblur = commitCat;
+        };
+        modalCats.appendChild(addBtn);
+      };
+      renderCatChips([...options.categories]);
+    } else {
+      modalCatLabel.style.display = 'none';
+      modalCats.style.display = 'none';
+    }
+  }
+
+  if (modalColors && modalColorLabel) {
+    if (Array.isArray(options.colors) && options.colors.length > 0) {
+      modalColorLabel.style.display = 'block';
+      modalColors.style.display = 'flex';
+      modalColors.innerHTML = '';
+      options.colors.forEach((hex, idx) => {
+        const sw = document.createElement('div');
+        sw.className = 'modal-swatch' + (idx === 0 ? ' active' : '');
+        sw.style.backgroundColor = hex;
+        sw.onclick = (e) => {
+          e.stopPropagation();
+          modalColors.querySelectorAll('.modal-swatch').forEach(s => s.classList.remove('active'));
+          sw.classList.add('active');
+          selectedColor = hex;
+        };
+        modalColors.appendChild(sw);
+      });
+      const customColor = document.createElement('input');
+      customColor.type = 'color';
+      customColor.className = 'modal-color-custom';
+      customColor.value = selectedColor;
+      customColor.title = 'Custom color';
+      customColor.oninput = (e) => {
+        e.stopPropagation();
+        selectedColor = customColor.value;
+        modalColors.querySelectorAll('.modal-swatch').forEach(s => s.classList.remove('active'));
+      };
+      modalColors.appendChild(customColor);
+    } else {
+      modalColorLabel.style.display = 'none';
+      modalColors.style.display = 'none';
+    }
   }
 
   if (backdrop) backdrop.style.display = 'block';
@@ -169,8 +281,13 @@ function showInlineModal(title, placeholder, extraChips, callback) {
 
   const onSubmit = () => {
     const val = modalInput.value.trim();
+    const desc = modalDesc ? modalDesc.value.trim() : '';
     if (val && inlineModalCallback) {
-      inlineModalCallback(val, inlineModalSelectedChip);
+      inlineModalCallback(val, inlineModalSelectedChip, {
+        description: desc,
+        category: selectedCategory,
+        color: selectedColor
+      });
     }
     hideInlineModal();
   };
@@ -345,8 +462,28 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+let calendarCategories = ['General', 'Personal', 'Work'];
+let calSelAnimX = null;
+let calSelAnimY = null;
+let isCalDateAnimating = false;
+let calNotesAnimStart = 0;
+let calNotesAnimDir = 1;
+
 // User Data IPC Initialization
 try {
+  ipcRenderer.invoke('calendar-get-categories').then(cats => {
+    if (Array.isArray(cats) && cats.length > 0) {
+      calendarCategories = cats;
+    }
+  }).catch(() => {});
+
+  ipcRenderer.on('calendar-categories-updated', (event, cats) => {
+    if (Array.isArray(cats) && cats.length > 0) {
+      calendarCategories = cats;
+      requestFrame();
+    }
+  });
+
   ipcRenderer.invoke('calendar-get-notes').then(notes => {
     if (Array.isArray(notes)) {
       calendarNotes = notes;
@@ -858,6 +995,10 @@ let copiedFeedbackTimer = null;
 let shelfDragCandidate = null;
 let currentRestingWidth = UI.REST_W;
 let dynamicLyricsEnabled = true;
+let liveLyricsEnabled = true;
+let lyricModeToggleAnim = 1.0; // 0.0 = Line, 1.0 = Word
+let lyricModeStageAnimStart = 0;
+let lyricModeStageTarget = 'word';
 let albumColorGradientEnabled = true;
 let wasShelfDragging = false;
 let currentVolume = 0.66;
@@ -1390,6 +1531,7 @@ function tickLyrics() {
 }
 
 function getPillRollingLyric() {
+  if (!liveLyricsEnabled) return null;
   const timed = (mediaState.track && Array.isArray(mediaState.track.timedLyrics)) ? mediaState.track.timedLyrics : [];
   const rawK = Math.min(1, Math.max(0, (performance.now() - lyricChangedAt) / LYRIC_SWAP_MS));
   const k = 1 - Math.pow(1 - rawK, 4);
@@ -1411,6 +1553,7 @@ function getPillRollingLyric() {
 }
 
 function getExpandedAroundLyrics() {
+  if (!liveLyricsEnabled) return null;
   const timed = (mediaState.track && Array.isArray(mediaState.track.timedLyrics)) ? mediaState.track.timedLyrics : [];
   if (!timed.length) return null;
   const rawK = Math.min(1, Math.max(0, (performance.now() - lyricChangedAt) / LYRIC_SWAP_MS));
@@ -2256,26 +2399,51 @@ function handleButtonClick(id, data) {
     }
   } else if (id === 'cal_today') {
     const td = new Date();
+    const nextDate = td.toISOString().slice(0, 10);
+    calNotesAnimDir = nextDate >= calendarSelectedDate ? 1 : -1;
+    calNotesAnimStart = performance.now();
     calendarViewYear = td.getFullYear();
     calendarViewMonth = td.getMonth();
-    calendarSelectedDate = td.toISOString().slice(0, 10);
+    calendarSelectedDate = nextDate;
   } else if (id && id.startsWith('cal_day_')) {
-    calendarSelectedDate = data;
+    if (data && data !== calendarSelectedDate) {
+      calNotesAnimDir = data >= calendarSelectedDate ? 1 : -1;
+      calNotesAnimStart = performance.now();
+      calendarSelectedDate = data;
+    }
   } else if (id === 'cal_add_note_btn') {
     const chips = [
-      { id: 'none', label: 'Once' },
-      { id: 'yearly', label: '🎂 Birthday / Yearly' },
-      { id: 'monthly', label: '🔁 Monthly' },
-      { id: 'weekly', label: '🔁 Weekly' },
-      { id: 'daily', label: '🔁 Daily' }
+      { id: 'none', label: 'Once', iconSvg: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>' },
+      { id: 'daily', label: 'Daily', iconSvg: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="3"/><path d="M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14"/></svg>' },
+      { id: 'weekly', label: 'Weekly', iconSvg: '<svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 7h11M5.5 2v2.5M10.5 2v2.5"/></svg>' },
+      { id: 'monthly', label: 'Monthly', iconSvg: '<svg viewBox="0 0 16 16"><path d="M12.5 5.5A5 5 0 1 0 13 9"/><polyline points="12.5 2.5 12.5 5.5 9.5 5.5"/></svg>' },
+      { id: 'yearly', label: 'Yearly', iconSvg: '<svg viewBox="0 0 16 16"><path d="M8 2.5l1.6 3.4 3.7.5-2.7 2.6.6 3.7L8 11l-3.2 1.7.6-3.7-2.7-2.6 3.7-.5z"/></svg>' }
     ];
-    showInlineModal(`Add Note (${calendarSelectedDate})`, 'e.g. Sarah Birthday, Project Deadline', chips, (text, repeat) => {
-      ipcRenderer.invoke('calendar-add-note', {
-        date: calendarSelectedDate,
-        text,
-        repeat: repeat || 'none'
-      });
-    });
+    const colorSwatches = ['#3b82f6', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#94a3b8'];
+    showInlineModal(
+      `Add Event (${calendarSelectedDate})`,
+      'Event title',
+      chips,
+      (text, repeat, extra) => {
+        ipcRenderer.invoke('calendar-add-note', {
+          date: calendarSelectedDate,
+          text,
+          description: (extra && extra.description) || '',
+          category: (extra && extra.category) || 'General',
+          color: (extra && extra.color) || '#3b82f6',
+          repeat: repeat || 'none'
+        });
+      },
+      {
+        descriptionPlaceholder: 'Description (optional)',
+        categories: calendarCategories,
+        onAddCategory: (catName) => {
+          ipcRenderer.invoke('calendar-add-category', catName);
+        },
+        colors: colorSwatches,
+        defaultColor: '#3b82f6'
+      }
+    );
   } else if (id && id.startsWith('cal_del_')) {
     ipcRenderer.invoke('calendar-delete-note', data);
   } else if (id === 'nav_clock') {
@@ -2499,6 +2667,11 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('open-settings');
   } else if (id === 'toggle_dynamic_lyrics') {
     dynamicLyricsEnabled = !dynamicLyricsEnabled;
+    lyricModeStageTarget = dynamicLyricsEnabled ? 'word' : 'line';
+    lyricModeStageAnimStart = (reducedMotionEnabled || liteModeEnabled) ? 0 : performance.now();
+    if (reducedMotionEnabled || liteModeEnabled) {
+      lyricModeToggleAnim = dynamicLyricsEnabled ? 1.0 : 0.0;
+    }
     ipcRenderer.send('set-dynamic-lyrics', dynamicLyricsEnabled);
   } else if (id === 'toggle_display_mode') {
     displayMode = displayMode === 'island' ? 'notch' : 'island';
@@ -2787,7 +2960,21 @@ try {
 } catch (e) {}
 ipcRenderer.on('dynamic-lyrics-toggled', (event, data) => {
   if (data && typeof data.enabled === 'boolean') {
+    if (dynamicLyricsEnabled !== data.enabled) {
+      lyricModeStageTarget = data.enabled ? 'word' : 'line';
+      lyricModeStageAnimStart = (reducedMotionEnabled || liteModeEnabled) ? 0 : performance.now();
+    }
     dynamicLyricsEnabled = data.enabled;
+    if (reducedMotionEnabled || liteModeEnabled) {
+      lyricModeToggleAnim = dynamicLyricsEnabled ? 1.0 : 0.0;
+    }
+    requestFrame();
+  }
+});
+
+ipcRenderer.on('live-lyrics-toggled', (event, data) => {
+  if (data && typeof data.enabled === 'boolean') {
+    liveLyricsEnabled = data.enabled;
     requestFrame();
   }
 });
@@ -2898,6 +3085,10 @@ try {
     if (res && res.config) {
       if (typeof res.config.dynamicLyrics === 'boolean') {
         dynamicLyricsEnabled = res.config.dynamicLyrics;
+        lyricModeToggleAnim = dynamicLyricsEnabled ? 1.0 : 0.0;
+      }
+      if (typeof res.config.liveLyrics === 'boolean') {
+        liveLyricsEnabled = res.config.liveLyrics;
       }
       if (typeof res.config.albumColorGradient === 'boolean') {
         albumColorGradientEnabled = res.config.albumColorGradient;
@@ -3107,7 +3298,12 @@ function getDynamicStateSnapshot(nowMs) {
     tintK,
     currentView,
     isTabTransitioning,
-    isNavPillAnimating,
+    isNavPillAnimating: Boolean(
+      isNavPillAnimating ||
+      isCalDateAnimating ||
+      (calNotesAnimStart > 0 && (nowMs - calNotesAnimStart) < 280) ||
+      (lyricModeStageAnimStart > 0 && (nowMs - lyricModeStageAnimStart) < 460)
+    ),
     activeAlarmRinging: Boolean(activeAlarmRinging),
     stopwatchRunning: Boolean(stopwatchRunning),
     timerRunning: Boolean(timerRunning),
@@ -3532,7 +3728,8 @@ function getTargetExpandedHeightForView(view) {
     activeAlarmRinging,
     clockSubMode,
     alarmsCount: (alarmsList && alarmsList.length) || 0,
-    projectCount: getActiveProjects().length
+    projectCount: getActiveProjects().length,
+    liveLyricsEnabled
   });
 }
 
@@ -5559,8 +5756,7 @@ function renderTopNav(x, y, w) {
     { id: 'nav_calendar', label: 'Calendar', w: 48 },
     { id: 'nav_clock', label: 'Clock', w: 40 },
     { id: 'nav_todo', label: 'Notes', w: 42 },
-    { id: 'nav_media', label: 'Media', w: 44 },
-    { id: 'nav_agent', label: 'Ai', w: 30 }
+    { id: 'nav_media', label: 'Media', w: 44 }
   ];
   if (hasActiveCall() || currentView === 'call') {
     navItems.push({ id: 'nav_call', label: 'Call', w: 38 });
@@ -5756,15 +5952,24 @@ function renderCalendarWidget(calX, calY, calW, calH) {
 
     const cx = gridStartX + col * colStep + colStep / 2;
     const cy = gridStartY + row * rowStep + rowStep / 2;
+    const dateKey = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dayNotes = calendarNotes.filter(n => matchesCalendarDate(n, dateKey));
+    const eventColor = dayNotes.length > 0 ? (dayNotes[0].color || '#3b82f6') : null;
 
     if (d === todayDate) {
-      // Prominent blue circular badge exclusively for today's date
       ctx.beginPath();
-      ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
-      ctx.fillStyle = '#2563eb';
+      ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+      ctx.fillStyle = eventColor || '#2563eb';
       ctx.fill();
 
       ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(d), cx, cy);
+    } else if (eventColor) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
+      ctx.fillStyle = colorWithAlpha(eventColor, 0.28);
+      ctx.fill();
+      ctx.fillStyle = '#f8fafc';
       ctx.fillText(String(d), cx, cy);
     } else {
       ctx.fillStyle = d < todayDate ? '#94a3b8' : '#e2e8f0';
@@ -5773,6 +5978,67 @@ function renderCalendarWidget(calX, calY, calW, calH) {
   }
 
   ctx.restore();
+  interactiveButtons.push({ id: 'nav_calendar', x: calX, y: calY, w: calW, h: calH });
+}
+
+function drawRecurrenceIcon(c, repeat, cx, cy, color) {
+  c.save();
+  c.strokeStyle = color;
+  c.fillStyle = color;
+  c.lineWidth = 1.25;
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  const r = 3.4;
+  if (repeat === 'yearly') {
+    c.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const ang = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+      const inAng = ang + Math.PI / 5;
+      const ox = cx + Math.cos(ang) * (r + 0.6);
+      const oy = cy + Math.sin(ang) * (r + 0.6);
+      const ix = cx + Math.cos(inAng) * (r * 0.45);
+      const iy = cy + Math.sin(inAng) * (r * 0.45);
+      if (i === 0) c.moveTo(ox, oy); else c.lineTo(ox, oy);
+      c.lineTo(ix, iy);
+    }
+    c.closePath();
+    c.stroke();
+  } else if (repeat === 'monthly') {
+    c.beginPath();
+    c.arc(cx, cy, r, -Math.PI * 0.75, Math.PI * 0.85);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx + r * 0.55, cy - r * 0.85);
+    c.lineTo(cx + r * 0.95, cy - r * 0.25);
+    c.lineTo(cx + r * 0.25, cy - r * 0.2);
+    c.stroke();
+  } else if (repeat === 'weekly') {
+    c.beginPath();
+    c.roundRect(cx - r, cy - r + 0.6, r * 2, r * 2 - 0.8, 1.2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx - r, cy - 0.6);
+    c.lineTo(cx + r, cy - 0.6);
+    c.stroke();
+  } else if (repeat === 'daily') {
+    c.beginPath();
+    c.arc(cx, cy, 1.8, 0, Math.PI * 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx, cy - r); c.lineTo(cx, cy - r + 1.1);
+    c.moveTo(cx, cy + r); c.lineTo(cx, cy + r - 1.1);
+    c.moveTo(cx - r, cy); c.lineTo(cx - r + 1.1, cy);
+    c.moveTo(cx + r, cy); c.lineTo(cx + r - 1.1, cy);
+    c.stroke();
+  } else {
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+    c.stroke();
+    c.beginPath();
+    c.arc(cx, cy, 1.1, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.restore();
 }
 
 // =============================================================
@@ -5789,65 +6055,82 @@ function renderCalendarTabView(x, y, w, h) {
   const curDateObj = new Date(calendarViewYear, calendarViewMonth, 1);
   const monthName = curDateObj.toLocaleDateString([], { month: 'long' });
 
-  // --- Left Column: Interactive Month Grid & Navigation (~54% width) ---
+  // --- Left Column: Interactive Month Grid & Navigation ---
   const leftW = 310;
   const leftX = contentX;
 
   // Month navigation bar
-  const navH = 24;
+  const navH = 22;
   const navY = topY;
 
-  // Prev Month Button ◀
-  const prevBtnW = 24;
+  // Prev Month Button
+  const prevBtnW = 22;
   const isPrevHov = hoveredButtonId === 'cal_prev_month';
   ctx.beginPath();
   ctx.roundRect(leftX, navY, prevBtnW, navH, 6);
   ctx.fillStyle = isPrevHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
   ctx.fill();
-  ctx.font = '600 11px "Segoe UI Variable Text", sans-serif';
-  ctx.fillStyle = isPrevHov ? '#ffffff' : '#cbd5e1';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('◀', leftX + prevBtnW / 2, navY + navH / 2);
+  ctx.save();
+  ctx.strokeStyle = isPrevHov ? '#ffffff' : '#cbd5e1';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(leftX + prevBtnW / 2 + 2, navY + navH / 2 - 3.5);
+  ctx.lineTo(leftX + prevBtnW / 2 - 2, navY + navH / 2);
+  ctx.lineTo(leftX + prevBtnW / 2 + 2, navY + navH / 2 + 3.5);
+  ctx.stroke();
+  ctx.restore();
   interactiveButtons.push({ id: 'cal_prev_month', x: leftX, y: navY, w: prevBtnW, h: navH });
 
-  // Month Title (e.g., "November 2026")
-  ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+  // Month Title
+  ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'left';
-  ctx.fillText(`${monthName} ${calendarViewYear}`, leftX + 32, navY + navH / 2);
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${monthName} ${calendarViewYear}`, leftX + 30, navY + navH / 2);
 
-  // Next Month Button ▶
-  const nextBtnX = leftX + 172;
+  // Next Month Button
+  const nextBtnX = leftX + 168;
   const isNextHov = hoveredButtonId === 'cal_next_month';
   ctx.beginPath();
   ctx.roundRect(nextBtnX, navY, prevBtnW, navH, 6);
   ctx.fillStyle = isNextHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
   ctx.fill();
-  ctx.font = '600 11px "Segoe UI Variable Text", sans-serif';
-  ctx.fillStyle = isNextHov ? '#ffffff' : '#cbd5e1';
-  ctx.textAlign = 'center';
-  ctx.fillText('▶', nextBtnX + prevBtnW / 2, navY + navH / 2);
+  ctx.save();
+  ctx.strokeStyle = isNextHov ? '#ffffff' : '#cbd5e1';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(nextBtnX + prevBtnW / 2 - 2, navY + navH / 2 - 3.5);
+  ctx.lineTo(nextBtnX + prevBtnW / 2 + 2, navY + navH / 2);
+  ctx.lineTo(nextBtnX + prevBtnW / 2 - 2, navY + navH / 2 + 3.5);
+  ctx.stroke();
+  ctx.restore();
   interactiveButtons.push({ id: 'cal_next_month', x: nextBtnX, y: navY, w: prevBtnW, h: navH });
 
-  // Today Jump Pill
-  const todayBtnW = 46;
+  // Compact Today Jump Pill
+  const todayBtnW = 38;
+  const todayBtnH = 18;
   const todayBtnX = leftX + leftW - todayBtnW;
+  const todayBtnY = navY + (navH - todayBtnH) / 2;
   const isTodayHov = hoveredButtonId === 'cal_today';
   ctx.beginPath();
-  ctx.roundRect(todayBtnX, navY, todayBtnW, navH, 6);
-  ctx.fillStyle = isTodayHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
-  ctx.strokeStyle = isTodayHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.4)';
+  ctx.roundRect(todayBtnX, todayBtnY, todayBtnW, todayBtnH, 5);
+  ctx.fillStyle = isTodayHov ? '#2563eb' : 'rgba(37, 99, 235, 0.16)';
+  ctx.strokeStyle = isTodayHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.35)';
   ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
-  ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = isTodayHov ? '#ffffff' : '#93c5fd';
   ctx.textAlign = 'center';
-  ctx.fillText('Today', todayBtnX + todayBtnW / 2, navY + navH / 2);
-  interactiveButtons.push({ id: 'cal_today', x: todayBtnX, y: navY, w: todayBtnW, h: navH });
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Today', todayBtnX + todayBtnW / 2, todayBtnY + todayBtnH / 2);
+  interactiveButtons.push({ id: 'cal_today', x: todayBtnX, y: todayBtnY, w: todayBtnW, h: todayBtnH });
 
-  // Weekdays Row (Mo, Tu, We, Th, Fr, Sa, Su)
+  // Weekdays Row
   const daysHeaderY = navY + 30;
   const daysShort = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
   const colW = leftW / 7;
@@ -5863,108 +6146,185 @@ function renderCalendarTabView(x, y, w, h) {
   const gridStartY = daysHeaderY + 12;
   const rowH = 34;
   const daysInMonth = new Date(calendarViewYear, calendarViewMonth + 1, 0).getDate();
-  const rawFirstDay = new Date(calendarViewYear, calendarViewMonth, 1).getDay(); // 0 = Sun
-  const firstCol = (rawFirstDay + 6) % 7; // Convert to Mon = 0
+  const rawFirstDay = new Date(calendarViewYear, calendarViewMonth, 1).getDay();
+  const firstCol = (rawFirstDay + 6) % 7;
+  const pillSize = 24;
 
+  // Locate target selected cell for smooth gliding pill interpolation
+  let targetSelX = null;
+  let targetSelY = null;
+  let selectedEventColor = '#2563eb';
+  for (let day = 1; day <= daysInMonth; day++) {
+    const curCellDateStr = `${calendarViewYear}-${String(calendarViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    if (curCellDateStr === calendarSelectedDate) {
+      const idx = (day - 1) + firstCol;
+      const col = idx % 7;
+      const row = Math.floor(idx / 7);
+      targetSelX = leftX + col * colW + (colW - pillSize) / 2;
+      targetSelY = gridStartY + row * rowH + 2;
+      const selNotes = calendarNotes.filter(n => matchesCalendarDate(n, curCellDateStr));
+      if (selNotes.length > 0 && selNotes[0].color) {
+        selectedEventColor = selNotes[0].color;
+      }
+      break;
+    }
+  }
+
+  if (targetSelX !== null && targetSelY !== null) {
+    if (calSelAnimX === null || calSelAnimY === null || reducedMotionEnabled || liteModeEnabled) {
+      calSelAnimX = targetSelX;
+      calSelAnimY = targetSelY;
+      isCalDateAnimating = false;
+    } else {
+      const k = Math.min(1.0, (currentDt || 0.016) * 18.0 * (animSpeedMultiplier || 1.0));
+      calSelAnimX += (targetSelX - calSelAnimX) * k;
+      calSelAnimY += (targetSelY - calSelAnimY) * k;
+      if (Math.hypot(targetSelX - calSelAnimX, targetSelY - calSelAnimY) < 0.25) {
+        calSelAnimX = targetSelX;
+        calSelAnimY = targetSelY;
+        isCalDateAnimating = false;
+      } else {
+        isCalDateAnimating = true;
+      }
+    }
+  } else {
+    isCalDateAnimating = false;
+  }
+
+  // Pass 1: Event cell tints, hover highlights, and Today ring
   for (let day = 1; day <= daysInMonth; day++) {
     const idx = (day - 1) + firstCol;
     const col = idx % 7;
     const row = Math.floor(idx / 7);
-
     const cx = leftX + col * colW;
     const cy = gridStartY + row * rowH;
-
     const curCellDateStr = `${calendarViewYear}-${String(calendarViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const isSelected = curCellDateStr === calendarSelectedDate;
     const isToday = curCellDateStr === todayStr;
     const cellBtnId = `cal_day_${curCellDateStr}`;
     const isCellHov = hoveredButtonId === cellBtnId;
-
-    // Day Selection / Today styling
-    const pillSize = 24;
     const px = cx + (colW - pillSize) / 2;
     const py = cy + 2;
 
-    if (isSelected) {
+    const cellNotes = calendarNotes.filter(n => matchesCalendarDate(n, curCellDateStr));
+    const eventColor = cellNotes.length > 0 ? (cellNotes[0].color || '#3b82f6') : null;
+
+    if (!isSelected && eventColor) {
       ctx.beginPath();
-      ctx.roundRect(px, py, pillSize, pillSize, 8);
-      ctx.fillStyle = '#2563eb';
+      ctx.roundRect(px, py, pillSize, pillSize, 7);
+      ctx.fillStyle = colorWithAlpha(eventColor, isCellHov ? 0.34 : 0.22);
       ctx.fill();
-    } else if (isCellHov) {
+      ctx.strokeStyle = colorWithAlpha(eventColor, 0.55);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else if (!isSelected && isCellHov) {
       ctx.beginPath();
-      ctx.roundRect(px, py, pillSize, pillSize, 8);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.roundRect(px, py, pillSize, pillSize, 7);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.09)';
       ctx.fill();
     }
 
     if (isToday && !isSelected) {
       ctx.beginPath();
-      ctx.roundRect(px, py, pillSize, pillSize, 8);
-      ctx.strokeStyle = '#38bdf8';
+      ctx.roundRect(px, py, pillSize, pillSize, 7);
+      ctx.strokeStyle = eventColor || '#38bdf8';
       ctx.lineWidth = 1.2;
       ctx.stroke();
     }
+  }
 
-    // Day Number Text
+  // Pass 2: Smooth gliding active selection pill
+  if (targetSelX !== null && targetSelY !== null && calSelAnimX !== null && calSelAnimY !== null) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(calSelAnimX, calSelAnimY, pillSize, pillSize, 7);
+    ctx.fillStyle = selectedEventColor;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Pass 3: Day numbers, event color dots, and hitboxes
+  for (let day = 1; day <= daysInMonth; day++) {
+    const idx = (day - 1) + firstCol;
+    const col = idx % 7;
+    const row = Math.floor(idx / 7);
+    const cx = leftX + col * colW;
+    const cy = gridStartY + row * rowH;
+    const curCellDateStr = `${calendarViewYear}-${String(calendarViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const isSelected = curCellDateStr === calendarSelectedDate;
+    const isToday = curCellDateStr === todayStr;
+    const cellBtnId = `cal_day_${curCellDateStr}`;
+    const px = cx + (colW - pillSize) / 2;
+    const py = cy + 2;
+
+    const cellNotes = calendarNotes.filter(n => matchesCalendarDate(n, curCellDateStr));
+    const eventColor = cellNotes.length > 0 ? (cellNotes[0].color || '#3b82f6') : null;
+
     ctx.font = isSelected || isToday ? '700 11px "Segoe UI Variable Display", Inter, sans-serif' : '500 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = isSelected ? '#ffffff' : (isToday ? '#38bdf8' : '#e2e8f0');
+    ctx.fillStyle = isSelected ? '#ffffff' : (isToday ? '#38bdf8' : (eventColor ? '#f8fafc' : '#e2e8f0'));
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(String(day), px + pillSize / 2, py + pillSize / 2);
 
-    // Event / Birthday Dot Indicators below number
-    const cellNotes = calendarNotes.filter(n => matchesCalendarDate(n, curCellDateStr));
-    if (cellNotes.length > 0) {
-      const hasBirthday = cellNotes.some(n => n.isBirthday || n.repeat === 'yearly');
+    if (eventColor) {
       ctx.beginPath();
-      ctx.arc(px + pillSize / 2, py + pillSize + 3, 2, 0, Math.PI * 2);
-      ctx.fillStyle = hasBirthday ? '#f43f5e' : '#38bdf8';
+      ctx.arc(px + pillSize / 2, py + pillSize + 3.5, 2, 0, Math.PI * 2);
+      ctx.fillStyle = eventColor;
       ctx.fill();
     }
 
     interactiveButtons.push({ id: cellBtnId, data: curCellDateStr, x: cx, y: cy, w: colW, h: rowH });
   }
 
-  // --- Right Column: Date Details & Note Editor (~46% width) ---
+  // --- Right Column: Date Details & Note List (with smooth date-switch slide/fade) ---
   const rightX = leftX + leftW + 16;
   const rightW = contentW - (leftW + 16);
 
-  // Selected Date Header
   const selObj = new Date(calendarSelectedDate + 'T00:00:00');
   const selTitle = isNaN(selObj.getTime()) ? calendarSelectedDate : selObj.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 
-  ctx.font = '700 13px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(selTitle, rightX, navY + 4);
+  ctx.textBaseline = 'middle';
+  ctx.fillText(selTitle, rightX, navY + navH / 2);
 
-  // + Add Note Button
-  const addNoteW = 62;
-  const addNoteH = 22;
+  // + Note Button
+  const addNoteW = 58;
+  const addNoteH = 20;
   const addNoteX = rightX + rightW - addNoteW;
+  const addNoteY = navY + (navH - addNoteH) / 2;
   const isAddNoteHov = hoveredButtonId === 'cal_add_note_btn';
   ctx.beginPath();
-  ctx.roundRect(addNoteX, navY, addNoteW, addNoteH, 6);
+  ctx.roundRect(addNoteX, addNoteY, addNoteW, addNoteH, 6);
   ctx.fillStyle = isAddNoteHov ? '#2563eb' : 'rgba(255, 255, 255, 0.08)';
-  ctx.strokeStyle = isAddNoteHov ? '#3b82f6' : 'rgba(255, 255, 255, 0.15)';
+  ctx.strokeStyle = isAddNoteHov ? '#3b82f6' : 'rgba(255, 255, 255, 0.14)';
   ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
 
-  ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = isAddNoteHov ? '#ffffff' : '#f4f4f5';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('+ Note', addNoteX + addNoteW / 2, navY + addNoteH / 2);
-  interactiveButtons.push({ id: 'cal_add_note_btn', x: addNoteX, y: navY, w: addNoteW, h: addNoteH });
+  ctx.fillText('+ Event', addNoteX + addNoteW / 2, addNoteY + addNoteH / 2);
+  interactiveButtons.push({ id: 'cal_add_note_btn', x: addNoteX, y: addNoteY, w: addNoteW, h: addNoteH });
 
-  // Notes List for Selected Date
-  const notesListY = navY + 32;
+  // Notes List transition progress
+  const notesElapsed = (reducedMotionEnabled || liteModeEnabled || calNotesAnimStart === 0)
+    ? 1.0
+    : Math.min(1.0, (performance.now() - calNotesAnimStart) / 220);
+  const notesEase = 1 - Math.pow(1 - notesElapsed, 3);
+  const notesSlideY = (1 - notesEase) * 8 * calNotesAnimDir;
+
+  const notesListY = navY + 30;
   const activeNotes = calendarNotes.filter(n => matchesCalendarDate(n, calendarSelectedDate));
 
+  ctx.save();
+  ctx.globalAlpha = notesEase;
+  ctx.translate(0, notesSlideY);
+
   if (activeNotes.length === 0) {
-    ctx.save();
     ctx.beginPath();
     ctx.roundRect(rightX, notesListY, rightW, 210, 10);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
@@ -5973,72 +6333,89 @@ function renderCalendarTabView(x, y, w, h) {
     ctx.fill();
     ctx.stroke();
 
+    // Clean vector calendar glyph (zero emoji)
+    const gx = rightX + rightW / 2;
+    const gy = notesListY + 84;
+    ctx.save();
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.roundRect(gx - 10, gy - 8, 20, 18, 4);
+    ctx.moveTo(gx - 10, gy - 2);
+    ctx.lineTo(gx + 10, gy - 2);
+    ctx.moveTo(gx - 5, gy - 11);
+    ctx.lineTo(gx - 5, gy - 6);
+    ctx.moveTo(gx + 5, gy - 11);
+    ctx.lineTo(gx + 5, gy - 6);
+    ctx.stroke();
+    ctx.restore();
+
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '22px "Segoe UI Emoji", sans-serif';
-    ctx.fillText('📅', rightX + rightW / 2, notesListY + 80);
-
-    ctx.font = '600 12px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText('No notes for this date', rightX + rightW / 2, notesListY + 115);
-
-    ctx.font = '400 10px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = '#64748b';
-    ctx.fillText('Click + Note to add birthdays or events', rightX + rightW / 2, notesListY + 135);
-    ctx.restore();
+    ctx.fillText('No events for this date', gx, notesListY + 116);
   } else {
-    const cardH = 46;
     const cardGap = 8;
     const maxVisible = Math.min(activeNotes.length, 4);
+    let curNY = notesListY;
 
     for (let i = 0; i < maxVisible; i++) {
       const note = activeNotes[i];
-      const ny = notesListY + i * (cardH + cardGap);
+      const hasDesc = Boolean(note.description && String(note.description).trim());
+      const cardH = hasDesc ? 56 : 44;
+      const ny = curNY;
+      curNY += cardH + cardGap;
+
+      const noteColor = note.color || '#3b82f6';
       const isCardHov = hoveredButtonId === `cal_note_${note.id}`;
 
       ctx.beginPath();
       ctx.roundRect(rightX, ny, rightW, cardH, 8);
       ctx.fillStyle = isCardHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.035)';
-      ctx.strokeStyle = isCardHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.strokeStyle = isCardHov ? colorWithAlpha(noteColor, 0.5) : 'rgba(255, 255, 255, 0.07)';
       ctx.lineWidth = 1;
       ctx.fill();
       ctx.stroke();
 
-      // Recurrence Badge
-      let badgeLabel = 'Once';
-      let badgeColor = '#94a3b8';
-      let badgeBg = 'rgba(148, 163, 184, 0.12)';
-      if (note.repeat === 'yearly' || note.isBirthday) {
-        badgeLabel = '🎂 Birthday';
-        badgeColor = '#f43f5e';
-        badgeBg = 'rgba(244, 63, 94, 0.14)';
-      } else if (note.repeat === 'monthly') {
-        badgeLabel = '🔁 Monthly';
-        badgeColor = '#a855f7';
-        badgeBg = 'rgba(168, 85, 247, 0.14)';
-      } else if (note.repeat === 'weekly') {
-        badgeLabel = '🔁 Weekly';
-        badgeColor = '#38bdf8';
-        badgeBg = 'rgba(56, 189, 248, 0.14)';
-      } else if (note.repeat === 'daily') {
-        badgeLabel = '🔁 Daily';
-        badgeColor = '#22c55e';
-        badgeBg = 'rgba(34, 197, 94, 0.14)';
-      }
+      // Left color accent bar
+      ctx.beginPath();
+      ctx.roundRect(rightX + 3, ny + 6, 3, cardH - 12, 1.5);
+      ctx.fillStyle = noteColor;
+      ctx.fill();
 
+      // Meta row: custom vector recurrence icon + repeat label + category dot/label
+      const rep = note.repeat || 'none';
+      const repLabel = rep === 'yearly' ? 'Yearly' : (rep === 'monthly' ? 'Monthly' : (rep === 'weekly' ? 'Weekly' : (rep === 'daily' ? 'Daily' : 'Once')));
+      const catLabel = note.category || 'General';
+
+      drawRecurrenceIcon(ctx, rep, rightX + 16, ny + 12, noteColor);
       ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = badgeColor;
-      ctx.fillText(badgeLabel, rightX + 10, ny + 8);
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = noteColor;
+      ctx.fillText(repLabel, rightX + 24, ny + 12);
+      const repW = ctx.measureText(repLabel).width;
 
-      // Note Text
-      ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText(`• ${catLabel}`, rightX + 28 + repW, ny + 12);
+
+      // Event Title
+      ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.fillStyle = '#f4f4f5';
-      const maxTextW = rightW - 40;
-      ctx.fillText(truncateToWidth(note.text, maxTextW, ctx.font), rightX + 10, ny + 24);
+      ctx.textBaseline = 'top';
+      const maxTextW = rightW - 44;
+      ctx.fillText(truncateToWidth(note.text, maxTextW, ctx.font), rightX + 12, ny + 22);
 
-      // Delete ✖ button
+      // Optional Description
+      if (hasDesc) {
+        ctx.font = '400 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(truncateToWidth(String(note.description), maxTextW, ctx.font), rightX + 12, ny + 38);
+      }
+
+      // Delete button
       const delW = 18;
       const delH = 18;
       const delX = rightX + rightW - delW - 8;
@@ -6058,6 +6435,7 @@ function renderCalendarTabView(x, y, w, h) {
       interactiveButtons.push({ id: `cal_del_${note.id}`, data: note.id, x: delX, y: delY, w: delW, h: delH });
     }
   }
+  ctx.restore();
 }
 
 // =============================================================
@@ -7302,110 +7680,23 @@ function renderHomeView(x, y, w, h) {
     ctx.fillStyle = '#94a3b8';
     ctx.fillText(truncateToWidth(bodySnippet, notifCardW - 16, ctx.font), notifCardX + 8, notifCardY + 32);
   } else {
+    drawVectorSymbol(ctx, 'bell', notifCardX + 14, notifCardY + notifCardH / 2, 10, '#64748b');
     ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#64748b';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText('🔔 No notifications', notifCardX + 8, notifCardY + notifCardH / 2);
+    ctx.fillText('No notifications', notifCardX + 25, notifCardY + notifCardH / 2);
   }
   ctx.restore();
 
   interactiveButtons.push({ id: 'nav_notif_card', x: notifCardX, y: notifCardY, w: notifCardW, h: notifCardH });
 
-  // 2. Middle Mini Calendar Widget Card
-  const calX = x + 162;
+  // 2. Expanded Right Calendar Widget Card (minimal Home layout without Antigravity card)
+  const calX = clockX + 168;
   const calY = y + 40;
-  const calW = 146;
-  const calH = 98;
+  const calW = (x + w - 20) - calX;
+  const calH = 110;
   renderCalendarWidget(calX, calY, calW, calH);
-
-  // 3. Antigravity Live Activity Card on Right
-  const cardX = calX + calW + 12;
-  const cardY = y + 40;
-  const cardW = (x + w - 20) - cardX;
-  const cardH = 98;
-
-  ctx.beginPath();
-  ctx.roundRect(cardX, cardY, cardW, cardH, 12);
-  ctx.fillStyle = 'rgba(24, 24, 32, 0.7)';
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-  ctx.lineWidth = 1;
-  ctx.fill();
-  ctx.stroke();
-
-  // Logo + Status
-  if (antigravityLogo.complete && antigravityLogo.naturalWidth > 0) {
-    ctx.drawImage(antigravityLogo, cardX + 10, cardY + 11, 18, 18);
-  }
-
-  ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
-  ctx.fillStyle = '#38bdf8';
-  ctx.textAlign = 'left';
-  const homeActiveProjs = getActiveProjects().filter(p => ['running', 'thinking', 'waiting'].includes(p.status));
-  const homeTitle = homeActiveProjs.length > 1 ? `Google Antigravity (${homeActiveProjs.length})` : 'Google Antigravity';
-  ctx.fillText(homeTitle, cardX + 32, cardY + 20);
-
-  renderTrafficLightDot(cardX + cardW - 14, cardY + 20, antigravityState.status);
-
-  // 4-Segment Progress Bar inside Home Card
-  const prog = getAntigravityProgress(antigravityState);
-  const barW = cardW - 20;
-  const segW = (barW - 3 * 4) / 4;
-  const segH = 3.5;
-  const segY = cardY + 36;
-
-  for (let i = 0; i < 4; i++) {
-    const sx = cardX + 10 + i * (segW + 4);
-    ctx.beginPath();
-    ctx.roundRect(sx, segY, segW, segH, 1.75);
-    if (prog.segments[i]) {
-      ctx.fillStyle = '#22c55e'; // Finished segment filled with green
-    } else if (prog.activeSegment === i) {
-      ctx.fillStyle = '#38bdf8'; // Active segment pulsing cyan
-    } else {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-    }
-    ctx.fill();
-  }
-
-  // Phase text
-  ctx.font = '400 10px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = '#e2e8f0';
-  const phaseText = antigravityState.phase || 'Agent Ready';
-  ctx.fillText(phaseText.length > 24 ? phaseText.slice(0, 24) + '...' : phaseText, cardX + 10, cardY + 54);
-
-  // Active tool badge
-  if (antigravityState.tool) {
-    ctx.font = '500 9px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = '#38bdf8';
-    const toolText = `⚙ ${antigravityState.tool}`;
-    ctx.fillText(toolText.length > 18 ? toolText.slice(0, 18) + '...' : toolText, cardX + 10, cardY + 70);
-  }
-
-  // Jump Button (Open Antigravity)
-  const isRunning = antigravityState.status !== 'not_running';
-  const btnJumpW = 62;
-  const btnJumpH = 20;
-  const btnJumpX = cardX + cardW - btnJumpW - 10;
-  const btnJumpY = cardY + cardH - btnJumpH - 9;
-
-  ctx.beginPath();
-  ctx.roundRect(btnJumpX, btnJumpY, btnJumpW, btnJumpH, 6);
-  ctx.fillStyle = isRunning ? (hoveredButtonId === 'jump_antigravity' ? '#2563eb' : 'rgba(37, 99, 235, 0.25)') : 'rgba(255, 255, 255, 0.05)';
-  ctx.strokeStyle = isRunning ? '#3b82f6' : 'rgba(255, 255, 255, 0.12)';
-  ctx.lineWidth = 1;
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = isRunning ? '#ffffff' : '#94a3b8';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(isRunning ? 'Open ➔' : 'Ready', btnJumpX + btnJumpW / 2, btnJumpY + btnJumpH / 2);
-
-  if (isRunning) {
-    interactiveButtons.push({ id: 'jump_antigravity', x: btnJumpX, y: btnJumpY, w: btnJumpW, h: btnJumpH });
-  }
 }
 
 // -------------------------------------------------------------
@@ -7691,11 +7982,24 @@ function renderMediaView(x, y, w, h) {
     ctx.drawImage(albumImage, artX, artY, artSize, artSize);
     ctx.restore();
   } else {
-    ctx.font = '22px "Segoe UI Symbol", sans-serif';
-    ctx.fillStyle = albumAccentColor;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('🎵', artX + artSize / 2, artY + artSize / 2);
+    const mx = artX + artSize / 2;
+    const my = artY + artSize / 2;
+    ctx.save();
+    ctx.strokeStyle = albumAccentColor || '#94a3b8';
+    ctx.fillStyle = albumAccentColor || '#94a3b8';
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(mx - 3, my + 5);
+    ctx.lineTo(mx - 3, my - 6);
+    ctx.lineTo(mx + 6, my - 8);
+    ctx.lineTo(mx + 6, my + 3);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(mx - 5.5, my + 5.5, 2.5, 0, Math.PI * 2);
+    ctx.arc(mx + 3.5, my + 3.5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   // 6-Bar Equalizer on top right
@@ -7717,146 +8021,202 @@ function renderMediaView(x, y, w, h) {
 
   ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
-  ctx.fillText(truncateToWidth(track.artist || 'Open Liner, Spotify, or Browser', maxMetaW, ctx.font), metaX, artY + 23);
+  const cleanArtist = String(track.artist || 'No active player').replace(/Open Liner,\s*/i, '');
+  ctx.fillText(truncateToWidth(cleanArtist, maxMetaW, ctx.font), metaX, artY + 23);
 
-  // Source + Lyric Status Badge
-  const srcName = track.source && track.source !== 'none' ? track.source : 'Windows GSMTC';
-  const lyrStatus = track.lyricStatus === 'word_synced'
-    ? ' • Word Synced'
-    : (track.lyricStatus === 'synced' ? ' • Synced' : (track.lyricStatus === 'plain' ? ' • Lyrics' : ''));
+  // Source label (never display 'Liner' visibly)
+  const rawSrc = track.source && track.source !== 'none' ? track.source : 'Media';
+  const srcName = /liner/i.test(rawSrc) ? 'Media' : rawSrc;
+  const lyrStatus = liveLyricsEnabled
+    ? (track.lyricStatus === 'word_synced'
+      ? ' • Word'
+      : (track.lyricStatus === 'synced' ? ' • Synced' : ''))
+    : '';
   ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = albumAccentColor;
   ctx.fillText(`${srcName}${lyrStatus}`, metaX, artY + 41);
   const badgeTextW = ctx.measureText(`${srcName}${lyrStatus}`).width;
 
-  // Clickable Dynamic Word-by-Word Lyrics Toggle Badge
-  const toggleW = 76;
-  const toggleH = 16;
-  const toggleX = metaX + badgeTextW + 8;
-  const toggleY = artY + 39;
-  const isDyn = Boolean(dynamicLyricsEnabled && !liteModeEnabled);
-  const isHovToggle = hoveredButtonId === 'toggle_dynamic_lyrics';
+  // Sliding 2-State Segmented Pill: [ Line | Word ]
+  if (liveLyricsEnabled) {
+    const toggleW = 86;
+    const toggleH = 18;
+    const toggleX = metaX + badgeTextW + 10;
+    const toggleY = artY + 38;
+    const isDyn = Boolean(dynamicLyricsEnabled && !liteModeEnabled);
+    const isHovToggle = hoveredButtonId === 'toggle_dynamic_lyrics';
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(toggleX, toggleY, toggleW, toggleH, 4);
-  ctx.fillStyle = isDyn ? (isHovToggle ? '#2563eb' : 'rgba(37, 99, 235, 0.28)') : (isHovToggle ? '#3f3f46' : 'rgba(255, 255, 255, 0.08)');
-  ctx.strokeStyle = isDyn ? '#3b82f6' : 'rgba(255, 255, 255, 0.14)';
-  ctx.lineWidth = 1;
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = isDyn ? '#ffffff' : '#a1a1aa';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(isDyn ? '✦ Word Sync' : 'Line Sync', toggleX + toggleW / 2, toggleY + toggleH / 2);
-  ctx.restore();
-
-  interactiveButtons.push({ id: 'toggle_dynamic_lyrics', x: toggleX, y: toggleY, w: toggleW, h: toggleH });
-
-  // 2. Middle Row: Apple Music 3-Line Rolling Lyrics (before, now, next)
-  const lyricsY = topY + 62;
-  const lyricsH = 54;
-  const around = getExpandedAroundLyrics();
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.roundRect(contentX, lyricsY, contentW, lyricsH, 8);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-  ctx.lineWidth = 1;
-  ctx.fill();
-  ctx.stroke();
-  ctx.clip();
-
-  if (around) {
-    const push = (1 - around.k) * 16;
-    const centerX = contentX + contentW / 2;
-    const midY = lyricsY + lyricsH / 2;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    if (around.before) {
-      ctx.globalAlpha = 0.34 * around.k;
-      ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = '#cbd5e1';
-      ctx.fillText(truncateToWidth(around.before, contentW - 24, ctx.font), centerX, midY - 16 + push);
-    }
-
-    ctx.globalAlpha = 0.4 + 0.6 * around.k;
-    ctx.font = '700 12.5px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#ffffff';
-    if (around.progressive && around.progressive.words && around.progressive.words.length > 0 && dynamicLyricsEnabled && !liteModeEnabled) {
-      const words = around.progressive.words;
-      const fullText = around.progressive.fullText;
-      const fullW = ctx.measureText(fullText).width;
-
-      if (fullW <= contentW - 24) {
-        let curX = centerX - fullW / 2;
-        ctx.textAlign = 'left';
-        const spaceW = ctx.measureText(' ').width;
-
-        for (let i = 0; i < words.length; i++) {
-          const w = words[i];
-          const wWidth = ctx.measureText(w.text).width;
-
-          if (w.isSung) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillText(w.text, curX, midY + push);
-          } else if (w.isActive) {
-            // Smoothly glowing transition from dimmed to bright
-            const alpha = 0.38 + 0.62 * w.progress;
-            ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
-            ctx.fillText(w.text, curX, midY + push);
-          } else {
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.32)';
-            ctx.fillText(w.text, curX, midY + push);
-          }
-
-          curX += wWidth + spaceW;
-        }
-        ctx.textAlign = 'center';
-      } else {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(truncateToWidth(around.now, contentW - 24, ctx.font), centerX, midY + push);
-      }
+    const targetThumb = isDyn ? 1.0 : 0.0;
+    if (reducedMotionEnabled || liteModeEnabled) {
+      lyricModeToggleAnim = targetThumb;
     } else {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(truncateToWidth(around.now, contentW - 24, ctx.font), centerX, midY + push);
+      const tk = Math.min(1.0, (currentDt || 0.016) * 16.0 * (animSpeedMultiplier || 1.0));
+      lyricModeToggleAnim += (targetThumb - lyricModeToggleAnim) * tk;
+      if (Math.abs(targetThumb - lyricModeToggleAnim) < 0.005) lyricModeToggleAnim = targetThumb;
     }
 
-    if (around.next) {
-      ctx.globalAlpha = 0.38 * around.k;
-      ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = '#cbd5e1';
-      ctx.fillText(truncateToWidth(around.next, contentW - 24, ctx.font), centerX, midY + 16 + push);
-    }
-  } else if (track.lyrics && track.lyrics.length > 0) {
-    const curLine = track.currentLyric || track.lyrics[0];
-    ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#ffffff';
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(toggleX, toggleY, toggleW, toggleH, 9);
+    ctx.fillStyle = isHovToggle ? 'rgba(255, 255, 255, 0.11)' : 'rgba(255, 255, 255, 0.06)';
+    ctx.strokeStyle = isDyn ? colorWithAlpha(albumAccentColor || '#3b82f6', 0.45) : 'rgba(255, 255, 255, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    const thumbPad = 2;
+    const thumbW = (toggleW - thumbPad * 2) / 2;
+    const thumbH = toggleH - thumbPad * 2;
+    const thumbX = toggleX + thumbPad + lyricModeToggleAnim * thumbW;
+    ctx.beginPath();
+    ctx.roundRect(thumbX, toggleY + thumbPad, thumbW, thumbH, 7);
+    ctx.fillStyle = isDyn ? (albumAccentColor || '#2563eb') : 'rgba(255, 255, 255, 0.18)';
+    ctx.fill();
+
+    ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(truncateToWidth(`♪ ${curLine}`, contentW - 24, ctx.font), contentX + contentW / 2, lyricsY + lyricsH / 2);
-  } else {
-    ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const msg = !hasTrack
-      ? 'Play any song in Liner, Spotify, or browser to sync live lyrics'
-      : (track.lyricStatus === 'instrumental' ? '♪ Instrumental Track' : '♪ Syncing live lyrics via LRCLIB...');
-    ctx.fillText(msg, contentX + contentW / 2, lyricsY + lyricsH / 2);
+    ctx.fillStyle = lyricModeToggleAnim < 0.5 ? '#ffffff' : '#94a3b8';
+    ctx.fillText('Line', toggleX + thumbPad + thumbW / 2, toggleY + toggleH / 2);
+    ctx.fillStyle = lyricModeToggleAnim >= 0.5 ? '#ffffff' : '#94a3b8';
+    ctx.fillText('Word', toggleX + thumbPad + thumbW * 1.5, toggleY + toggleH / 2);
+    ctx.restore();
+
+    interactiveButtons.push({ id: 'toggle_dynamic_lyrics', x: toggleX, y: toggleY, w: toggleW, h: toggleH });
   }
-  ctx.restore();
+
+  // 2. Middle Row: Rolling Lyrics Stage (hidden when Live Lyrics Output is disabled)
+  const lyricsY = topY + 62;
+  const lyricsH = liveLyricsEnabled ? 54 : 0;
+
+  if (liveLyricsEnabled) {
+    const around = getExpandedAroundLyrics();
+    const stageElapsed = (lyricModeStageAnimStart > 0 && !reducedMotionEnabled && !liteModeEnabled)
+      ? Math.min(1.0, (performance.now() - lyricModeStageAnimStart) / 420)
+      : 1.0;
+    const stageActive = stageElapsed < 1.0;
+    const stageEase = 1 - Math.pow(1 - stageElapsed, 3);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(contentX, lyricsY, contentW, lyricsH, 8);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
+    const stageBorderAlpha = stageActive ? (0.07 + 0.42 * Math.sin(stageElapsed * Math.PI)) : 0.07;
+    ctx.strokeStyle = stageActive && lyricModeStageTarget === 'word'
+      ? colorWithAlpha(albumAccentColor || '#3b82f6', stageBorderAlpha)
+      : `rgba(255, 255, 255, ${stageBorderAlpha.toFixed(3)})`;
+    ctx.lineWidth = stageActive ? 1.4 : 1;
+    ctx.fill();
+    ctx.stroke();
+    ctx.clip();
+
+    if (stageActive) {
+      if (lyricModeStageTarget === 'word') {
+        const sweepX = contentX - 80 + (contentW + 160) * stageEase;
+        const sweepGrad = ctx.createLinearGradient(sweepX - 70, lyricsY, sweepX + 70, lyricsY);
+        sweepGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        sweepGrad.addColorStop(0.5, colorWithAlpha(albumAccentColor || '#38bdf8', 0.24 * (1 - stageElapsed * 0.5)));
+        sweepGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = sweepGrad;
+        ctx.fillRect(contentX, lyricsY, contentW, lyricsH);
+      } else {
+        const pulseA = 0.14 * (1 - stageEase);
+        ctx.fillStyle = `rgba(255, 255, 255, ${pulseA.toFixed(3)})`;
+        ctx.fillRect(contentX, lyricsY, contentW, lyricsH);
+      }
+    }
+
+    if (around) {
+      const push = (1 - around.k) * 16;
+      const centerX = contentX + contentW / 2;
+      const midY = lyricsY + lyricsH / 2;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      if (around.before) {
+        ctx.globalAlpha = 0.34 * around.k;
+        ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(truncateToWidth(around.before, contentW - 24, ctx.font), centerX, midY - 16 + push);
+      }
+
+      ctx.globalAlpha = 0.4 + 0.6 * around.k;
+      ctx.font = '700 12.5px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      if (around.progressive && around.progressive.words && around.progressive.words.length > 0 && dynamicLyricsEnabled && !liteModeEnabled) {
+        const words = around.progressive.words;
+        const fullText = around.progressive.fullText;
+        const fullW = ctx.measureText(fullText).width;
+
+        if (fullW <= contentW - 24) {
+          let curX = centerX - fullW / 2;
+          ctx.textAlign = 'left';
+          const spaceW = ctx.measureText(' ').width;
+
+          for (let i = 0; i < words.length; i++) {
+            const w = words[i];
+            const wWidth = ctx.measureText(w.text).width;
+            let wordLiftY = 0;
+            if (stageActive && lyricModeStageTarget === 'word') {
+              const frac = words.length > 1 ? i / (words.length - 1) : 0;
+              const localP = Math.max(0, Math.min(1, (stageElapsed - frac * 0.35) / 0.65));
+              wordLiftY = -Math.sin(localP * Math.PI) * 5.0;
+            }
+
+            if (w.isSung) {
+              ctx.fillStyle = '#ffffff';
+              ctx.fillText(w.text, curX, midY + push + wordLiftY);
+            } else if (w.isActive) {
+              const alpha = 0.38 + 0.62 * w.progress;
+              ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
+              ctx.fillText(w.text, curX, midY + push + wordLiftY);
+            } else {
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.32)';
+              ctx.fillText(w.text, curX, midY + push + wordLiftY);
+            }
+
+            curX += wWidth + spaceW;
+          }
+          ctx.textAlign = 'center';
+        } else {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(truncateToWidth(around.now, contentW - 24, ctx.font), centerX, midY + push);
+        }
+      } else {
+        const lineScaleDrop = (stageActive && lyricModeStageTarget === 'line') ? (1 - stageEase) * 4 : 0;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(truncateToWidth(around.now, contentW - 24, ctx.font), centerX, midY + push + lineScaleDrop);
+      }
+
+      if (around.next) {
+        ctx.globalAlpha = 0.38 * around.k;
+        ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(truncateToWidth(around.next, contentW - 24, ctx.font), centerX, midY + 16 + push);
+      }
+    } else if (track.lyrics && track.lyrics.length > 0) {
+      const curLine = track.currentLyric || track.lyrics[0];
+      ctx.font = '600 12px "Segoe UI Variable Display", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(truncateToWidth(curLine, contentW - 24, ctx.font), contentX + contentW / 2, lyricsY + lyricsH / 2);
+    } else if (hasTrack && track.lyricStatus === 'instrumental') {
+      ctx.font = '500 11px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Instrumental', contentX + contentW / 2, lyricsY + lyricsH / 2);
+    }
+    ctx.restore();
+  }
 
   // 3. Interactive Timeline Scrubber Bar with Elapsed & Remaining Time
   const posMs = getLiveMediaPositionMs();
   const durMs = Math.max(0, mediaState.duration_ms || 0);
   const ratio = durMs > 0 ? Math.max(0, Math.min(1, posMs / durMs)) : 0;
 
-  const timeY = lyricsY + lyricsH + 13;
+  const timeY = liveLyricsEnabled ? (lyricsY + lyricsH + 13) : (topY + 66);
   ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
   ctx.textBaseline = 'middle';
@@ -7913,7 +8273,7 @@ function renderMediaView(x, y, w, h) {
   const cH = 26;
   const cSpacing = 14;
   const startCX = contentX + (contentW - (3 * cW + 2 * cSpacing)) / 2;
-  const cY = timeY + 11;
+  const cY = timeY + 12;
 
   controls.forEach((c, idx) => {
     const cx = startCX + idx * (cW + cSpacing);
@@ -7933,7 +8293,7 @@ function renderMediaView(x, y, w, h) {
 
   // 4b. Vertical Music Player Volume Slider on the Right Side of the Media Island
   const volPillW = 24;
-  const volPillH = 190;
+  const volPillH = liveLyricsEnabled ? 154 : 98;
   const volCenterX = x + w - 24;
   const volPillX = volCenterX - volPillW / 2;
   const volPillY = topY + 2;
@@ -7941,7 +8301,6 @@ function renderMediaView(x, y, w, h) {
   const isMuteHovered = hoveredButtonId === 'media_volume_mute';
   const effectiveVol = isVolumeMuted ? 0 : currentVolume;
 
-  // Vertical capsule glass background
   ctx.save();
   ctx.beginPath();
   ctx.roundRect(volPillX, volPillY, volPillW, volPillH, volPillW / 2);
@@ -7951,14 +8310,12 @@ function renderMediaView(x, y, w, h) {
   ctx.fill();
   ctx.stroke();
 
-  // Top percentage badge inside capsule (colored with album accent on hover)
   ctx.font = '600 8px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = isVolHovered ? (albumAccentColor || '#38bdf8') : 'rgba(255, 255, 255, 0.65)';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(`${Math.round(effectiveVol * 100)}%`, volCenterX, volPillY + 13);
 
-  // Vertical Volume Track & Bottom-to-Top Fill
   const trackW = isVolHovered ? 6 : 4;
   const trackX = volCenterX - trackW / 2;
   const trackY = volPillY + 25;
@@ -7978,7 +8335,6 @@ function renderMediaView(x, y, w, h) {
     ctx.fill();
   }
 
-  // Circular thumb knob
   if (isVolHovered) {
     ctx.beginPath();
     ctx.arc(volCenterX, volFillY, 5.5, 0, Math.PI * 2);
@@ -7990,7 +8346,6 @@ function renderMediaView(x, y, w, h) {
   }
   ctx.restore();
 
-  // Speaker Mute Icon at the bottom of the vertical capsule
   const speakerY = volPillY + volPillH - 13;
   drawVectorSpeakerIcon(
     volCenterX,
@@ -8017,101 +8372,6 @@ function renderMediaView(x, y, w, h) {
     w: volPillW + 6,
     h: trackH + 12
   });
-
-  // 5. Slowed + Reverb Playback Speed Chips & Lyric Sync Offset Row
-  const tuningY = cY + cH + 8;
-  const chipH = 19;
-  const curSpeed = mediaState.user_speed; // null = auto, or number
-  const curRate = mediaState.playback_rate || 1.0;
-  const curOffset = mediaState.lyric_offset_ms || 0;
-
-  // Speed chips on left: Auto, 0.8x, 0.85x, 0.9x, 1.0x
-  const speedChips = [
-    { label: 'Auto', val: 'auto', active: curSpeed === null },
-    { label: '0.8x', val: 0.8, active: curSpeed === 0.8 },
-    { label: '0.85x', val: 0.85, active: curSpeed === 0.85 },
-    { label: '0.9x', val: 0.9, active: curSpeed === 0.9 },
-    { label: '1.0x', val: 1.0, active: curSpeed === 1.0 }
-  ];
-
-  ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-  ctx.fillText('Speed:', contentX, tuningY + chipH / 2);
-  let chipX = contentX + 38;
-
-  speedChips.forEach((sc) => {
-    ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
-    const sW = ctx.measureText(sc.label).width + 12;
-    const isHov = hoveredButtonId === `media_speed_${sc.val}`;
-
-    ctx.beginPath();
-    ctx.roundRect(chipX, tuningY, sW, chipH, 9);
-    ctx.fillStyle = sc.active
-      ? (albumAccentColor || '#22c55e')
-      : (isHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)');
-    ctx.fill();
-
-    ctx.fillStyle = sc.active ? '#000000' : '#e4e4e7';
-    ctx.textAlign = 'center';
-    ctx.fillText(sc.label, chipX + sW / 2, tuningY + chipH / 2);
-
-    interactiveButtons.push({ id: `media_speed_${sc.val}`, data: sc.val, x: chipX, y: tuningY, w: sW, h: chipH });
-    chipX += sW + 5;
-  });
-
-  // Sync offset controls on right: [-0.5s], offset display, [+0.5s]
-  const offRightX = contentX + contentW;
-  const offBtnW = 38;
-  const plusX = offRightX - offBtnW;
-  const minusX = plusX - offBtnW - 4;
-
-  const isPlusHov = hoveredButtonId === 'media_offset_plus';
-  const isMinusHov = hoveredButtonId === 'media_offset_minus';
-
-  // [-0.5s]
-  ctx.beginPath();
-  ctx.roundRect(minusX, tuningY, offBtnW, chipH, 9);
-  ctx.fillStyle = isMinusHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)';
-  ctx.fill();
-  ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = '#cbd5e1';
-  ctx.textAlign = 'center';
-  ctx.fillText('-0.5s', minusX + offBtnW / 2, tuningY + chipH / 2);
-  interactiveButtons.push({ id: 'media_offset_minus', x: minusX, y: tuningY, w: offBtnW, h: chipH });
-
-  // [+0.5s]
-  ctx.beginPath();
-  ctx.roundRect(plusX, tuningY, offBtnW, chipH, 9);
-  ctx.fillStyle = isPlusHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)';
-  ctx.fill();
-  ctx.fillStyle = '#cbd5e1';
-  ctx.textAlign = 'center';
-  ctx.fillText('+0.5s', plusX + offBtnW / 2, tuningY + chipH / 2);
-  interactiveButtons.push({ id: 'media_offset_plus', x: plusX, y: tuningY, w: offBtnW, h: chipH });
-
-  // Offset status label or reset
-  if (curOffset !== 0) {
-    const rstW = 18;
-    const rstX = minusX - rstW - 4;
-    const isRstHov = hoveredButtonId === 'media_offset_reset';
-    ctx.beginPath();
-    ctx.roundRect(rstX, tuningY, rstW, chipH, 9);
-    ctx.fillStyle = isRstHov ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255, 255, 255, 0.06)';
-    ctx.fill();
-    ctx.font = '9px "Segoe UI Symbol", sans-serif';
-    ctx.fillStyle = '#ef4444';
-    ctx.textAlign = 'center';
-    ctx.fillText('↺', rstX + rstW / 2, tuningY + chipH / 2);
-    interactiveButtons.push({ id: 'media_offset_reset', x: rstX, y: tuningY, w: rstW, h: chipH });
-
-    const offText = `${curOffset > 0 ? '+' : ''}${(curOffset / 1000).toFixed(1)}s`;
-    ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = albumAccentColor || '#22c55e';
-    ctx.textAlign = 'right';
-    ctx.fillText(offText, rstX - 6, tuningY + chipH / 2);
-  }
 }
 
 // -------------------------------------------------------------

@@ -190,6 +190,13 @@ function registerSettingsIPC(dropZoneInstance, callbacks = {}) {
         }
       });
     }
+    if (newSettings && 'liveLyrics' in newSettings) {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) {
+          w.webContents.send('live-lyrics-toggled', { enabled: Boolean(newSettings.liveLyrics) });
+        }
+      });
+    }
     if (newSettings && 'albumColorGradient' in newSettings) {
       BrowserWindow.getAllWindows().forEach(w => {
         if (!w.isDestroyed()) {

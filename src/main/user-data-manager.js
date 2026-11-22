@@ -14,6 +14,7 @@ const DATA_DIR = process.platform === 'darwin'
   : path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'DynamicWindows');
 
 const CALENDAR_FILE = path.join(DATA_DIR, 'calendar_notes.json');
+const CALENDAR_CATS_FILE = path.join(DATA_DIR, 'calendar_categories.json');
 const TODOS_FILE = path.join(DATA_DIR, 'todos.json');
 const NOTES_FILE = path.join(DATA_DIR, 'notes.json');
 const CLOCK_FILE = path.join(DATA_DIR, 'clock_state.json');
@@ -86,6 +87,8 @@ class UserDataManager {
   constructor() {
     this.ensureDir();
     this.calendarNotes = safeReadJson(CALENDAR_FILE, []);
+    const loadedCats = safeReadJson(CALENDAR_CATS_FILE, ['General', 'Personal', 'Work']);
+    this.calendarCategories = Array.isArray(loadedCats) && loadedCats.length > 0 ? loadedCats : ['General', 'Personal', 'Work'];
     this.todos = safeReadJson(TODOS_FILE, DEFAULT_TODOS);
     this.notes = safeReadJson(NOTES_FILE, []);
     this.clockState = safeReadJson(CLOCK_FILE, DEFAULT_CLOCK);
@@ -106,12 +109,37 @@ class UserDataManager {
     return this.calendarNotes;
   }
 
+  getCalendarCategories() {
+    return this.calendarCategories;
+  }
+
+  addCalendarCategory(category) {
+    const clean = String(category || '').trim();
+    if (!clean) return false;
+    if (!this.calendarCategories.some(c => c.toLowerCase() === clean.toLowerCase())) {
+      this.calendarCategories.push(clean);
+      safeWriteJson(CALENDAR_CATS_FILE, this.calendarCategories);
+      return true;
+    }
+    return false;
+  }
+
   addCalendarNote(note) {
     if (!note || !note.text || !note.date) return null;
+    const cat = String(note.category || '').trim() || 'General';
+    const rawColor = String(note.color || '').trim();
+    const color = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(rawColor) ? rawColor : '#3b82f6';
+    if (!this.calendarCategories.some(c => c.toLowerCase() === cat.toLowerCase())) {
+      this.calendarCategories.push(cat);
+      safeWriteJson(CALENDAR_CATS_FILE, this.calendarCategories);
+    }
     const newNote = {
       id: `note_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
       date: String(note.date).slice(0, 10), // YYYY-MM-DD
       text: String(note.text).trim(),
+      description: String(note.description || '').trim(),
+      category: cat,
+      color,
       repeat: ['none', 'yearly', 'monthly', 'weekly', 'daily'].includes(note.repeat) ? note.repeat : 'none',
       isBirthday: Boolean(note.isBirthday || note.repeat === 'yearly'),
       createdAt: Date.now()
@@ -334,10 +362,20 @@ class UserDataManager {
   registerIpc(ipcMain, getMainWindow) {
     // Calendar IPC
     ipcMain.handle('calendar-get-notes', () => this.getCalendarNotes());
+    ipcMain.handle('calendar-get-categories', () => this.getCalendarCategories());
+    ipcMain.handle('calendar-add-category', (event, cat) => {
+      const ok = this.addCalendarCategory(cat);
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('calendar-categories-updated', this.getCalendarCategories());
+      return ok;
+    });
     ipcMain.handle('calendar-add-note', (event, note) => {
       const created = this.addCalendarNote(note);
       const win = getMainWindow();
-      if (win && !win.isDestroyed()) win.webContents.send('calendar-notes-updated', this.getCalendarNotes());
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('calendar-notes-updated', this.getCalendarNotes());
+        win.webContents.send('calendar-categories-updated', this.getCalendarCategories());
+      }
       return created;
     });
     ipcMain.handle('calendar-delete-note', (event, id) => {

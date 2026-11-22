@@ -42,6 +42,7 @@ pub fn default_config_map() -> Map<String, Value> {
         "reducedMotion": false,
         "displayMode": "island",
         "dynamicLyrics": true,
+        "liveLyrics": true,
         "albumColorGradient": true,
         "gameMode": true,
         "soundEffects": true,

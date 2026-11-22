@@ -99,12 +99,14 @@ fn basename_lower(p: &str) -> String {
 
 pub struct UserDataManager {
     calendar_file: PathBuf,
+    calendar_categories_file: PathBuf,
     todos_file: PathBuf,
     notes_file: PathBuf,
     clock_file: PathBuf,
     shelf_file: PathBuf,
 
     calendar_notes: Vec<Value>,
+    calendar_categories: Vec<String>,
     todos: Value,
     notes: Vec<Value>,
     clock_state: Value,
@@ -119,6 +121,7 @@ impl UserDataManager {
     pub fn with_dir(dir: PathBuf) -> Self {
         let _ = fs::create_dir_all(&dir);
         let calendar_file = dir.join("calendar_notes.json");
+        let calendar_categories_file = dir.join("calendar_categories.json");
         let todos_file = dir.join("todos.json");
         let notes_file = dir.join("notes.json");
         let clock_file = dir.join("clock_state.json");
@@ -128,6 +131,19 @@ impl UserDataManager {
             .as_array()
             .cloned()
             .unwrap_or_default();
+        let calendar_categories: Vec<String> = safe_read_json(
+            &calendar_categories_file,
+            json!(["General", "Personal", "Work"]),
+        )
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty())
+        .unwrap_or_else(|| vec!["General".into(), "Personal".into(), "Work".into()]);
         let todos = safe_read_json(&todos_file, default_todos());
         let notes = safe_read_json(&notes_file, json!([]))
             .as_array()
@@ -141,11 +157,13 @@ impl UserDataManager {
 
         Self {
             calendar_file,
+            calendar_categories_file,
             todos_file,
             notes_file,
             clock_file,
             shelf_file,
             calendar_notes,
+            calendar_categories,
             todos,
             notes,
             clock_state,
@@ -159,6 +177,32 @@ impl UserDataManager {
         Value::Array(self.calendar_notes.clone())
     }
 
+    pub fn get_calendar_categories(&self) -> Value {
+        Value::Array(
+            self.calendar_categories
+                .iter()
+                .map(|c| Value::String(c.clone()))
+                .collect(),
+        )
+    }
+
+    pub fn add_calendar_category(&mut self, category: &str) -> bool {
+        let clean = category.trim();
+        if clean.is_empty() {
+            return false;
+        }
+        if !self
+            .calendar_categories
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(clean))
+        {
+            self.calendar_categories.push(clean.to_string());
+            safe_write_json(&self.calendar_categories_file, &self.get_calendar_categories());
+            return true;
+        }
+        false
+    }
+
     pub fn add_calendar_note(&mut self, note: &Value) -> Value {
         let text = note
             .get("text")
@@ -169,6 +213,23 @@ impl UserDataManager {
         if text.is_empty() || date.is_empty() {
             return Value::Null;
         }
+        let description = note
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .unwrap_or("");
+        let category = note
+            .get("category")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("General");
+        let color = note
+            .get("color")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| s.starts_with('#') && (s.len() == 4 || s.len() == 7))
+            .unwrap_or("#3b82f6");
         let repeat_raw = note.get("repeat").and_then(|v| v.as_str()).unwrap_or("none");
         let repeat = match repeat_raw {
             "none" | "yearly" | "monthly" | "weekly" | "daily" => repeat_raw,
@@ -181,10 +242,22 @@ impl UserDataManager {
             || repeat == "yearly";
         let date_str: String = date.chars().take(10).collect();
 
+        if !self
+            .calendar_categories
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(category))
+        {
+            self.calendar_categories.push(category.to_string());
+            safe_write_json(&self.calendar_categories_file, &self.get_calendar_categories());
+        }
+
         let created = json!({
             "id": gen_id("note"),
             "date": date_str,
             "text": text,
+            "description": description,
+            "category": category,
+            "color": color,
             "repeat": repeat,
             "isBirthday": is_birthday,
             "createdAt": now_ms()
