@@ -47,17 +47,81 @@ const ISLAND_H: f64 = 420.0;
 
 // Shared lean Chromium arguments for both Island and Settings WebView2 instances
 // (identical args allow both windows to share a single WebContext / browser process).
-// Note: GPU DirectComposition and V8 JIT are kept enabled for transparency and low CPU.
+// Note: GPU DirectComposition, V8 JIT, and Web Speech API are kept enabled.
 const LOW_MEM_BROWSER_ARGS: &str = concat!(
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,Translate,BackForwardCache,MediaRouter,OptimizationHints,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,AutofillServerCommunication,HeavyAdIntervention,SpellCheck,PaintHolding ",
     "--enable-features=RemoveRedirectionBitmap ",
     "--disable-extensions --disable-sync --disable-background-networking ",
     "--disable-component-update --disable-default-apps --disable-domain-reliability ",
-    "--disable-client-side-phishing-detection --disable-speech-api --no-pings ",
+    "--disable-client-side-phishing-detection --no-pings ",
     "--no-first-run --no-default-browser-check ",
     "--renderer-process-limit=1 --disable-site-isolation-trials ",
     "--gpu-program-cache-size-kb=512 --disk-cache-size=1048576 --media-cache-size=1048576"
 );
+
+fn allow_webview_microphone(wv: &WebView) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+        COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+    };
+    use webview2_com::PermissionRequestedEventHandler;
+    unsafe {
+        if let Ok(core) = wv.controller().CoreWebView2() {
+            let mut token = 0i64;
+            let handler = PermissionRequestedEventHandler::create(Box::new(|_, args| {
+                if let Some(args) = args {
+                    let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                    if args.PermissionKind(&mut kind).is_ok()
+                        && kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                    {
+                        let _ = args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW);
+                    }
+                }
+                Ok(())
+            }));
+            let _ = core.add_PermissionRequested(&handler, &mut token);
+        }
+    }
+}
+
+fn run_native_speech_fallback(lang: &str) -> Value {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let safe_lang = match lang {
+        "id-ID" | "en-US" | "zh-CN" | "de-DE" | "es-ES" => lang,
+        _ => "en-US",
+    };
+    let ps = format!(
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
+         Add-Type -AssemblyName System.Speech; \
+         $installed = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers(); \
+         $match = $installed | Where-Object {{ $_.Culture.Name -ieq '{lang}' }} | Select-Object -First 1; \
+         if (-not $match) {{ $match = $installed | Select-Object -First 1 }}; \
+         if (-not $match) {{ Write-Output ''; exit 0 }}; \
+         $rec = New-Object System.Speech.Recognition.SpeechRecognitionEngine($match.Culture); \
+         $rec.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar)); \
+         $rec.SetInputToDefaultAudioDevice(); \
+         $rec.InitialSilenceTimeout = [TimeSpan]::FromSeconds(5); \
+         $rec.BabbleTimeout = [TimeSpan]::FromSeconds(4); \
+         $rec.EndSilenceTimeout = [TimeSpan]::FromMilliseconds(900); \
+         $res = $rec.Recognize([TimeSpan]::FromSeconds(9)); \
+         $rec.Dispose(); \
+         if ($res -and $res.Text) {{ Write-Output $res.Text }}",
+        lang = safe_lang
+    );
+    match Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &ps])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            json!({ "ok": !text.is_empty(), "text": text, "engine": "windows-sapi" })
+        }
+        Err(_) => json!({ "ok": false, "text": "", "engine": "windows-sapi" }),
+    }
+}
 
 fn spawn_lean<F: FnOnce() + Send + 'static>(name: &str, stack_kb: usize, f: F) {
     let _ = thread::Builder::new()
@@ -891,6 +955,24 @@ fn handle_ipc_message(
                 let md = state.user_data.lock().unwrap().get_shelf_metadata();
                 reply(md);
             }
+            "native-speech-recognize" => {
+                let lang = arg0
+                    .get("lang")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| arg0.as_str())
+                    .unwrap_or("en-US")
+                    .to_string();
+                let p = proxy.clone();
+                spawn_lean("dw-speech", 256, move || {
+                    let res = run_native_speech_fallback(&lang);
+                    let _ = p.send_event(UserEvent::ResolveInvoke {
+                        target: from,
+                        id: req_id,
+                        ok: true,
+                        payload: res,
+                    });
+                });
+            }
             _ => {
                 reply(Value::Null);
             }
@@ -1564,6 +1646,7 @@ fn main() {
         .with_devtools(cfg!(debug_assertions))
         .build(&island_window)
         .expect("Failed to initialize WebView2");
+    allow_webview_microphone(&island_webview);
     let _ = island_webview.set_memory_usage_level(MemoryUsageLevel::Low);
 
     // System Tray

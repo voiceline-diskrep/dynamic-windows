@@ -423,18 +423,39 @@ impl UserDataManager {
             .and_then(|v| v.as_str())
             .map(|s| s.trim())
             .unwrap_or("");
-        if clean_title.is_empty() && clean_body.is_empty() {
+        let html = payload
+            .get("html")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let font_family = payload
+            .get("fontFamily")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Sans");
+        let font_size = payload
+            .get("fontSize")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(13);
+        let allow_empty = payload
+            .get("allowEmpty")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !allow_empty && clean_title.is_empty() && clean_body.is_empty() && html.trim().is_empty() {
             return Value::Null;
         }
         let title: String = if !clean_title.is_empty() {
             clean_title.to_string()
-        } else {
+        } else if !clean_body.is_empty() {
             clean_body.chars().take(36).collect()
+        } else {
+            "Untitled Note".to_string()
         };
         let item = json!({
             "id": gen_id("note"),
             "title": title,
             "body": clean_body,
+            "html": html,
+            "fontFamily": font_family,
+            "fontSize": font_size,
             "updatedAt": now_ms()
         });
         self.notes.insert(0, item.clone());
@@ -454,12 +475,15 @@ impl UserDataManager {
             .and_then(|v| v.as_str())
             .map(|s| s.trim())
             .unwrap_or("");
+        let html_opt = payload.get("html").and_then(|v| v.as_str());
+        let font_family_opt = payload.get("fontFamily").and_then(|v| v.as_str());
+        let font_size_opt = payload.get("fontSize").and_then(|v| v.as_u64());
         let title: String = if !clean_title.is_empty() {
             clean_title.to_string()
         } else if !clean_body.is_empty() {
             clean_body.chars().take(36).collect()
         } else {
-            "Untitled".to_string()
+            "Untitled Note".to_string()
         };
 
         for n in self.notes.iter_mut() {
@@ -467,6 +491,15 @@ impl UserDataManager {
                 if let Some(obj) = n.as_object_mut() {
                     obj.insert("title".to_string(), Value::String(title));
                     obj.insert("body".to_string(), Value::String(clean_body.to_string()));
+                    if let Some(h) = html_opt {
+                        obj.insert("html".to_string(), Value::String(h.to_string()));
+                    }
+                    if let Some(ff) = font_family_opt {
+                        obj.insert("fontFamily".to_string(), Value::String(ff.to_string()));
+                    }
+                    if let Some(fs) = font_size_opt {
+                        obj.insert("fontSize".to_string(), json!(fs));
+                    }
                     obj.insert("updatedAt".to_string(), json!(now_ms()));
                 }
                 let updated = n.clone();

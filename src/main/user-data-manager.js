@@ -272,14 +272,18 @@ class UserDataManager {
     return Array.isArray(this.notes) ? this.notes : [];
   }
 
-  addNote({ title, body }) {
+  addNote({ title, body, html = '', fontFamily = 'Sans', fontSize = 13, allowEmpty = false }) {
     const cleanTitle = String(title || '').trim();
     const cleanBody = String(body || '').trim();
-    if (!cleanTitle && !cleanBody) return null;
+    const cleanHtml = String(html || '');
+    if (!allowEmpty && !cleanTitle && !cleanBody && !cleanHtml.trim()) return null;
     const item = {
       id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      title: cleanTitle || cleanBody.slice(0, 36),
+      title: cleanTitle || cleanBody.slice(0, 36) || 'Untitled Note',
       body: cleanBody,
+      html: cleanHtml,
+      fontFamily: String(fontFamily || 'Sans'),
+      fontSize: Number(fontSize) || 13,
       updatedAt: Date.now()
     };
     this.notes.unshift(item);
@@ -287,15 +291,18 @@ class UserDataManager {
     return item;
   }
 
-  updateNote(id, { title, body }) {
+  updateNote(id, { title, body, html, fontFamily, fontSize }) {
     const idx = this.notes.findIndex(n => n.id === id);
     if (idx === -1) return null;
     const cleanTitle = String(title || '').trim();
     const cleanBody = String(body || '').trim();
     this.notes[idx] = {
       ...this.notes[idx],
-      title: cleanTitle || cleanBody.slice(0, 36) || 'Untitled',
+      title: cleanTitle || cleanBody.slice(0, 36) || 'Untitled Note',
       body: cleanBody,
+      ...(html !== undefined ? { html: String(html) } : {}),
+      ...(fontFamily !== undefined ? { fontFamily: String(fontFamily) } : {}),
+      ...(fontSize !== undefined ? { fontSize: Number(fontSize) || 13 } : {}),
       updatedAt: Date.now()
     };
     safeWriteJson(NOTES_FILE, this.notes);

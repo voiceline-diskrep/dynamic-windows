@@ -431,7 +431,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dynamic-windows"
-version = "2.1.3"
+version = "2.2.0"
 dependencies = [
  "base64",
  "global-hotkey",
@@ -443,6 +443,7 @@ dependencies = [
  "tiny_http",
  "tray-icon",
  "ureq",
+ "webview2-com",
  "windows 0.58.0",
  "windows-core 0.58.0",
  "wry",

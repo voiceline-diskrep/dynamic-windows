@@ -93,12 +93,12 @@ test('TabAnimationEngine: sliding pill indicator step and fluid stretch', () => 
 });
 
 test('TabAnimationEngine: target expanded heights for distinct views', () => {
-  assert.strictEqual(getTargetExpandedHeight('home'), 164);
+  assert.strictEqual(getTargetExpandedHeight('home'), 152);
   assert.strictEqual(getTargetExpandedHeight('calendar'), 330);
   assert.strictEqual(getTargetExpandedHeight('clock'), 260);
   assert.strictEqual(getTargetExpandedHeight('clock', { activeAlarmRinging: true }), 280);
   assert.strictEqual(getTargetExpandedHeight('clock', { clockSubMode: 'alarm', alarmsCount: 2 }), 290);
-  assert.strictEqual(getTargetExpandedHeight('todo'), 320);
+  assert.strictEqual(getTargetExpandedHeight('todo'), 342);
   assert.strictEqual(getTargetExpandedHeight('notifications'), 260);
   assert.strictEqual(getTargetExpandedHeight('media'), 216);
   assert.strictEqual(getTargetExpandedHeight('media', { liveLyricsEnabled: false }), 156);

@@ -128,9 +128,11 @@ function showInlineModal(title, placeholder, extraChips, callback, options = {})
   const modalColors = document.getElementById('inline-modal-colors');
   const btnCancel = document.getElementById('inline-modal-cancel');
   const btnSubmit = document.getElementById('inline-modal-submit');
+  const btnMic = document.getElementById('inline-modal-mic-btn');
 
   if (!modal || !modalInput) return;
 
+  hideNotesDocOverlay();
   isInlineModalOpen = true;
   isHovered = true;
   if (leaveTimer) {
@@ -145,7 +147,35 @@ function showInlineModal(title, placeholder, extraChips, callback, options = {})
   inlineModalSelectedChip = (extraChips && extraChips[0]) ? extraChips[0].id : null;
 
   let selectedCategory = (Array.isArray(options.categories) && options.categories[0]) ? options.categories[0] : 'General';
-  let selectedColor = options.defaultColor || '#3b82f6';
+  let selectedColor = options.defaultColor || '#ff453a';
+
+  if (btnMic) {
+    if (options.enableVoice) {
+      btnMic.style.display = 'inline-flex';
+      btnMic.classList.remove('listening');
+      btnMic.onclick = (e) => {
+        e.stopPropagation();
+        if (voiceSessionTarget === 'modal') {
+          stopVoiceRecognition();
+        } else {
+          startVoiceRecognition('modal', {
+            onInterim: (txt) => {
+              modalInput.value = txt;
+            },
+            onFinal: (txt) => {
+              if (txt && txt.trim()) {
+                modalInput.value = txt.trim();
+                modalInput.focus();
+              }
+            }
+          });
+        }
+      };
+    } else {
+      btnMic.style.display = 'none';
+      btnMic.onclick = null;
+    }
+  }
 
   if (modalDesc) {
     if (options.descriptionPlaceholder) {
@@ -311,6 +341,9 @@ function showInlineModal(title, placeholder, extraChips, callback, options = {})
 }
 
 function hideInlineModal() {
+  if (voiceSessionTarget === 'modal') {
+    stopVoiceRecognition();
+  }
   isInlineModalOpen = false;
   const modal = document.getElementById('inline-modal');
   const backdrop = document.getElementById('inline-modal-backdrop');
@@ -319,7 +352,7 @@ function hideInlineModal() {
   inlineModalCallback = null;
   inlineModalSelectedChip = null;
   setTimeout(() => {
-    if (!isHovered && !isInlineModalOpen) {
+    if (!isHovered && !isInlineModalOpen && !isNotesEditorFocused()) {
       setIgnoreMouseEventsCached(true, { forward: true });
     }
   }, 100);
@@ -584,10 +617,11 @@ const UI = {
   ACTIVE_BAR_H: 36,
 
   EXPANDED_W: 616,
-  HOME_H: 164,
+  HOME_EXPANDED_W: 516,
+  HOME_H: 152,
   CALENDAR_H: 330,
   CLOCK_H: 260,
-  TODO_H: 320,
+  TODO_H: 342,
   NOTIF_H: 260,
   AGENT_H: 196,
   CALL_H: 206,
@@ -617,6 +651,7 @@ let navIndicatorX = null;
 let navIndicatorW = null;
 let isNavPillAnimating = false;
 let currentExpandedH = UI.HOME_H;
+let currentExpandedW = UI.HOME_EXPANDED_W;
 let currentDt = 0.016;
 let clock24h = false;
 let showSeconds = false;
@@ -717,6 +752,13 @@ function computeCapsuleHideTransform({
 
 function switchTab(newView) {
   if (!newView || newView === currentView) return;
+  if (currentView === 'todo') {
+    if (notesSubMode === 'notes' && typeof persistActiveNoteNow === 'function') {
+      persistActiveNoteNow();
+    }
+    if (typeof hideNotesDocOverlay === 'function') hideNotesDocOverlay();
+    if (voiceSessionTarget) stopVoiceRecognition();
+  }
   tabTransitionDirection = getTabSwitchDirection(currentView, newView);
   previousView = currentView;
   currentView = newView;
@@ -862,12 +904,633 @@ try {
 
 // Notes & To-Do State
 let notesSubMode = 'notes'; // 'notes' | 'todo'
+let notesSubPillX = null;
+let notesSubPillW = null;
+let isNotesSubPillAnimating = false;
+let notesSubAnimStart = 0;
+let notesSubAnimDir = 1;
 let notesList = [];
+let selectedNoteId = null;
+let notesListScrollOffset = 0;
+
 let todoData = {
   categories: ['Personal', 'Work', 'Island'],
   tasks: []
 };
 let todoSelectedCategory = 'All';
+let todoCatPillX = null;
+let todoCatPillW = null;
+let isTodoCatPillAnimating = false;
+let todoCatAnimStart = 0;
+let todoCatAnimDir = 1;
+
+// Multi-Language Voice Dictation & Voice-to-Task Engine (EN, ID, ZH, DE, ES)
+const VOICE_LANGUAGES = [
+  { code: 'en-US', short: 'EN', label: 'English' },
+  { code: 'id-ID', short: 'ID', label: 'Indonesia' },
+  { code: 'zh-CN', short: 'ZH', label: 'Chinese' },
+  { code: 'de-DE', short: 'DE', label: 'German' },
+  { code: 'es-ES', short: 'ES', label: 'Spanish' }
+];
+let voiceLangCode = 'en-US';
+try {
+  const savedVoiceLang = localStorage.getItem('dw_voice_lang');
+  if (savedVoiceLang && VOICE_LANGUAGES.some(l => l.code === savedVoiceLang)) {
+    voiceLangCode = savedVoiceLang;
+  }
+} catch (e) {}
+
+let activeSpeechRec = null;
+let voiceSessionTarget = null; // null | 'notes' | 'todo' | 'modal'
+let voiceInterimText = '';
+let todoVoiceToastText = '';
+let todoVoiceToastUntil = 0;
+let notesSaveTimer = null;
+let notesDocBounds = null;
+
+function getVoiceLangMeta(code = voiceLangCode) {
+  return VOICE_LANGUAGES.find(l => l.code === code) || VOICE_LANGUAGES[0];
+}
+
+function setVoiceLanguage(code) {
+  if (!VOICE_LANGUAGES.some(l => l.code === code)) return;
+  voiceLangCode = code;
+  try { localStorage.setItem('dw_voice_lang', code); } catch (e) {}
+  const sel = document.getElementById('doc-voice-lang');
+  if (sel && sel.value !== code) sel.value = code;
+  if (typeof requestFrame === 'function') requestFrame();
+}
+
+function cycleVoiceLanguage() {
+  const idx = VOICE_LANGUAGES.findIndex(l => l.code === voiceLangCode);
+  const next = VOICE_LANGUAGES[(idx + 1) % VOICE_LANGUAGES.length];
+  setVoiceLanguage(next.code);
+}
+
+function isNotesEditorFocused() {
+  if (typeof document === 'undefined') return false;
+  const pane = document.getElementById('notes-doc-pane');
+  if (!pane || pane.style.display === 'none') return false;
+  const active = document.activeElement;
+  return Boolean(active && pane.contains(active));
+}
+
+function updateNotesVoiceUi(listening, statusText = '') {
+  const btn = document.getElementById('doc-voice-btn');
+  const bar = document.getElementById('notes-voice-bar');
+  const statusEl = document.getElementById('notes-voice-status');
+  if (btn) btn.classList.toggle('listening', Boolean(listening));
+  if (bar) bar.style.display = (listening || statusText) ? 'flex' : 'none';
+  if (statusEl && statusText) statusEl.textContent = statusText;
+}
+
+function stopVoiceRecognition() {
+  const prevTarget = voiceSessionTarget;
+  voiceSessionTarget = null;
+  voiceInterimText = '';
+  if (activeSpeechRec) {
+    try { activeSpeechRec.onend = null; activeSpeechRec.onerror = null; activeSpeechRec.stop(); } catch (e) {}
+    activeSpeechRec = null;
+  }
+  updateNotesVoiceUi(false, '');
+  const modalMic = document.getElementById('inline-modal-mic-btn');
+  if (modalMic) modalMic.classList.remove('listening');
+  if (prevTarget && typeof requestFrame === 'function') requestFrame();
+}
+
+function runNativeSpeechFallbackForTarget(target, handlers = {}) {
+  const meta = getVoiceLangMeta(voiceLangCode);
+  voiceInterimText = `Listening (${meta.short})...`;
+  if (target === 'notes') updateNotesVoiceUi(true, `Listening (${meta.label})...`);
+  if (typeof requestFrame === 'function') requestFrame();
+
+  ipcRenderer.invoke('native-speech-recognize', { lang: voiceLangCode }).then(res => {
+    if (voiceSessionTarget !== target) return;
+    const txt = (res && res.text) ? String(res.text).trim() : '';
+    stopVoiceRecognition();
+    if (txt) {
+      if (handlers.onFinal) handlers.onFinal(txt);
+    } else if (target === 'todo') {
+      todoVoiceToastText = 'No speech detected';
+      todoVoiceToastUntil = performance.now() + 2000;
+      requestFrame();
+    } else if (target === 'notes') {
+      updateNotesVoiceUi(false, 'No speech detected');
+      setTimeout(() => { if (!voiceSessionTarget) updateNotesVoiceUi(false, ''); }, 2000);
+    }
+  }).catch(() => {
+    stopVoiceRecognition();
+  });
+}
+
+function startVoiceRecognition(target, handlers = {}) {
+  stopVoiceRecognition();
+  voiceSessionTarget = target;
+  const meta = getVoiceLangMeta(voiceLangCode);
+  voiceInterimText = `Listening (${meta.short})...`;
+
+  if (target === 'notes') updateNotesVoiceUi(true, `Listening (${meta.label})...`);
+  if (target === 'modal') {
+    const modalMic = document.getElementById('inline-modal-mic-btn');
+    if (modalMic) modalMic.classList.add('listening');
+  }
+  if (typeof requestFrame === 'function') requestFrame();
+
+  const SpeechRec = (typeof window !== 'undefined') && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  if (!SpeechRec) {
+    runNativeSpeechFallbackForTarget(target, handlers);
+    return;
+  }
+
+  try {
+    const rec = new SpeechRec();
+    rec.lang = voiceLangCode;
+    rec.interimResults = true;
+    rec.continuous = (target === 'notes');
+    rec.maxAlternatives = 1;
+    activeSpeechRec = rec;
+
+    let gotResult = false;
+    let fellBack = false;
+
+    rec.onresult = (event) => {
+      if (voiceSessionTarget !== target) return;
+      let interim = '';
+      let finalChunk = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0] ? event.results[i][0].transcript : '';
+        if (event.results[i].isFinal) {
+          finalChunk += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+      if (interim) {
+        voiceInterimText = interim.trim();
+        if (target === 'notes') updateNotesVoiceUi(true, `${meta.short}: ${voiceInterimText}`);
+        if (handlers.onInterim) handlers.onInterim(voiceInterimText);
+        if (typeof requestFrame === 'function') requestFrame();
+      }
+      if (finalChunk && finalChunk.trim()) {
+        gotResult = true;
+        voiceInterimText = '';
+        if (handlers.onFinal) handlers.onFinal(finalChunk.trim());
+        if (target !== 'notes') {
+          stopVoiceRecognition();
+        } else {
+          updateNotesVoiceUi(true, `Listening (${meta.label})...`);
+        }
+      }
+    };
+
+    rec.onerror = (ev) => {
+      const errCode = ev && ev.error ? ev.error : 'unknown';
+      if ((errCode === 'network' || errCode === 'service-not-allowed' || errCode === 'language-not-supported') && !fellBack) {
+        fellBack = true;
+        try { rec.onend = null; rec.stop(); } catch (e) {}
+        activeSpeechRec = null;
+        runNativeSpeechFallbackForTarget(target, handlers);
+        return;
+      }
+      if (voiceSessionTarget === target) {
+        stopVoiceRecognition();
+        if (target === 'todo') {
+          todoVoiceToastText = errCode === 'not-allowed' ? 'Mic permission denied' : 'Voice stopped';
+          todoVoiceToastUntil = performance.now() + 2000;
+          requestFrame();
+        }
+      }
+    };
+
+    rec.onend = () => {
+      if (fellBack) return;
+      if (voiceSessionTarget === target) {
+        if (target === 'notes') {
+          // Keep continuous dictation alive until user clicks mic again
+          try {
+            rec.start();
+          } catch (e) {
+            stopVoiceRecognition();
+          }
+        } else {
+          if (!gotResult && target === 'todo') {
+            todoVoiceToastText = 'No speech detected';
+            todoVoiceToastUntil = performance.now() + 1800;
+          }
+          stopVoiceRecognition();
+        }
+      }
+    };
+
+    rec.start();
+  } catch (e) {
+    runNativeSpeechFallbackForTarget(target, handlers);
+  }
+}
+
+// Embedded Google-Docs Style Notes Editor Controller (Right 2/3 of Notes View)
+const DOC_FONT_STACKS = {
+  Sans: '"Segoe UI Variable Text", Inter, -apple-system, sans-serif',
+  Theater: '"Theater", "Segoe UI Variable Text", sans-serif',
+  Serif: 'Georgia, "Times New Roman", serif',
+  Mono: '"Cascadia Code", Consolas, monospace',
+  Rounded: '"Trebuchet MS", "Segoe UI Variable Text", sans-serif'
+};
+
+function sanitizeNoteHtml(raw) {
+  return String(raw || '').replace(/<script[\s\S]*?<\/script>/gi, '');
+}
+
+function getNotePlainTextFromBodyEl(bodyEl) {
+  if (!bodyEl) return '';
+  return (bodyEl.innerText || bodyEl.textContent || '').replace(/\u200B/g, '').trim();
+}
+
+function persistActiveNoteNow() {
+  if (!selectedNoteId) return;
+  const titleEl = document.getElementById('notes-doc-title');
+  const bodyEl = document.getElementById('notes-doc-body');
+  const fontSel = document.getElementById('doc-font');
+  const sizeSel = document.getElementById('doc-size');
+  if (!titleEl || !bodyEl) return;
+
+  // Sync checkbox checked attributes into DOM before reading innerHTML
+  bodyEl.querySelectorAll('.doc-check-item input[type="checkbox"]').forEach(cb => {
+    if (cb.checked) cb.setAttribute('checked', 'checked');
+    else cb.removeAttribute('checked');
+  });
+
+  const title = titleEl.value.trim() || 'Untitled Note';
+  const body = getNotePlainTextFromBodyEl(bodyEl);
+  const html = bodyEl.innerHTML;
+  const fontFamily = fontSel ? fontSel.value : 'Sans';
+  const fontSize = sizeSel ? Number(sizeSel.value) || 13 : 13;
+
+  // Optimistic local mirror so left 1/3 list reflects edits immediately
+  const localNote = (notesList || []).find(n => n.id === selectedNoteId);
+  if (localNote) {
+    localNote.title = title;
+    localNote.body = body;
+    localNote.html = html;
+    localNote.fontFamily = fontFamily;
+    localNote.fontSize = fontSize;
+  }
+
+  ipcRenderer.invoke('notes-update', {
+    id: selectedNoteId,
+    title,
+    body,
+    html,
+    fontFamily,
+    fontSize
+  });
+  if (typeof requestFrame === 'function') requestFrame();
+}
+
+function scheduleActiveNoteSave() {
+  if (notesSaveTimer) clearTimeout(notesSaveTimer);
+  notesSaveTimer = setTimeout(() => {
+    notesSaveTimer = null;
+    persistActiveNoteNow();
+  }, 320);
+}
+
+function applyDocTypography(fontKey, sizePx) {
+  const bodyEl = document.getElementById('notes-doc-body');
+  const titleEl = document.getElementById('notes-doc-title');
+  const stack = DOC_FONT_STACKS[fontKey] || DOC_FONT_STACKS.Sans;
+  if (bodyEl) {
+    bodyEl.style.fontFamily = stack;
+    bodyEl.style.fontSize = `${Number(sizePx) || 13}px`;
+  }
+  if (titleEl) {
+    titleEl.style.fontFamily = stack;
+  }
+}
+
+function bindChecklistRows(bodyEl) {
+  if (!bodyEl) return;
+  bodyEl.querySelectorAll('.doc-check-item').forEach(row => {
+    const cb = row.querySelector('input[type="checkbox"]');
+    if (!cb || cb.dataset.dwBound) return;
+    cb.dataset.dwBound = '1';
+    row.classList.toggle('checked', Boolean(cb.checked));
+    cb.addEventListener('change', () => {
+      row.classList.toggle('checked', Boolean(cb.checked));
+      if (cb.checked) cb.setAttribute('checked', 'checked');
+      else cb.removeAttribute('checked');
+      soundFX.play('tap');
+      scheduleActiveNoteSave();
+    });
+  });
+}
+
+function insertChecklistRow(afterRow = null) {
+  const bodyEl = document.getElementById('notes-doc-body');
+  if (!bodyEl) return;
+  const row = document.createElement('div');
+  row.className = 'doc-check-item';
+  row.setAttribute('contenteditable', 'false');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  const span = document.createElement('span');
+  span.className = 'doc-check-text';
+  span.setAttribute('contenteditable', 'true');
+  span.innerHTML = '&#8203;';
+  row.appendChild(cb);
+  row.appendChild(span);
+
+  if (afterRow && afterRow.parentNode === bodyEl) {
+    afterRow.insertAdjacentElement('afterend', row);
+  } else {
+    bodyEl.appendChild(row);
+  }
+  bindChecklistRows(bodyEl);
+  const range = document.createRange();
+  range.selectNodeContents(span);
+  range.collapse(false);
+  const sel = window.getSelection();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  span.focus();
+  scheduleActiveNoteSave();
+}
+
+function appendDictatedTextToNote(text) {
+  const bodyEl = document.getElementById('notes-doc-body');
+  if (!bodyEl || !text) return;
+  bodyEl.focus();
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && bodyEl.contains(sel.anchorNode)) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const node = document.createTextNode(text + ' ');
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } else {
+    const cur = bodyEl.innerHTML;
+    const spacer = cur && !cur.endsWith(' ') && !cur.endsWith('>') ? ' ' : '';
+    bodyEl.insertAdjacentHTML('beforeend', `${spacer}${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')} `);
+  }
+  scheduleActiveNoteSave();
+}
+
+function selectNoteForEditor(noteId, focusTitle = false) {
+  const pane = document.getElementById('notes-doc-pane');
+  const editorWrap = document.getElementById('notes-doc-editor-wrap');
+  const toolbar = document.getElementById('notes-doc-toolbar');
+  const emptyEl = document.getElementById('notes-doc-empty');
+  const titleEl = document.getElementById('notes-doc-title');
+  const bodyEl = document.getElementById('notes-doc-body');
+  const fontSel = document.getElementById('doc-font');
+  const sizeSel = document.getElementById('doc-size');
+
+  selectedNoteId = noteId || null;
+  const note = (notesList || []).find(n => n.id === selectedNoteId) || null;
+  if (!pane || !editorWrap || !emptyEl || !titleEl || !bodyEl) return;
+
+  if (!note) {
+    if (toolbar) toolbar.style.display = 'none';
+    editorWrap.style.display = 'none';
+    emptyEl.style.display = 'flex';
+    return;
+  }
+
+  if (toolbar) toolbar.style.display = 'flex';
+  editorWrap.style.display = 'flex';
+  emptyEl.style.display = 'none';
+
+  titleEl.value = note.title === 'Untitled Note' && !note.body && !note.html ? '' : (note.title || '');
+  if (note.html && note.html.trim()) {
+    bodyEl.innerHTML = sanitizeNoteHtml(note.html);
+  } else if (note.body) {
+    bodyEl.textContent = note.body;
+  } else {
+    bodyEl.innerHTML = '';
+  }
+  bindChecklistRows(bodyEl);
+
+  const fontKey = note.fontFamily || 'Sans';
+  const sizePx = Number(note.fontSize) || 13;
+  if (fontSel) fontSel.value = DOC_FONT_STACKS[fontKey] ? fontKey : 'Sans';
+  if (sizeSel) sizeSel.value = String(sizePx);
+  applyDocTypography(fontKey, sizePx);
+
+  if (focusTitle) {
+    setTimeout(() => { titleEl.focus(); }, 30);
+  }
+}
+
+function createNewRichNote() {
+  ipcRenderer.invoke('notes-add', {
+    title: 'Untitled Note',
+    body: '',
+    html: '',
+    fontFamily: 'Sans',
+    fontSize: 13,
+    allowEmpty: true
+  }).then(created => {
+    if (created && created.id) {
+      if (!notesList.some(n => n.id === created.id)) {
+        notesList = [created, ...notesList];
+      }
+      selectNoteForEditor(created.id, true);
+      requestFrame();
+    }
+  });
+}
+
+function hideNotesDocOverlay() {
+  if (voiceSessionTarget === 'notes') stopVoiceRecognition();
+  const pane = document.getElementById('notes-doc-pane');
+  if (pane && pane.style.display !== 'none') {
+    pane.style.display = 'none';
+    notesDocBounds = null;
+  }
+}
+
+function syncNotesDocOverlay(rx, ry, rw, rh) {
+  const pane = document.getElementById('notes-doc-pane');
+  if (!pane) return;
+  const shouldShow = (
+    currentView === 'todo' &&
+    notesSubMode === 'notes' &&
+    animProgress > 0.88 &&
+    targetProgress >= 0.5 &&
+    !isInlineModalOpen &&
+    !(gameModeEnabled && isGameModeFullscreen && !gameModeOpenedAnyway)
+  );
+  if (!shouldShow) {
+    hideNotesDocOverlay();
+    return;
+  }
+
+  // Ensure a note is auto-selected if notes exist
+  if ((!selectedNoteId || !(notesList || []).some(n => n.id === selectedNoteId)) && notesList.length > 0) {
+    selectNoteForEditor(notesList[0].id, false);
+  } else if (notesList.length === 0) {
+    selectNoteForEditor(null, false);
+  }
+
+  const nextLeft = `${Math.round(rx)}px`;
+  const nextTop = `${Math.round(ry)}px`;
+  const nextW = `${Math.round(rw)}px`;
+  const nextH = `${Math.round(rh)}px`;
+  if (pane.style.display !== 'flex') pane.style.display = 'flex';
+  if (pane.style.left !== nextLeft) pane.style.left = nextLeft;
+  if (pane.style.top !== nextTop) pane.style.top = nextTop;
+  if (pane.style.width !== nextW) pane.style.width = nextW;
+  if (pane.style.height !== nextH) pane.style.height = nextH;
+  notesDocBounds = { x: rx, y: ry, w: rw, h: rh };
+}
+
+(function initNotesDocEditor() {
+  if (typeof document === 'undefined') return;
+  const pane = document.getElementById('notes-doc-pane');
+  const titleEl = document.getElementById('notes-doc-title');
+  const bodyEl = document.getElementById('notes-doc-body');
+  const fontSel = document.getElementById('doc-font');
+  const sizeSel = document.getElementById('doc-size');
+  const blockSel = document.getElementById('doc-block');
+  const bulletBtn = document.getElementById('doc-bullet-btn');
+  const checklistBtn = document.getElementById('doc-checklist-btn');
+  const voiceLangSel = document.getElementById('doc-voice-lang');
+  const voiceBtn = document.getElementById('doc-voice-btn');
+  const emptyBtn = document.getElementById('notes-doc-empty-btn');
+  if (!pane || !titleEl || !bodyEl) return;
+
+  if (voiceLangSel) {
+    voiceLangSel.value = voiceLangCode;
+    voiceLangSel.addEventListener('change', () => {
+      setVoiceLanguage(voiceLangSel.value);
+      if (voiceSessionTarget === 'notes') {
+        startVoiceRecognition('notes', { onFinal: appendDictatedTextToNote });
+      }
+    });
+  }
+
+  // Keep island expanded and interactive while pointer is inside the embedded doc editor
+  pane.addEventListener('mouseenter', () => {
+    isHovered = true;
+    if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null; }
+    setIgnoreMouseEventsCached(false);
+  });
+
+  titleEl.addEventListener('input', scheduleActiveNoteSave);
+  bodyEl.addEventListener('input', scheduleActiveNoteSave);
+
+  bodyEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const sel = window.getSelection();
+      const anchor = sel && sel.anchorNode;
+      const el = anchor ? (anchor.nodeType === 3 ? anchor.parentElement : anchor) : null;
+      const checkRow = el && el.closest ? el.closest('.doc-check-item') : null;
+      if (checkRow) {
+        e.preventDefault();
+        const textSpan = checkRow.querySelector('.doc-check-text');
+        const txt = textSpan ? textSpan.textContent.replace(/\u200B/g, '').trim() : '';
+        if (!txt) {
+          // Exit checklist on empty Enter
+          const p = document.createElement('div');
+          p.innerHTML = '<br>';
+          checkRow.replaceWith(p);
+          const range = document.createRange();
+          range.setStart(p, 0);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          scheduleActiveNoteSave();
+        } else {
+          insertChecklistRow(checkRow);
+        }
+      }
+    }
+  });
+
+  if (fontSel) {
+    fontSel.addEventListener('change', () => {
+      applyDocTypography(fontSel.value, sizeSel ? sizeSel.value : 13);
+      scheduleActiveNoteSave();
+    });
+  }
+  if (sizeSel) {
+    sizeSel.addEventListener('change', () => {
+      applyDocTypography(fontSel ? fontSel.value : 'Sans', sizeSel.value);
+      scheduleActiveNoteSave();
+    });
+  }
+  if (blockSel) {
+    blockSel.addEventListener('change', () => {
+      bodyEl.focus();
+      try {
+        document.execCommand('formatBlock', false, `<${blockSel.value}>`);
+      } catch (e) {}
+      scheduleActiveNoteSave();
+    });
+  }
+
+  pane.querySelectorAll('.doc-tool-btn[data-cmd]').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      bodyEl.focus();
+      try { document.execCommand(btn.dataset.cmd, false, null); } catch (err) {}
+      soundFX.play('tap');
+      scheduleActiveNoteSave();
+    });
+  });
+
+  if (bulletBtn) {
+    bulletBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      bodyEl.focus();
+      try { document.execCommand('insertUnorderedList', false, null); } catch (err) {}
+      soundFX.play('tap');
+      scheduleActiveNoteSave();
+    });
+  }
+
+  if (checklistBtn) {
+    checklistBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      insertChecklistRow();
+      soundFX.play('tap');
+    });
+  }
+
+  if (voiceBtn) {
+    voiceBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (voiceSessionTarget === 'notes') {
+        stopVoiceRecognition();
+      } else {
+        soundFX.play('switch');
+        startVoiceRecognition('notes', { onFinal: appendDictatedTextToNote });
+      }
+    });
+  }
+
+  if (emptyBtn) {
+    emptyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      soundFX.play('tap');
+      createNewRichNote();
+    });
+  }
+
+  document.addEventListener('selectionchange', () => {
+    if (!isNotesEditorFocused()) return;
+    pane.querySelectorAll('.doc-tool-btn[data-cmd]').forEach(btn => {
+      try {
+        btn.classList.toggle('active', document.queryCommandState(btn.dataset.cmd));
+      } catch (e) {}
+    });
+  });
+})();
 
 // Custom Vector Symbol Renderer (zero emojis — pure Canvas 2D geometry)
 function drawVectorSymbol(c, type, cx, cy, size = 12, color = '#e4e4e7') {
@@ -2053,9 +2716,10 @@ canvas.addEventListener('mousemove', (e) => {
         dismissSongAnnouncement();
         requestFrame();
       }
-      if (isHovered && !leaveTimer && !isInlineModalOpen) {
+      if (isHovered && !leaveTimer && !isInlineModalOpen && !isNotesEditorFocused() && !voiceSessionTarget) {
         leaveTimer = setTimeout(() => {
-          if (isInlineModalOpen) return;
+          if (isInlineModalOpen || isNotesEditorFocused() || voiceSessionTarget) return;
+          hideNotesDocOverlay();
           isHovered = false;
           targetProgress = 0.0;
           currentView = 'home';
@@ -2068,7 +2732,7 @@ canvas.addEventListener('mousemove', (e) => {
           leaveTimer = null;
           requestFrame();
           setTimeout(() => {
-            if (!isHovered && !isInlineModalOpen) {
+            if (!isHovered && !isInlineModalOpen && !isNotesEditorFocused()) {
               setIgnoreMouseEventsCached(true, { forward: true });
             }
           }, 260);
@@ -2280,6 +2944,7 @@ canvas.addEventListener('click', (e) => {
     navIndicatorX = null;
     navIndicatorW = null;
     currentExpandedH = getTargetExpandedHeightForView(nextV);
+    currentExpandedW = getTargetExpandedWidthForView(nextV);
     isHovered = true;
     targetProgress = 1.0;
     setIgnoreMouseEventsCached(false);
@@ -2338,6 +3003,7 @@ canvas.addEventListener('click', (e) => {
     navIndicatorW = null;
     isNavPillAnimating = false;
     currentExpandedH = getTargetExpandedHeightForView(nextV);
+    currentExpandedW = getTargetExpandedWidthForView(nextV);
     targetProgress = 1.0;
     requestFrame();
   }
@@ -2575,43 +3241,96 @@ function handleButtonClick(id, data) {
   } else if (id === 'nav_todo') {
     switchTab('todo');
   } else if (id === 'notes_submode_notes') {
-    notesSubMode = 'notes';
-    soundFX.play('tap');
-  } else if (id === 'notes_submode_todo') {
-    notesSubMode = 'todo';
-    soundFX.play('tap');
-  } else if (id === 'notes_add_btn') {
-    showInlineModal('New Note', 'Write your note...', null, (noteText) => {
-      if (noteText && noteText.trim()) {
-        ipcRenderer.invoke('notes-add', { title: noteText.trim().slice(0, 40), body: noteText.trim() });
-      }
-    });
-  } else if (id && id.startsWith('notes_open_')) {
-    const targetNote = (notesList || []).find(n => n.id === data);
-    if (targetNote) {
-      showInlineModal('Edit Note', 'Update your note...', null, (noteText) => {
-        if (noteText && noteText.trim()) {
-          ipcRenderer.invoke('notes-update', { id: targetNote.id, title: noteText.trim().slice(0, 40), body: noteText.trim() });
-        }
-      });
-      if (inlineModalInputEl) {
-        inlineModalInputEl.value = targetNote.body || targetNote.title || '';
-      }
+    if (notesSubMode !== 'notes') {
+      if (voiceSessionTarget === 'todo') stopVoiceRecognition();
+      notesSubAnimDir = -1;
+      notesSubAnimStart = performance.now();
+      notesSubMode = 'notes';
+      soundFX.play('switch');
     }
+  } else if (id === 'notes_submode_todo') {
+    if (notesSubMode !== 'todo') {
+      persistActiveNoteNow();
+      hideNotesDocOverlay();
+      notesSubAnimDir = 1;
+      notesSubAnimStart = performance.now();
+      notesSubMode = 'todo';
+      soundFX.play('switch');
+    }
+  } else if (id === 'notes_add_btn') {
+    createNewRichNote();
+  } else if (id && id.startsWith('notes_open_')) {
+    if (selectedNoteId && selectedNoteId !== data) {
+      persistActiveNoteNow();
+    }
+    selectNoteForEditor(data, false);
+    soundFX.play('tap');
   } else if (id && id.startsWith('notes_del_')) {
-    ipcRenderer.invoke('notes-delete', data);
+    const deletingSelected = (selectedNoteId === data);
+    ipcRenderer.invoke('notes-delete', data).then(() => {
+      if (deletingSelected) {
+        const remaining = (notesList || []).filter(n => n.id !== data);
+        selectNoteForEditor(remaining[0] ? remaining[0].id : null, false);
+      }
+      requestFrame();
+    });
   } else if (id && id.startsWith('todo_cat_')) {
-    todoSelectedCategory = data;
+    if (todoSelectedCategory !== data) {
+      const allCats = ['All', ...(todoData.categories || [])];
+      const oldIdx = allCats.indexOf(todoSelectedCategory);
+      const newIdx = allCats.indexOf(data);
+      todoCatAnimDir = (newIdx >= oldIdx) ? 1 : -1;
+      todoCatAnimStart = performance.now();
+      todoSelectedCategory = data;
+      soundFX.play('tap');
+    }
   } else if (id === 'todo_add_category_btn') {
     showInlineModal('New Category', 'Category name (e.g. Projects, Fitness)', null, (catName) => {
       ipcRenderer.invoke('todo-add-category', catName).then(() => {
+        todoCatAnimDir = 1;
+        todoCatAnimStart = performance.now();
         todoSelectedCategory = catName;
+        requestFrame();
       });
     });
   } else if (id === 'todo_delete_category_btn') {
     if (todoSelectedCategory !== 'All') {
       ipcRenderer.invoke('todo-delete-category', todoSelectedCategory).then(() => {
+        todoCatAnimDir = -1;
+        todoCatAnimStart = performance.now();
         todoSelectedCategory = 'All';
+        todoCatPillX = null;
+        todoCatPillW = null;
+        requestFrame();
+      });
+    }
+  } else if (id === 'todo_voice_lang') {
+    cycleVoiceLanguage();
+    soundFX.play('tap');
+  } else if (id === 'todo_voice_task_btn') {
+    if (voiceSessionTarget === 'todo') {
+      stopVoiceRecognition();
+    } else {
+      const cats = todoData.categories || [];
+      const targetCat = (todoSelectedCategory !== 'All' && cats.includes(todoSelectedCategory))
+        ? todoSelectedCategory
+        : (cats[0] || 'Personal');
+      soundFX.play('switch');
+      startVoiceRecognition('todo', {
+        onFinal: (spoken) => {
+          const clean = String(spoken || '').trim();
+          if (!clean) return;
+          // Auto-create task immediately with zero confirmation dialog
+          const capitalized = clean.charAt(0).toUpperCase() + clean.slice(1);
+          ipcRenderer.invoke('todo-add-task', {
+            text: capitalized,
+            category: targetCat
+          });
+          todoVoiceToastText = `Added: ${capitalized}`;
+          todoVoiceToastUntil = performance.now() + 2600;
+          soundFX.play('switch');
+          requestFrame();
+        }
       });
     }
   } else if (id === 'todo_add_task_btn') {
@@ -2623,12 +3342,12 @@ function handleButtonClick(id, data) {
       { id: defaultCat, label: defaultCat },
       ...cats.filter(c => c.id !== defaultCat)
     ];
-    showInlineModal('Add To-Do Task', 'Task description...', sortedChips, (taskText, chosenCat) => {
+    showInlineModal('Add To-Do Task', 'Task description or tap mic...', sortedChips, (taskText, chosenCat) => {
       ipcRenderer.invoke('todo-add-task', {
         text: taskText,
         category: chosenCat || defaultCat
       });
-    });
+    }, { enableVoice: true });
   } else if (id && id.startsWith('todo_check_')) {
     ipcRenderer.invoke('todo-toggle-task', data);
   } else if (id && id.startsWith('todo_del_')) {
@@ -3197,6 +3916,7 @@ function computeDynamicActive(s) {
   if (Math.abs((s.targetHide || 0) - (s.hideProgress || 0)) > 0.002) return true;
   if (Math.abs((s.targetRestW || 0) - (s.currentRestingWidth || 0)) > 0.5) return true;
   if ((s.animProgress || 0) > 0.05 && Math.abs((s.targetExpH || 0) - (s.currentExpandedH || 0)) > 0.5) return true;
+  if ((s.animProgress || 0) > 0.05 && Math.abs((s.targetExpW || 0) - (s.currentExpandedW || 0)) > 0.5) return true;
   if (Math.abs((s.targetSongPopupProgress || 0) - (s.songPopupProgress || 0)) > 0.002) return true;
   if (Math.abs((s.wantTint || 0) - (s.tintK || 0)) > 0.004) return true;
 
@@ -3291,6 +4011,8 @@ function getDynamicStateSnapshot(nowMs) {
     currentRestingWidth,
     targetExpH: getTargetExpandedHeightForView(currentView),
     currentExpandedH,
+    targetExpW: getTargetExpandedWidthForView(currentView),
+    currentExpandedW,
     targetSongPopupProgress: (songPopupActiveUntil > now && animProgress < 0.2) ? 1.0 : 0.0,
     songPopupProgress,
     songPopupActiveUntil,
@@ -3304,6 +4026,12 @@ function getDynamicStateSnapshot(nowMs) {
     isNavPillAnimating: Boolean(
       isNavPillAnimating ||
       isCalDateAnimating ||
+      isNotesSubPillAnimating ||
+      isTodoCatPillAnimating ||
+      voiceSessionTarget === 'todo' ||
+      (todoVoiceToastUntil > nowMs) ||
+      (notesSubAnimStart > 0 && (nowMs - notesSubAnimStart) < 260) ||
+      (todoCatAnimStart > 0 && (nowMs - todoCatAnimStart) < 260) ||
       (calNotesAnimStart > 0 && (nowMs - calNotesAnimStart) < 280) ||
       (lyricModeStageAnimStart > 0 && (nowMs - lyricModeStageAnimStart) < 460)
     ),
@@ -3491,12 +4219,15 @@ function animate(now) {
     }
   }
 
-  // Liquid spring transition for expanded view height
+  // Liquid spring transition for expanded view height & width
   const targetExpH = getTargetExpandedHeightForView(currentView);
+  const targetExpW = getTargetExpandedWidthForView(currentView);
   if (reducedMotion || animProgress < 0.05) {
     currentExpandedH = targetExpH;
+    currentExpandedW = targetExpW;
   } else {
     currentExpandedH = computeLiquidHeightStep(currentExpandedH, targetExpH, dt, animSpeedMultiplier);
+    currentExpandedW = computeLiquidHeightStep(currentExpandedW, targetExpW, dt, animSpeedMultiplier);
   }
 
   // Send window size updates to Electron Main (only on bounds change)
@@ -3526,6 +4257,7 @@ function animate(now) {
       Math.abs((snap.targetHide || 0) - (snap.hideProgress || 0)) > 0.002 ||
       Math.abs((snap.targetRestW || 0) - (snap.currentRestingWidth || 0)) > 0.5 ||
       ((snap.animProgress || 0) > 0.05 && Math.abs((snap.targetExpH || 0) - (snap.currentExpandedH || 0)) > 0.5) ||
+      ((snap.animProgress || 0) > 0.05 && Math.abs((snap.targetExpW || 0) - (snap.currentExpandedW || 0)) > 0.5) ||
       Math.abs((snap.targetSongPopupProgress || 0) - (snap.songPopupProgress || 0)) > 0.002 ||
       Math.abs((snap.wantTint || 0) - (snap.tintK || 0)) > 0.004 ||
       ((snap.animProgress || 0) > 0.15 && (snap.isTabTransitioning || snap.isNavPillAnimating)) ||
@@ -3566,6 +4298,20 @@ function animate(now) {
 }
 
 window.addEventListener('wheel', (e) => {
+  if (e.target && e.target.closest && e.target.closest('#notes-doc-pane')) {
+    return;
+  }
+  if (currentView === 'todo' && notesSubMode === 'notes' && notesList.length > 5) {
+    const maxOffset = Math.max(0, notesList.length - 5);
+    const dir = e.deltaY > 0 ? 1 : -1;
+    const nextOff = Math.max(0, Math.min(maxOffset, notesListScrollOffset + dir));
+    if (nextOff !== notesListScrollOffset) {
+      e.preventDefault();
+      notesListScrollOffset = nextOff;
+      requestFrame();
+    }
+    return;
+  }
   if (currentView === 'media') {
     if (hoveredButtonId === 'media_volume_slider' || hoveredButtonId === 'media_volume_mute') {
       e.preventDefault();
@@ -3748,10 +4494,18 @@ function getNotificationBannerWidth() {
   return Math.max(320, Math.min(440, Math.round(maxTextW + 108)));
 }
 
+function getTargetExpandedWidthForView(view) {
+  if (view === 'notification_banner') return getNotificationBannerWidth();
+  if (view === 'home') {
+    return hasActiveCall() ? 556 : UI.HOME_EXPANDED_W;
+  }
+  return UI.EXPANDED_W;
+}
+
 function getTargetWidth(p) {
   const restW = getRestingWidth();
   const e = easeOpenCloseBack(p, isCapsuleOpening, 0.85);
-  const expandedTargetW = (currentView === 'notification_banner') ? getNotificationBannerWidth() : UI.EXPANDED_W;
+  const expandedTargetW = currentExpandedW || getTargetExpandedWidthForView(currentView);
   const normalW = Math.max(44, restW + (expandedTargetW - restW) * e);
   if (songPopupProgress > 0.001 && p < 0.2) {
     const popK = easeOpenCloseBack(songPopupProgress, isSongPopupOpening, 0.85);
@@ -3979,17 +4733,17 @@ function getLiquidGlassTokens(enabled = liquidGlassEnabled) {
       cardBg: 'rgba(255, 255, 255, 0.055)',
       cardBgHover: 'rgba(255, 255, 255, 0.11)',
       cardBorder: 'rgba(255, 255, 255, 0.09)',
-      navPillBg: 'rgba(255, 255, 255, 0.14)',
-      navPillBorder: 'rgba(255, 255, 255, 0.16)'
+      navPillBg: 'rgba(255, 255, 255, 0.15)',
+      navPillBorder: 'rgba(255, 255, 255, 0.24)'
     };
   }
   return {
     enabled: true,
-    cardBg: 'rgba(255, 255, 255, 0.12)',
-    cardBgHover: 'rgba(255, 255, 255, 0.20)',
-    cardBorder: 'rgba(255, 255, 255, 0.28)',
-    navPillBg: 'rgba(255, 255, 255, 0.22)',
-    navPillBorder: 'rgba(255, 255, 255, 0.36)'
+    cardBg: 'rgba(255, 255, 255, 0.075)',
+    cardBgHover: 'rgba(255, 255, 255, 0.145)',
+    cardBorder: 'rgba(255, 255, 255, 0.17)',
+    navPillBg: 'rgba(255, 255, 255, 0.20)',
+    navPillBorder: 'rgba(255, 255, 255, 0.38)'
   };
 }
 
@@ -4078,13 +4832,13 @@ function paintCapsuleSurface(c, {
     return;
   }
 
-  // Apple-inspired Liquid Glass Mode: deeply frosted translucent glass, micro-grain diffusion, album palette gradient, internal sheen, cursor bloom, and luminous rim
-  const glassFactor = 0.72 + 0.16 * Math.max(0, Math.min(1, p));
-  const baseGlassAlpha = Math.max(0.62, Math.min(0.90, islandOpacity * glassFactor));
+  // Apple Liquid Glass Mode: neutral smoked crystal, curved specular catchlight, fine silk diffusion, refractive dual-layer rim
+  const glassFactor = 0.56 + 0.18 * Math.max(0, Math.min(1, p));
+  const baseGlassAlpha = Math.max(0.50, Math.min(0.78, islandOpacity * glassFactor));
   const bodyGrad = c.createLinearGradient(x, y, x, y + h);
-  bodyGrad.addColorStop(0.0, `rgba(42, 48, 64, ${Math.min(0.92, baseGlassAlpha * 0.96)})`);
-  bodyGrad.addColorStop(0.42, `rgba(18, 22, 32, ${baseGlassAlpha})`);
-  bodyGrad.addColorStop(1.0, `rgba(11, 14, 22, ${Math.min(0.94, baseGlassAlpha * 1.04)})`);
+  bodyGrad.addColorStop(0.0, `rgba(38, 38, 43, ${Math.min(0.84, baseGlassAlpha * 0.96)})`);
+  bodyGrad.addColorStop(0.38, `rgba(20, 20, 24, ${baseGlassAlpha})`);
+  bodyGrad.addColorStop(1.0, `rgba(12, 12, 15, ${Math.min(0.86, baseGlassAlpha * 1.06)})`);
 
   c.save();
   tracePath();
@@ -4092,11 +4846,15 @@ function paintCapsuleSurface(c, {
   c.fill();
   c.clip();
 
-  // Frosted milky diffusion veil so underlying icons/text stay soft and readable
-  c.fillStyle = 'rgba(220, 232, 248, 0.075)';
+  // Neutral silk diffusion veil (pure achromatic light scatter, no muddy blue cast)
+  const veilGrad = c.createLinearGradient(x, y, x + w, y + h);
+  veilGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.085)');
+  veilGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.025)');
+  veilGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.055)');
+  c.fillStyle = veilGrad;
   c.fillRect(x - 24, y, w + 48, h);
 
-  // Cached 64x64 frosted micro-grain texture (zero per-frame alloc)
+  // Ultra-fine optical silk micro-grain texture (subtle, never noisy)
   if (!paintCapsuleSurface._frostPattern && typeof document !== 'undefined' && document.createElement) {
     try {
       const fc = document.createElement('canvas');
@@ -4108,11 +4866,11 @@ function paintCapsuleSurface(c, {
         let seed = 1337;
         for (let i = 0; i < img.data.length; i += 4) {
           seed = (seed * 16807) % 2147483647;
-          const v = 180 + (seed % 75);
+          const v = 210 + (seed % 45);
           img.data[i] = v;
           img.data[i + 1] = v;
           img.data[i + 2] = v;
-          img.data[i + 3] = 14 + (seed % 12);
+          img.data[i + 3] = 4 + (seed % 5);
         }
         fctx.putImageData(img, 0, 0);
         paintCapsuleSurface._frostPattern = c.createPattern(fc, 'repeat');
@@ -4129,60 +4887,65 @@ function paintCapsuleSurface(c, {
     const c1 = palette[1] || c0;
     const c2 = palette[2] || c1;
     const tintGrad = c.createLinearGradient(x, y, x + w, y + h);
-    tintGrad.addColorStop(0.0, colorWithAlpha(c0, 0.42 * accentTintStrength));
-    tintGrad.addColorStop(0.5, colorWithAlpha(c1, 0.30 * accentTintStrength));
-    tintGrad.addColorStop(1.0, colorWithAlpha(c2, 0.26 * accentTintStrength));
+    tintGrad.addColorStop(0.0, colorWithAlpha(c0, 0.30 * accentTintStrength));
+    tintGrad.addColorStop(0.5, colorWithAlpha(c1, 0.20 * accentTintStrength));
+    tintGrad.addColorStop(1.0, colorWithAlpha(c2, 0.16 * accentTintStrength));
     c.fillStyle = tintGrad;
     c.fillRect(x - 24, y, w + 48, h);
   }
 
-  // Top specular lip reflection
-  const topSheenH = Math.min(34, Math.max(12, h * 0.42));
+  // Delicate curved top meniscus catchlight
+  const topSheenH = Math.min(18, Math.max(8, h * 0.22));
   const topSheen = c.createLinearGradient(x, y, x, y + topSheenH);
-  topSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.26)');
-  topSheen.addColorStop(0.55, 'rgba(255, 255, 255, 0.06)');
+  topSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.17)');
+  topSheen.addColorStop(0.45, 'rgba(255, 255, 255, 0.04)');
   topSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
   c.fillStyle = topSheen;
   c.fillRect(x - 24, y, w + 48, topSheenH);
 
-  // Bottom bounce reflection
-  const botSheenH = Math.min(24, Math.max(8, h * 0.28));
+  // Subtle bottom internal refraction bounce
+  const botSheenH = Math.min(14, Math.max(6, h * 0.14));
   const botSheen = c.createLinearGradient(x, y + h - botSheenH, x, y + h);
   botSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.0)');
-  botSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.10)');
+  botSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.075)');
   c.fillStyle = botSheen;
   c.fillRect(x - 24, y + h - botSheenH, w + 48, botSheenH);
 
-  // Light-reactive cursor bloom
+  // Soft optical cursor specular spotlight
   if (mouseX >= x - 60 && mouseX <= x + w + 60 && mouseY >= y - 20 && mouseY <= y + h + 40) {
-    const bloomR = Math.max(75, Math.min(180, w * 0.42));
+    const bloomR = Math.max(80, Math.min(190, w * 0.38));
     const bloom = c.createRadialGradient(mouseX, mouseY, 2, mouseX, mouseY, bloomR);
-    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.18)');
-    bloom.addColorStop(0.5, 'rgba(255, 255, 255, 0.05)');
+    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.11)');
+    bloom.addColorStop(0.5, 'rgba(255, 255, 255, 0.03)');
     bloom.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
     c.fillStyle = bloom;
     c.fillRect(x - 24, y, w + 48, h);
   }
   c.restore();
 
-  // Luminous diagonal specular glass rim (subtly tinted by album palette when active)
+  // Dual-layer Apple optical fresnel glass rim
   c.save();
   traceRim();
-  const rimGrad = c.createLinearGradient(x, y, x + w * 0.45, y + h);
+  c.lineWidth = 2.0;
+  c.strokeStyle = 'rgba(0, 0, 0, 0.28)';
+  c.stroke();
+
+  traceRim();
+  const rimGrad = c.createLinearGradient(x, y, x + w * 0.55, y + h);
   if (accentTintStrength > 0.05 && palette) {
     const c0 = palette[0];
     const c1 = palette[1] || c0;
-    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.68)');
-    rimGrad.addColorStop(0.4, colorWithAlpha(c0, 0.55 * accentTintStrength));
-    rimGrad.addColorStop(0.8, colorWithAlpha(c1, 0.40 * accentTintStrength));
-    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.45)');
+    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.58)');
+    rimGrad.addColorStop(0.32, colorWithAlpha(c0, 0.42 * accentTintStrength));
+    rimGrad.addColorStop(0.72, colorWithAlpha(c1, 0.28 * accentTintStrength));
+    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.34)');
   } else {
-    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.72)');
-    rimGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.28)');
-    rimGrad.addColorStop(0.7, 'rgba(255, 255, 255, 0.16)');
-    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.45)');
+    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.56)');
+    rimGrad.addColorStop(0.28, 'rgba(255, 255, 255, 0.18)');
+    rimGrad.addColorStop(0.68, 'rgba(255, 255, 255, 0.10)');
+    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.32)');
   }
-  c.lineWidth = 1.25;
+  c.lineWidth = 1.05;
   c.strokeStyle = forceSemanticRim ? rimColor : rimGrad;
   c.stroke();
   c.restore();
@@ -4193,7 +4956,12 @@ function render() {
   interactiveButtons = [];
 
   if (gameModeEnabled && isGameModeFullscreen && !gameModeOpenedAnyway && !pendingPrompt) {
+    hideNotesDocOverlay();
     return;
+  }
+
+  if (currentView !== 'todo' || notesSubMode !== 'notes' || animProgress <= 0.88 || targetProgress < 0.5) {
+    hideNotesDocOverlay();
   }
 
   if (pendingPrompt && isTucked) {
@@ -5874,25 +6642,25 @@ function renderCallView(x, y, w, h) {
 function renderTopNav(x, y, w) {
   const hasUnreadNotifs = notificationList.some(n => !n.read && !String(`${n.app || ''} ${n.title || ''}`).toLowerCase().includes('antigravity'));
   const navItems = [
-    { id: 'nav_home', label: 'Home', w: 42 },
-    { id: 'nav_notif', label: hasUnreadNotifs ? 'Notif •' : 'Notif', w: 46 },
-    { id: 'nav_calendar', label: 'Calendar', w: 48 },
-    { id: 'nav_clock', label: 'Clock', w: 40 },
-    { id: 'nav_todo', label: 'Notes', w: 42 },
-    { id: 'nav_media', label: 'Media', w: 44 }
+    { id: 'nav_home', label: 'Home', w: 38 },
+    { id: 'nav_notif', label: hasUnreadNotifs ? 'Notif •' : 'Notif', w: 42 },
+    { id: 'nav_calendar', label: 'Calendar', w: 46 },
+    { id: 'nav_clock', label: 'Clock', w: 36 },
+    { id: 'nav_todo', label: 'Notes', w: 38 },
+    { id: 'nav_media', label: 'Media', w: 38 }
   ];
   if (hasActiveCall() || currentView === 'call') {
-    navItems.push({ id: 'nav_call', label: 'Call', w: 38 });
+    navItems.push({ id: 'nav_call', label: 'Call', w: 34 });
   }
   navItems.push(
-    { id: 'nav_dropzone', label: 'Shelf', w: 42 },
-    { id: 'nav_clipboard', label: 'Clip', w: 38 },
-    { id: 'nav_settings', label: '⚙', w: 26 }
+    { id: 'nav_dropzone', label: 'Shelf', w: 36 },
+    { id: 'nav_clipboard', label: 'Clip', w: 32 },
+    { id: 'nav_settings', label: '⚙', w: 24 }
   );
 
   const pillH = 22;
-  const spacing = 5;
-  let curX = x + 16;
+  const spacing = 4;
+  let curX = x + 14;
   const topY = y + 12;
 
   let activePillX = null;
@@ -5930,21 +6698,20 @@ function renderTopNav(x, y, w) {
     ctx.fill();
   });
 
-  // 2. Smooth gliding active indicator pill
+  // 2. Smooth gliding active indicator pill (Apple luminous frosted glass — never generic blue)
   if (navIndicatorX !== null && navIndicatorW !== null) {
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(navIndicatorX - 1.5, topY - 1, navIndicatorW + 3, pillH + 2, 12);
-    ctx.fillStyle = 'rgba(37, 99, 235, 0.24)';
+    ctx.roundRect(navIndicatorX, topY, navIndicatorW, pillH, 11);
+    const glassPillGrad = ctx.createLinearGradient(navIndicatorX, topY, navIndicatorX, topY + pillH);
+    glassPillGrad.addColorStop(0, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.22)');
+    glassPillGrad.addColorStop(1, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.12)');
+    ctx.fillStyle = glassPillGrad;
     ctx.fill();
 
-    ctx.beginPath();
-    ctx.roundRect(navIndicatorX, topY, navIndicatorW, pillH, 11);
-    const blueGrad = ctx.createLinearGradient(navIndicatorX, topY, navIndicatorX, topY + pillH);
-    blueGrad.addColorStop(0, '#3b82f6');
-    blueGrad.addColorStop(1, '#1d4ed8');
-    ctx.fillStyle = blueGrad;
-    ctx.fill();
+    ctx.lineWidth = 0.9;
+    ctx.strokeStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.26)';
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -5963,11 +6730,11 @@ function renderTopNav(x, y, w) {
   // Dedicated Exit Application Button (✕) on the far right
   const exitW = 22;
   const exitH = 22;
-  const exitX = x + w - exitW - 16;
+  const exitX = x + w - exitW - 14;
   const isExitHov = hoveredButtonId === 'btn_top_exit';
 
   // Display Mode Quick Switcher immediately to the left of the Exit Button
-  const modeW = 78;
+  const modeW = 72;
   const modeH = 22;
   const modeX = exitX - modeW - 6;
   const isModeHov = hoveredButtonId === 'toggle_display_mode';
@@ -6038,31 +6805,31 @@ function renderCalendarWidget(calX, calY, calW, calH) {
   const todayDate = now.getDate();
   const monthName = now.toLocaleDateString([], { month: 'short' }).toUpperCase();
 
-  // 1. Card Container & Subtle Glass Rim
+  // 1. Card Container & Subtle Apple Glass Rim
   ctx.save();
   ctx.beginPath();
   ctx.roundRect(calX, calY, calW, calH, 12);
-  ctx.fillStyle = 'rgba(24, 24, 32, 0.7)';
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+  ctx.fillStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.065)' : 'rgba(24, 24, 30, 0.65)';
+  ctx.strokeStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.08)';
   ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
 
   // 2. Month Header (e.g. "NOV")
-  ctx.font = '700 12px "Segoe UI Variable Display", Inter, sans-serif';
-  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 11px "Segoe UI Variable Display", Inter, sans-serif';
+  ctx.fillStyle = '#ff453a';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(monthName, calX + 13, calY + 11);
+  ctx.fillText(monthName, calX + 12, calY + 9);
 
-  // 3. Days Grid Calculation
+  // 3. Compact Days Grid Calculation
   const daysInMonth = new Date(curYear, curMonth + 1, 0).getDate();
   const firstDayIndex = new Date(curYear, curMonth, 1).getDay(); // 0 = Sunday
 
-  const gridStartX = calX + 13;
-  const gridStartY = calY + 31;
-  const colStep = (calW - 26) / 7;
-  const rowStep = (calH - 35) / 5.2;
+  const gridStartX = calX + 10;
+  const gridStartY = calY + 25;
+  const colStep = (calW - 20) / 7;
+  const rowStep = (calH - 29) / 5.2;
 
   ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.textAlign = 'center';
@@ -6077,31 +6844,142 @@ function renderCalendarWidget(calX, calY, calW, calH) {
     const cy = gridStartY + row * rowStep + rowStep / 2;
     const dateKey = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const dayNotes = calendarNotes.filter(n => matchesCalendarDate(n, dateKey));
-    const eventColor = dayNotes.length > 0 ? (dayNotes[0].color || '#3b82f6') : null;
+    const eventColor = dayNotes.length > 0 ? (dayNotes[0].color || '#ff453a') : null;
 
     if (d === todayDate) {
       ctx.beginPath();
-      ctx.arc(cx, cy, 7, 0, Math.PI * 2);
-      ctx.fillStyle = eventColor || '#2563eb';
+      ctx.arc(cx, cy, 6.8, 0, Math.PI * 2);
+      ctx.fillStyle = eventColor || '#ff453a';
       ctx.fill();
 
       ctx.fillStyle = '#ffffff';
       ctx.fillText(String(d), cx, cy);
     } else if (eventColor) {
       ctx.beginPath();
-      ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 6.3, 0, Math.PI * 2);
       ctx.fillStyle = colorWithAlpha(eventColor, 0.28);
       ctx.fill();
       ctx.fillStyle = '#f8fafc';
       ctx.fillText(String(d), cx, cy);
     } else {
-      ctx.fillStyle = d < todayDate ? '#94a3b8' : '#e2e8f0';
+      ctx.fillStyle = d < todayDate ? '#71717a' : '#e4e4e7';
       ctx.fillText(String(d), cx, cy);
     }
   }
 
   ctx.restore();
   interactiveButtons.push({ id: 'nav_calendar', x: calX, y: calY, w: calW, h: calH });
+}
+
+// Bespoke Apple-style monochrome/semantic vector logos for action buttons (zero emojis)
+function drawActionLogo(c, kind, cx, cy, color) {
+  c.save();
+  c.strokeStyle = color;
+  c.fillStyle = color;
+  c.lineWidth = 1.45;
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+
+  if (kind === 'event_add') {
+    // Mini calendar outline + top pins + subtle plus corner
+    c.beginPath();
+    c.roundRect(cx - 5.5, cy - 4.2, 11, 9.2, 2.2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx - 2.8, cy - 6.0);
+    c.lineTo(cx - 2.8, cy - 3.4);
+    c.moveTo(cx + 2.8, cy - 6.0);
+    c.lineTo(cx + 2.8, cy - 3.4);
+    c.moveTo(cx - 5.2, cy - 1.2);
+    c.lineTo(cx + 5.2, cy - 1.2);
+    c.stroke();
+    // Plus inside bottom center
+    c.lineWidth = 1.35;
+    c.beginPath();
+    c.moveTo(cx, cy + 0.4);
+    c.lineTo(cx, cy + 3.6);
+    c.moveTo(cx - 1.6, cy + 2.0);
+    c.lineTo(cx + 1.6, cy + 2.0);
+    c.stroke();
+  } else if (kind === 'note_add') {
+    // Apple Notes Compose icon: open-corner rounded box + diagonal pencil nib
+    c.beginPath();
+    c.moveTo(cx + 0.5, cy - 5.0);
+    c.lineTo(cx - 3.8, cy - 5.0);
+    c.quadraticCurveTo(cx - 5.4, cy - 5.0, cx - 5.4, cy - 3.4);
+    c.lineTo(cx - 5.4, cy + 3.6);
+    c.quadraticCurveTo(cx - 5.4, cy + 5.2, cx - 3.8, cy + 5.2);
+    c.lineTo(cx + 3.2, cy + 5.2);
+    c.quadraticCurveTo(cx + 4.8, cy + 5.2, cx + 4.8, cy + 3.6);
+    c.lineTo(cx + 4.8, cy - 0.5);
+    c.stroke();
+    // Diagonal stylus
+    c.beginPath();
+    c.moveTo(cx - 0.8, cy + 0.8);
+    c.lineTo(cx + 5.4, cy - 5.4);
+    c.stroke();
+    c.beginPath();
+    c.arc(cx - 1.2, cy + 1.2, 0.9, 0, Math.PI * 2);
+    c.fill();
+  } else if (kind === 'task_add') {
+    // Apple Reminders Add Task logo: crisp circle + plus
+    c.beginPath();
+    c.arc(cx, cy, 5.4, 0, Math.PI * 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx, cy - 2.6);
+    c.lineTo(cx, cy + 2.6);
+    c.moveTo(cx - 2.6, cy);
+    c.lineTo(cx + 2.6, cy);
+    c.stroke();
+  } else if (kind === 'mic') {
+    // Apple-style Microphone glyph: pill capsule + cradle arc + stem + base
+    c.beginPath();
+    c.roundRect(cx - 2.1, cy - 5.6, 4.2, 6.4, 2.1);
+    c.stroke();
+    c.beginPath();
+    c.arc(cx, cy - 0.8, 4.1, 0.15 * Math.PI, 0.85 * Math.PI);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx, cy + 3.3);
+    c.lineTo(cx, cy + 5.4);
+    c.moveTo(cx - 2.4, cy + 5.4);
+    c.lineTo(cx + 2.4, cy + 5.4);
+    c.stroke();
+  } else if (kind === 'doc') {
+    // Mini document emblem for Notes sub-tab
+    c.beginPath();
+    c.roundRect(cx - 3.6, cy - 4.4, 7.2, 8.8, 1.5);
+    c.stroke();
+    c.lineWidth = 1.1;
+    c.beginPath();
+    c.moveTo(cx - 1.8, cy - 1.4);
+    c.lineTo(cx + 1.8, cy - 1.4);
+    c.moveTo(cx - 1.8, cy + 0.8);
+    c.lineTo(cx + 1.8, cy + 0.8);
+    c.moveTo(cx - 1.8, cy + 2.8);
+    c.lineTo(cx + 0.6, cy + 2.8);
+    c.stroke();
+  } else if (kind === 'checklist') {
+    // Mini check-circle emblem for To-Do sub-tab
+    c.beginPath();
+    c.arc(cx, cy, 4.2, 0, Math.PI * 2);
+    c.stroke();
+    c.lineWidth = 1.3;
+    c.beginPath();
+    c.moveTo(cx - 1.9, cy + 0.1);
+    c.lineTo(cx - 0.5, cy + 1.6);
+    c.lineTo(cx + 2.1, cy - 1.5);
+    c.stroke();
+  } else if (kind === 'plus') {
+    c.beginPath();
+    c.moveTo(cx, cy - 3.4);
+    c.lineTo(cx, cy + 3.4);
+    c.moveTo(cx - 3.4, cy);
+    c.lineTo(cx + 3.4, cy);
+    c.stroke();
+  }
+  c.restore();
 }
 
 function drawRecurrenceIcon(c, repeat, cx, cy, color) {
@@ -6233,21 +7111,21 @@ function renderCalendarTabView(x, y, w, h) {
   ctx.restore();
   interactiveButtons.push({ id: 'cal_next_month', x: nextBtnX, y: navY, w: prevBtnW, h: navH });
 
-  // Compact Today Jump Pill
+  // Compact Today Jump Pill (Apple Calendar Coral-Red accent)
   const todayBtnW = 38;
   const todayBtnH = 18;
   const todayBtnX = leftX + leftW - todayBtnW;
   const todayBtnY = navY + (navH - todayBtnH) / 2;
   const isTodayHov = hoveredButtonId === 'cal_today';
   ctx.beginPath();
-  ctx.roundRect(todayBtnX, todayBtnY, todayBtnW, todayBtnH, 5);
-  ctx.fillStyle = isTodayHov ? '#2563eb' : 'rgba(37, 99, 235, 0.16)';
-  ctx.strokeStyle = isTodayHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.35)';
+  ctx.roundRect(todayBtnX, todayBtnY, todayBtnW, todayBtnH, 6);
+  ctx.fillStyle = isTodayHov ? '#ff453a' : 'rgba(255, 69, 58, 0.16)';
+  ctx.strokeStyle = isTodayHov ? '#ff6961' : 'rgba(255, 69, 58, 0.34)';
   ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
   ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = isTodayHov ? '#ffffff' : '#93c5fd';
+  ctx.fillStyle = isTodayHov ? '#ffffff' : '#ff8a80';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('Today', todayBtnX + todayBtnW / 2, todayBtnY + todayBtnH / 2);
@@ -6276,7 +7154,7 @@ function renderCalendarTabView(x, y, w, h) {
   // Locate target selected cell for smooth gliding pill interpolation
   let targetSelX = null;
   let targetSelY = null;
-  let selectedEventColor = '#2563eb';
+  let selectedEventColor = '#ff453a';
   for (let day = 1; day <= daysInMonth; day++) {
     const curCellDateStr = `${calendarViewYear}-${String(calendarViewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     if (curCellDateStr === calendarSelectedDate) {
@@ -6412,25 +7290,21 @@ function renderCalendarTabView(x, y, w, h) {
   ctx.textBaseline = 'middle';
   ctx.fillText(selTitle, rightX, navY + navH / 2);
 
-  // + Note Button
-  const addNoteW = 58;
-  const addNoteH = 20;
+  // Seamless Calendar-Plus Icon Button (no raw "+ Event" text)
+  const addNoteW = 24;
+  const addNoteH = 22;
   const addNoteX = rightX + rightW - addNoteW;
   const addNoteY = navY + (navH - addNoteH) / 2;
   const isAddNoteHov = hoveredButtonId === 'cal_add_note_btn';
   ctx.beginPath();
-  ctx.roundRect(addNoteX, addNoteY, addNoteW, addNoteH, 6);
-  ctx.fillStyle = isAddNoteHov ? '#2563eb' : 'rgba(255, 255, 255, 0.08)';
-  ctx.strokeStyle = isAddNoteHov ? '#3b82f6' : 'rgba(255, 255, 255, 0.14)';
+  ctx.roundRect(addNoteX, addNoteY, addNoteW, addNoteH, 7);
+  ctx.fillStyle = isAddNoteHov ? 'rgba(255, 69, 58, 0.24)' : 'rgba(255, 255, 255, 0.08)';
+  ctx.strokeStyle = isAddNoteHov ? 'rgba(255, 105, 97, 0.55)' : 'rgba(255, 255, 255, 0.14)';
   ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
 
-  ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = isAddNoteHov ? '#ffffff' : '#f4f4f5';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('+ Event', addNoteX + addNoteW / 2, addNoteY + addNoteH / 2);
+  drawActionLogo(ctx, 'event_add', addNoteX + addNoteW / 2, addNoteY + addNoteH / 2, isAddNoteHov ? '#ff8a80' : '#f4f4f5');
   interactiveButtons.push({ id: 'cal_add_note_btn', x: addNoteX, y: addNoteY, w: addNoteW, h: addNoteH });
 
   // Notes List transition progress
@@ -6633,9 +7507,14 @@ function renderClockTabView(x, y, w, h) {
     const isCur = clockSubMode === m.id;
     const isHov = hoveredButtonId === `clock_submode_${m.id}`;
     ctx.beginPath();
-    ctx.roundRect(curX, topY, m.w, modeH, 6);
-    ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+    ctx.roundRect(curX, topY, m.w, modeH, 7);
+    ctx.fillStyle = isCur ? 'rgba(255, 255, 255, 0.20)' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
     ctx.fill();
+    if (isCur) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.30)';
+      ctx.lineWidth = 0.85;
+      ctx.stroke();
+    }
 
     ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
@@ -6784,7 +7663,7 @@ function renderClockTabView(x, y, w, h) {
     const isStartHov = hoveredButtonId === 'timer_start_pause';
     ctx.beginPath();
     ctx.roundRect(startX, btnRowY, startW, ctlH, 7);
-    ctx.fillStyle = timerRunning ? '#ef4444' : '#2563eb';
+    ctx.fillStyle = timerRunning ? '#ff453a' : '#ff9f0a';
     ctx.fill();
     ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#ffffff';
@@ -6935,8 +7814,8 @@ function renderClockTabView(x, y, w, h) {
       const isCur = focusWorkDurationMin === wp;
       const isHov = hoveredButtonId === `focus_work_dur_${wp}`;
       ctx.beginPath();
-      ctx.roundRect(wCurX, rowY, 30, pillH, 4);
-      ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
+      ctx.roundRect(wCurX, rowY, 30, pillH, 5);
+      ctx.fillStyle = isCur ? 'rgba(255, 159, 10, 0.28)' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
       ctx.fill();
       ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#ffffff' : '#cbd5e1');
@@ -6981,7 +7860,7 @@ function renderClockTabView(x, y, w, h) {
     const isStartHov = hoveredButtonId === 'focus_start_pause';
     ctx.beginPath();
     ctx.roundRect(startX, btnRowY, startW, ctlH, 6);
-    ctx.fillStyle = focusRunning ? '#ef4444' : '#2563eb';
+    ctx.fillStyle = focusRunning ? '#ff453a' : '#ff9f0a';
     ctx.fill();
     ctx.font = '600 11px "Segoe UI Variable Display", Inter, sans-serif';
     ctx.fillStyle = '#ffffff';
@@ -7201,8 +8080,8 @@ function renderClockTabView(x, y, w, h) {
 
       ctx.beginPath();
       ctx.roundRect(ampmX, ampmY, ampmW, ampmH, 8);
-      ctx.fillStyle = isAmpmHov ? '#1d4ed8' : '#2563eb';
-      ctx.strokeStyle = isAmpmHov ? '#60a5fa' : '#3b82f6';
+      ctx.fillStyle = isAmpmHov ? 'rgba(255, 255, 255, 0.24)' : 'rgba(255, 255, 255, 0.15)';
+      ctx.strokeStyle = isAmpmHov ? 'rgba(255, 255, 255, 0.40)' : 'rgba(255, 255, 255, 0.24)';
       ctx.lineWidth = 1;
       ctx.fill();
       ctx.stroke();
@@ -7350,251 +8229,492 @@ function renderClockTabView(x, y, w, h) {
 // =============================================================
 function renderTodoTabView(x, y, w, h) {
   const topY = y + 42;
-  const padding = 18;
+  const padding = 16;
   const contentW = w - padding * 2;
   const contentX = x + padding;
+  const nowPerf = performance.now();
 
-  // 0. 2-Tab Sub-Switcher: [ Notes ] [ To-Do ]
+  const isNotesMode = notesSubMode === 'notes';
+  const modeAccent = isNotesMode ? '#f5b942' : '#32c59b';
+
+  // Subtle ambient mode wash so Notes (Warm Apple Amber) and To-Do (Apple Mint) feel unmistakably distinct
+  ctx.save();
+  const modeWash = ctx.createLinearGradient(x, y + 34, x, y + h);
+  modeWash.addColorStop(0.0, colorWithAlpha(modeAccent, 0.08));
+  modeWash.addColorStop(0.38, colorWithAlpha(modeAccent, 0.02));
+  modeWash.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = modeWash;
+  ctx.fillRect(x, y + 34, w, h - 34);
+  ctx.restore();
+
+  // 0. Animated 2-Tab Segmented Switcher: [ Notes (Amber + Doc) | To-Do (Mint + Checklist) ]
   const subTabs = [
-    { id: 'notes', label: 'Notes', w: 58 },
-    { id: 'todo', label: 'To-Do', w: 58 }
+    { id: 'notes', label: 'Notes', icon: 'doc', w: 66 },
+    { id: 'todo', label: 'To-Do', icon: 'checklist', w: 66 }
   ];
   const subH = 22;
-  let subX = contentX;
-  subTabs.forEach(st => {
-    const isCur = notesSubMode === st.id;
-    const isHov = hoveredButtonId === `notes_submode_${st.id}`;
-    ctx.beginPath();
-    ctx.roundRect(subX, topY, st.w, subH, 6);
-    ctx.fillStyle = isCur ? '#2563eb' : (isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)');
-    ctx.fill();
-
-    ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(st.label, subX + st.w / 2, topY + subH / 2);
-
-    interactiveButtons.push({ id: `notes_submode_${st.id}`, x: subX, y: topY, w: st.w, h: subH });
-    subX += st.w + 6;
-  });
-
-  if (notesSubMode === 'notes') {
-    // + Add Note Button on top right
-    const addNoteW = 68;
-    const addNoteX = contentX + contentW - addNoteW;
-    const isAddNoteHov = hoveredButtonId === 'notes_add_btn';
-    ctx.beginPath();
-    ctx.roundRect(addNoteX, topY, addNoteW, subH, 6);
-    ctx.fillStyle = isAddNoteHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
-    ctx.strokeStyle = isAddNoteHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.4)';
-    ctx.lineWidth = 1;
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = isAddNoteHov ? '#ffffff' : '#93c5fd';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('+ Note', addNoteX + addNoteW / 2, topY + subH / 2);
-    interactiveButtons.push({ id: 'notes_add_btn', x: addNoteX, y: topY, w: addNoteW, h: subH });
-
-    const listY = topY + 32;
-    const items = Array.isArray(notesList) ? notesList : [];
-
-    if (items.length === 0) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.roundRect(contentX, listY, contentW, 200, 10);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
-      ctx.lineWidth = 1;
-      ctx.fill();
-      ctx.stroke();
-
-      drawVectorSymbol(ctx, 'note', contentX + contentW / 2, listY + 72, 24, '#64748b');
-
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = '600 12.5px "Segoe UI Variable Display", Inter, sans-serif';
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillText('No notes yet', contentX + contentW / 2, listY + 108);
-
-      ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText('Click + Note to jot down quick ideas', contentX + contentW / 2, listY + 128);
-      ctx.restore();
-      return;
-    }
-
-    const rowH = 38;
-    const rowGap = 6;
-    const maxRows = Math.min(items.length, 5);
-    for (let i = 0; i < maxRows; i++) {
-      const note = items[i];
-      const ry = listY + i * (rowH + rowGap);
-      const isRowHov = hoveredButtonId === `notes_open_${note.id}`;
-      const delSize = 20;
-      const delX = contentX + contentW - delSize - 10;
-      const delY = ry + (rowH - delSize) / 2;
-      const isDelHov = hoveredButtonId === `notes_del_${note.id}`;
-
-      ctx.beginPath();
-      ctx.roundRect(contentX, ry, contentW, rowH, 8);
-      ctx.fillStyle = isRowHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.035)';
-      ctx.strokeStyle = isRowHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)';
-      ctx.lineWidth = 1;
-      ctx.fill();
-      ctx.stroke();
-
-      drawVectorSymbol(ctx, 'note', contentX + 18, ry + rowH / 2, 13, '#94a3b8');
-
-      ctx.font = '600 11.5px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = '#f4f4f5';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      const maxTextW = contentW - 76;
-      ctx.fillText(truncateToWidth(note.title || note.body || 'Untitled', maxTextW, ctx.font), contentX + 34, ry + rowH / 2 - 6);
-
-      ctx.font = '400 10px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = '#71717a';
-      ctx.fillText(truncateToWidth(note.body || '', maxTextW, ctx.font), contentX + 34, ry + rowH / 2 + 8);
-
-      interactiveButtons.push({
-        id: `notes_open_${note.id}`,
-        data: note.id,
-        x: contentX,
-        y: ry,
-        w: contentW - delSize - 18,
-        h: rowH
-      });
-
-      ctx.beginPath();
-      ctx.arc(delX + delSize / 2, delY + delSize / 2, delSize / 2, 0, Math.PI * 2);
-      ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.05)';
-      ctx.fill();
-      ctx.font = '600 10px sans-serif';
-      ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('✕', delX + delSize / 2, delY + delSize / 2);
-
-      interactiveButtons.push({ id: `notes_del_${note.id}`, data: note.id, x: delX, y: delY, w: delSize, h: delSize });
-    }
-    return;
-  }
-
-  // --- Sub-tab 2: To-Do ---
-  // 1. Category Filter Chips Row (placed to the right of the Notes/To-Do switcher)
-  const allCategories = ['All', ...(todoData.categories || [])];
-  const chipH = 22;
-  let curX = subX + 8;
-
-  allCategories.forEach(cat => {
-    ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-    const textW = ctx.measureText(cat).width;
-    const chipW = Math.max(36, textW + 14);
-    if (curX + chipW > contentX + contentW - 122) return;
-    const isCur = todoSelectedCategory === cat;
-    const isHov = hoveredButtonId === `todo_cat_${cat}`;
-
-    ctx.beginPath();
-    ctx.roundRect(curX, topY, chipW, chipH, 6);
-    ctx.fillStyle = isCur ? 'rgba(255, 255, 255, 0.16)' : (isHov ? 'rgba(255, 255, 255, 0.10)' : 'rgba(255, 255, 255, 0.04)');
-    ctx.fill();
-
-    ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(cat, curX + chipW / 2, topY + chipH / 2);
-
-    interactiveButtons.push({ id: `todo_cat_${cat}`, data: cat, x: curX, y: topY, w: chipW, h: chipH });
-    curX += chipW + 5;
-  });
-
-  // + New Category button
-  const addCatW = 44;
-  const isAddCatHov = hoveredButtonId === 'todo_add_category_btn';
-  if (curX + addCatW <= contentX + contentW - 74) {
-    ctx.beginPath();
-    ctx.roundRect(curX, topY, addCatW, chipH, 6);
-    ctx.fillStyle = isAddCatHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
-    ctx.fill();
-    ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = isAddCatHov ? '#ffffff' : '#94a3b8';
-    ctx.textAlign = 'center';
-    ctx.fillText('+ Cat', curX + addCatW / 2, topY + chipH / 2);
-    interactiveButtons.push({ id: 'todo_add_category_btn', x: curX, y: topY, w: addCatW, h: chipH });
-    curX += addCatW + 5;
-  }
-
-  // Delete Category button (if custom category selected)
-  if (todoSelectedCategory !== 'All' && !['Personal', 'Work', 'Island'].includes(todoSelectedCategory) && curX + 22 <= contentX + contentW - 72) {
-    const delCatW = 22;
-    const isDelCatHov = hoveredButtonId === 'todo_delete_category_btn';
-    ctx.beginPath();
-    ctx.roundRect(curX, topY, delCatW, chipH, 6);
-    ctx.fillStyle = isDelCatHov ? 'rgba(239, 68, 68, 0.25)' : 'rgba(255, 255, 255, 0.05)';
-    ctx.fill();
-    ctx.font = '600 10px sans-serif';
-    ctx.fillStyle = isDelCatHov ? '#ef4444' : '#94a3b8';
-    ctx.fillText('✕', curX + delCatW / 2, topY + chipH / 2);
-    interactiveButtons.push({ id: 'todo_delete_category_btn', x: curX, y: topY, w: delCatW, h: chipH });
-  }
-
-  // + Add Task Button on top right
-  const addTaskW = 64;
-  const addTaskH = 22;
-  const addTaskX = contentX + contentW - addTaskW;
-  const isAddTaskHov = hoveredButtonId === 'todo_add_task_btn';
+  const switcherW = subTabs[0].w + subTabs[1].w + 4;
+  ctx.save();
   ctx.beginPath();
-  ctx.roundRect(addTaskX, topY, addTaskW, addTaskH, 6);
-  ctx.fillStyle = isAddTaskHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
-  ctx.strokeStyle = isAddTaskHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.4)';
+  ctx.roundRect(contentX, topY, switcherW, subH, 8);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.055)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.10)';
   ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
 
-  ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = isAddTaskHov ? '#ffffff' : '#93c5fd';
+  let subTargetX = contentX + 2;
+  let subTargetW = subTabs[0].w;
+  const subLayouts = [];
+  let sx = contentX + 2;
+  subTabs.forEach(st => {
+    const isCur = notesSubMode === st.id;
+    if (isCur) {
+      subTargetX = sx;
+      subTargetW = st.w;
+    }
+    subLayouts.push({ st, px: sx, isCur });
+    sx += st.w;
+  });
+
+  if (reducedMotionEnabled || liteModeEnabled) {
+    notesSubPillX = subTargetX;
+    notesSubPillW = subTargetW;
+    isNotesSubPillAnimating = false;
+  } else {
+    const step = computeSlidingPillStep(notesSubPillX, notesSubPillW, subTargetX, subTargetW, currentDt, animSpeedMultiplier);
+    notesSubPillX = step.x;
+    notesSubPillW = step.w;
+    isNotesSubPillAnimating = !step.isSettled;
+  }
+
+  // Gliding colored glass thumb
+  if (notesSubPillX !== null && notesSubPillW !== null) {
+    ctx.beginPath();
+    ctx.roundRect(notesSubPillX, topY + 2, notesSubPillW, subH - 4, 6);
+    ctx.fillStyle = colorWithAlpha(modeAccent, 0.24);
+    ctx.strokeStyle = colorWithAlpha(modeAccent, 0.55);
+    ctx.lineWidth = 0.9;
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  subLayouts.forEach(({ st, px, isCur }) => {
+    const isHov = hoveredButtonId === `notes_submode_${st.id}`;
+    const fg = isCur ? '#ffffff' : (isHov ? '#e4e4e7' : '#a1a1aa');
+    const iconCol = isCur ? modeAccent : fg;
+    drawActionLogo(ctx, st.icon, px + 14, topY + subH / 2, iconCol);
+    ctx.font = isCur ? '600 10px "Segoe UI Variable Text", Inter, sans-serif' : '500 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = fg;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(st.label, px + 23, topY + subH / 2);
+    interactiveButtons.push({ id: `notes_submode_${st.id}`, x: px, y: topY, w: st.w, h: subH });
+  });
+  ctx.restore();
+
+  const subX = contentX + switcherW;
+  const subAnimProgress = (reducedMotionEnabled || liteModeEnabled || notesSubAnimStart === 0)
+    ? 1.0
+    : Math.min(1.0, (nowPerf - notesSubAnimStart) / 220);
+  const subEase = 1 - Math.pow(1 - subAnimProgress, 3);
+  const subSlideX = (1 - subEase) * 14 * notesSubAnimDir;
+
+  // =========================================================================
+  // SUB-TAB 1: NOTES — Left 1/3 Vertical List + Right 2/3 Google-Docs Editor
+  // =========================================================================
+  if (notesSubMode === 'notes') {
+    // Seamless Compose Vector Logo Button on top right (no raw "+ Note" text)
+    const addNoteW = 24;
+    const addNoteX = contentX + contentW - addNoteW;
+    const isAddNoteHov = hoveredButtonId === 'notes_add_btn';
+    ctx.beginPath();
+    ctx.roundRect(addNoteX, topY, addNoteW, subH, 7);
+    ctx.fillStyle = isAddNoteHov ? 'rgba(245, 185, 66, 0.26)' : 'rgba(245, 185, 66, 0.12)';
+    ctx.strokeStyle = isAddNoteHov ? 'rgba(245, 185, 66, 0.65)' : 'rgba(245, 185, 66, 0.30)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+    drawActionLogo(ctx, 'note_add', addNoteX + addNoteW / 2, topY + subH / 2, isAddNoteHov ? '#fef08a' : '#f5b942');
+    interactiveButtons.push({ id: 'notes_add_btn', x: addNoteX, y: topY, w: addNoteW, h: subH });
+
+    // Subtle Notes count label beside switcher
+    const items = Array.isArray(notesList) ? notesList : [];
+    ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = 'rgba(245, 185, 66, 0.72)';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${items.length} ${items.length === 1 ? 'Document' : 'Documents'}`, subX + 12, topY + subH / 2);
+
+    const bodyY = topY + 30;
+    const bodyH = Math.max(180, (y + h) - bodyY - 14);
+    const leftW = Math.round(contentW * 0.33);
+    const gapW = 10;
+    const rightX = contentX + leftW + gapW;
+    const rightW = contentW - leftW - gapW;
+
+    // Auto-select first note if none selected
+    if ((!selectedNoteId || !items.some(n => n.id === selectedNoteId)) && items.length > 0) {
+      selectNoteForEditor(items[0].id, false);
+    }
+
+    ctx.save();
+    ctx.globalAlpha = subEase;
+    ctx.translate(subSlideX, 0);
+
+    // Left 1/3 Sidebar Container
+    ctx.beginPath();
+    ctx.roundRect(contentX, bodyY, leftW, bodyH, 10);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.032)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    if (items.length === 0) {
+      drawActionLogo(ctx, 'doc', contentX + leftW / 2, bodyY + bodyH / 2 - 14, 'rgba(245, 185, 66, 0.55)');
+      ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#71717a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('No notes yet', contentX + leftW / 2, bodyY + bodyH / 2 + 8);
+    } else {
+      const padIn = 6;
+      const rowH = 42;
+      const rowGap = 5;
+      const maxVisible = Math.max(1, Math.floor((bodyH - padIn * 2 + rowGap) / (rowH + rowGap)));
+      const maxScroll = Math.max(0, items.length - maxVisible);
+      if (notesListScrollOffset > maxScroll) notesListScrollOffset = maxScroll;
+      const visibleCount = Math.min(items.length - notesListScrollOffset, maxVisible);
+
+      for (let i = 0; i < visibleCount; i++) {
+        const note = items[notesListScrollOffset + i];
+        const rx = contentX + padIn;
+        const rw = leftW - padIn * 2;
+        const ry = bodyY + padIn + i * (rowH + rowGap);
+        const isSel = selectedNoteId === note.id;
+        const isRowHov = hoveredButtonId === `notes_open_${note.id}`;
+        const delSize = 18;
+        const delX = rx + rw - delSize - 6;
+        const delY = ry + (rowH - delSize) / 2;
+        const isDelHov = hoveredButtonId === `notes_del_${note.id}`;
+
+        ctx.beginPath();
+        ctx.roundRect(rx, ry, rw, rowH, 8);
+        ctx.fillStyle = isSel
+          ? 'rgba(245, 185, 66, 0.14)'
+          : (isRowHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.025)');
+        ctx.strokeStyle = isSel
+          ? 'rgba(245, 185, 66, 0.42)'
+          : (isRowHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)');
+        ctx.lineWidth = 1;
+        ctx.fill();
+        ctx.stroke();
+
+        // Warm amber left indicator bar for active document
+        if (isSel) {
+          ctx.beginPath();
+          ctx.roundRect(rx + 3, ry + 8, 2.5, rowH - 16, 1.5);
+          ctx.fillStyle = '#f5b942';
+          ctx.fill();
+        }
+
+        const textX = rx + (isSel ? 11 : 9);
+        const maxTextW = rw - (isSel ? 38 : 34);
+        ctx.font = '600 11px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = isSel ? '#ffffff' : '#e4e4e7';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(truncateToWidth(note.title || 'Untitled Note', maxTextW, ctx.font), textX, ry + 14);
+
+        const preview = (note.body || '').replace(/\s+/g, ' ').trim() || 'Empty document';
+        ctx.font = '400 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = isSel ? 'rgba(253, 230, 138, 0.72)' : '#71717a';
+        ctx.fillText(truncateToWidth(preview, maxTextW, ctx.font), textX, ry + 29);
+
+        interactiveButtons.push({
+          id: `notes_open_${note.id}`,
+          data: note.id,
+          x: rx,
+          y: ry,
+          w: rw - delSize - 10,
+          h: rowH
+        });
+
+        // Subtle circular delete button
+        ctx.beginPath();
+        ctx.arc(delX + delSize / 2, delY + delSize / 2, delSize / 2, 0, Math.PI * 2);
+        ctx.fillStyle = isDelHov ? 'rgba(255, 69, 58, 0.28)' : 'rgba(255, 255, 255, 0.05)';
+        ctx.fill();
+        ctx.font = '600 9px sans-serif';
+        ctx.fillStyle = isDelHov ? '#ff6961' : '#71717a';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('✕', delX + delSize / 2, delY + delSize / 2);
+        interactiveButtons.push({ id: `notes_del_${note.id}`, data: note.id, x: delX, y: delY, w: delSize, h: delSize });
+      }
+    }
+    ctx.restore();
+
+    // Sync Right 2/3 Embedded Google-Docs Rich-Text Editor
+    syncNotesDocOverlay(rightX, bodyY, rightW, bodyH);
+    return;
+  }
+
+  // =========================================================================
+  // SUB-TAB 2: TO-DO — Animated Categories + Voice-to-Task + Custom Logos
+  // =========================================================================
+  hideNotesDocOverlay();
+
+  // Right-side controls: [ Lang ] [ Mic (Voice-to-Task) ] [ Add Task ]
+  const btnH = 22;
+  const addTaskW = 24;
+  const addTaskX = contentX + contentW - addTaskW;
+  const voiceBtnW = 24;
+  const voiceBtnX = addTaskX - voiceBtnW - 5;
+  const langBtnW = 24;
+  const langBtnX = voiceBtnX - langBtnW - 4;
+  const catRightLimit = langBtnX - 8;
+
+  // Language Badge (cycles EN / ID / ZH / DE / ES)
+  const langMeta = getVoiceLangMeta(voiceLangCode);
+  const isLangHov = hoveredButtonId === 'todo_voice_lang';
+  ctx.beginPath();
+  ctx.roundRect(langBtnX, topY, langBtnW, btnH, 6);
+  ctx.fillStyle = isLangHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.05)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.10)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+  ctx.font = '600 9px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.fillStyle = isLangHov ? '#ffffff' : '#a1a1aa';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('+ Task', addTaskX + addTaskW / 2, topY + addTaskH / 2);
-  interactiveButtons.push({ id: 'todo_add_task_btn', x: addTaskX, y: topY, w: addTaskW, h: addTaskH });
+  ctx.fillText(langMeta.short, langBtnX + langBtnW / 2, topY + btnH / 2);
+  interactiveButtons.push({ id: 'todo_voice_lang', x: langBtnX, y: topY, w: langBtnW, h: btnH });
 
-  // 2. Filtered Tasks List
-  const listY = topY + 32;
+  // Voice-to-Task Mic Logo Button (beside Add Task)
+  const isTodoListening = voiceSessionTarget === 'todo';
+  const isVoiceHov = hoveredButtonId === 'todo_voice_task_btn';
+  ctx.save();
+  if (isTodoListening) {
+    const pulse = 0.5 + 0.5 * Math.sin(nowPerf / 180);
+    ctx.beginPath();
+    ctx.roundRect(voiceBtnX - 2, topY - 2, voiceBtnW + 4, btnH + 4, 9);
+    ctx.fillStyle = `rgba(255, 69, 58, ${(0.14 + 0.18 * pulse).toFixed(3)})`;
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.roundRect(voiceBtnX, topY, voiceBtnW, btnH, 7);
+  ctx.fillStyle = isTodoListening
+    ? 'rgba(255, 69, 58, 0.28)'
+    : (isVoiceHov ? 'rgba(50, 197, 155, 0.24)' : 'rgba(255, 255, 255, 0.07)');
+  ctx.strokeStyle = isTodoListening
+    ? 'rgba(255, 105, 97, 0.72)'
+    : (isVoiceHov ? 'rgba(50, 197, 155, 0.55)' : 'rgba(255, 255, 255, 0.12)');
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+  drawActionLogo(
+    ctx,
+    'mic',
+    voiceBtnX + voiceBtnW / 2,
+    topY + btnH / 2,
+    isTodoListening ? '#ff6961' : (isVoiceHov ? '#6ee7b7' : '#d4d4d8')
+  );
+  ctx.restore();
+  interactiveButtons.push({ id: 'todo_voice_task_btn', x: voiceBtnX, y: topY, w: voiceBtnW, h: btnH });
+
+  // Seamless Add Task Vector Logo Button (no raw "+ Task" text)
+  const isAddTaskHov = hoveredButtonId === 'todo_add_task_btn';
+  ctx.beginPath();
+  ctx.roundRect(addTaskX, topY, addTaskW, btnH, 7);
+  ctx.fillStyle = isAddTaskHov ? 'rgba(50, 197, 155, 0.28)' : 'rgba(50, 197, 155, 0.14)';
+  ctx.strokeStyle = isAddTaskHov ? 'rgba(50, 197, 155, 0.65)' : 'rgba(50, 197, 155, 0.34)';
+  ctx.lineWidth = 1;
+  ctx.fill();
+  ctx.stroke();
+  drawActionLogo(ctx, 'task_add', addTaskX + addTaskW / 2, topY + btnH / 2, isAddTaskHov ? '#ffffff' : '#5eead4');
+  interactiveButtons.push({ id: 'todo_add_task_btn', x: addTaskX, y: topY, w: addTaskW, h: btnH });
+
+  // 1. Animated Category Filter Chips Row (gliding pill + "+" icon-only + delete ANY category)
+  const allCategories = ['All', ...(todoData.categories || [])];
+  const chipH = 22;
+  let curX = subX + 8;
+  const canDeleteSelectedCat = (todoSelectedCategory !== 'All' && (todoData.categories || []).length > 1);
+  const reserveTrailing = 24 + (canDeleteSelectedCat ? 24 : 0);
+
+  let activeCatTargetX = null;
+  let activeCatTargetW = null;
+  const catLayouts = [];
+
+  allCategories.forEach(cat => {
+    ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+    const textW = ctx.measureText(cat).width;
+    const chipW = Math.max(32, textW + 14);
+    if (curX + chipW > catRightLimit - reserveTrailing) return;
+    const isCur = todoSelectedCategory === cat;
+    if (isCur) {
+      activeCatTargetX = curX;
+      activeCatTargetW = chipW;
+    }
+    catLayouts.push({ cat, px: curX, chipW, isCur });
+    curX += chipW + 4;
+  });
+
+  if (activeCatTargetX !== null) {
+    if (reducedMotionEnabled || liteModeEnabled) {
+      todoCatPillX = activeCatTargetX;
+      todoCatPillW = activeCatTargetW;
+      isTodoCatPillAnimating = false;
+    } else {
+      const cStep = computeSlidingPillStep(todoCatPillX, todoCatPillW, activeCatTargetX, activeCatTargetW, currentDt, animSpeedMultiplier);
+      todoCatPillX = cStep.x;
+      todoCatPillW = cStep.w;
+      isTodoCatPillAnimating = !cStep.isSettled;
+    }
+  } else {
+    isTodoCatPillAnimating = false;
+  }
+
+  // Inactive category chip backdrops
+  catLayouts.forEach(({ cat, px, chipW }) => {
+    const isHov = hoveredButtonId === `todo_cat_${cat}`;
+    ctx.beginPath();
+    ctx.roundRect(px, topY, chipW, chipH, 7);
+    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.11)' : 'rgba(255, 255, 255, 0.04)';
+    ctx.fill();
+  });
+
+  // Smooth gliding Apple Mint active category pill
+  if (todoCatPillX !== null && todoCatPillW !== null) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(todoCatPillX, topY, todoCatPillW, chipH, 7);
+    ctx.fillStyle = 'rgba(50, 197, 155, 0.22)';
+    ctx.strokeStyle = 'rgba(50, 197, 155, 0.48)';
+    ctx.lineWidth = 0.9;
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Category labels
+  catLayouts.forEach(({ cat, px, chipW, isCur }) => {
+    const isHov = hoveredButtonId === `todo_cat_${cat}`;
+    ctx.font = isCur ? '600 10px "Segoe UI Variable Text", Inter, sans-serif' : '500 10px "Segoe UI Variable Text", Inter, sans-serif';
+    ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(cat, px + chipW / 2, topY + chipH / 2);
+    interactiveButtons.push({ id: `todo_cat_${cat}`, data: cat, x: px, y: topY, w: chipW, h: chipH });
+  });
+
+  // Compact "+" icon-only Add Category button (word "Category" / "Cat" removed)
+  const addCatW = 22;
+  const isAddCatHov = hoveredButtonId === 'todo_add_category_btn';
+  if (curX + addCatW <= catRightLimit) {
+    ctx.beginPath();
+    ctx.roundRect(curX, topY, addCatW, chipH, 7);
+    ctx.fillStyle = isAddCatHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.05)';
+    ctx.fill();
+    drawActionLogo(ctx, 'plus', curX + addCatW / 2, topY + chipH / 2, isAddCatHov ? '#ffffff' : '#a1a1aa');
+    interactiveButtons.push({ id: 'todo_add_category_btn', x: curX, y: topY, w: addCatW, h: chipH });
+    curX += addCatW + 4;
+  }
+
+  // Remove Category button (works for ANY selected category when >1 exists)
+  if (canDeleteSelectedCat && curX + 20 <= catRightLimit) {
+    const delCatW = 20;
+    const isDelCatHov = hoveredButtonId === 'todo_delete_category_btn';
+    ctx.beginPath();
+    ctx.roundRect(curX, topY, delCatW, chipH, 7);
+    ctx.fillStyle = isDelCatHov ? 'rgba(255, 69, 58, 0.28)' : 'rgba(255, 255, 255, 0.05)';
+    ctx.fill();
+    ctx.font = '600 9.5px sans-serif';
+    ctx.fillStyle = isDelCatHov ? '#ff6961' : '#a1a1aa';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✕', curX + delCatW / 2, topY + chipH / 2);
+    interactiveButtons.push({ id: 'todo_delete_category_btn', x: curX, y: topY, w: delCatW, h: chipH });
+  }
+
+  // Optional live Voice-to-Task listening / added toast banner
+  let listY = topY + 30;
+  const showVoiceStatusBar = isTodoListening || (todoVoiceToastUntil > nowPerf && todoVoiceToastText);
+  if (showVoiceStatusBar) {
+    const barH = 26;
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(contentX, listY, contentW, barH, 8);
+    ctx.fillStyle = isTodoListening ? 'rgba(255, 69, 58, 0.14)' : 'rgba(50, 197, 155, 0.14)';
+    ctx.strokeStyle = isTodoListening ? 'rgba(255, 105, 97, 0.36)' : 'rgba(50, 197, 155, 0.38)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    if (isTodoListening) {
+      drawEqualizer('todo_voice_eq', contentX + 12, listY + barH / 2, 18, 10, '#ff6961', 4);
+      ctx.font = '500 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#fecaca';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const liveTxt = voiceInterimText || `Listening (${langMeta.label}) — speak a task...`;
+      ctx.fillText(truncateToWidth(liveTxt, contentW - 46, ctx.font), contentX + 38, listY + barH / 2);
+    } else {
+      drawActionLogo(ctx, 'checklist', contentX + 16, listY + barH / 2, '#5eead4');
+      ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#ccfbf1';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(truncateToWidth(todoVoiceToastText, contentW - 36, ctx.font), contentX + 30, listY + barH / 2);
+    }
+    ctx.restore();
+    listY += barH + 8;
+  }
+
+  // 2. Filtered Tasks List with smooth category-switch slide & fade animation
+  const catAnimP = (reducedMotionEnabled || liteModeEnabled || todoCatAnimStart === 0)
+    ? 1.0
+    : Math.min(1.0, (nowPerf - todoCatAnimStart) / 200);
+  const catEase = 1 - Math.pow(1 - catAnimP, 3);
+  const catSlideX = (1 - catEase) * 12 * todoCatAnimDir;
+
   const allTasks = todoData.tasks || [];
   const filteredTasks = todoSelectedCategory === 'All'
     ? allTasks
     : allTasks.filter(t => t.category === todoSelectedCategory);
 
+  ctx.save();
+  ctx.globalAlpha = subEase * catEase;
+  ctx.translate(subSlideX + catSlideX, 0);
+
   if (filteredTasks.length === 0) {
-    ctx.save();
+    const emptyH = Math.max(150, (y + h) - listY - 14);
     ctx.beginPath();
-    ctx.roundRect(contentX, listY, contentW, 200, 10);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.roundRect(contentX, listY, contentW, emptyH, 10);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.024)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
     ctx.lineWidth = 1;
     ctx.fill();
     ctx.stroke();
 
-    drawVectorSymbol(ctx, 'check', contentX + contentW / 2, listY + 72, 24, '#22c55e');
+    drawVectorSymbol(ctx, 'check', contentX + contentW / 2, listY + emptyH * 0.36, 22, '#32c59b');
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = '600 12.5px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('All caught up', contentX + contentW / 2, listY + 108);
+    ctx.fillStyle = '#e4e4e7';
+    ctx.fillText('All caught up', contentX + contentW / 2, listY + emptyH * 0.55);
 
     ctx.font = '400 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = '#64748b';
-    ctx.fillText('Click + Task to add something to your list', contentX + contentW / 2, listY + 128);
-    ctx.restore();
+    ctx.fillStyle = '#71717a';
+    ctx.fillText('Tap the mic to speak a task or add one manually', contentX + contentW / 2, listY + emptyH * 0.67);
   } else {
     const rowH = 34;
     const rowGap = 6;
-    const maxRows = Math.min(filteredTasks.length, 5);
+    const availH = Math.max(80, (y + h) - listY - 12);
+    const maxRows = Math.min(filteredTasks.length, Math.max(1, Math.floor((availH + rowGap) / (rowH + rowGap))));
 
     for (let i = 0; i < maxRows; i++) {
       const task = filteredTasks[i];
@@ -7604,12 +8724,12 @@ function renderTodoTabView(x, y, w, h) {
       ctx.beginPath();
       ctx.roundRect(contentX, ry, contentW, rowH, 8);
       ctx.fillStyle = isRowHov ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.035)';
-      ctx.strokeStyle = isRowHov ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.strokeStyle = isRowHov ? 'rgba(50, 197, 155, 0.28)' : 'rgba(255, 255, 255, 0.065)';
       ctx.lineWidth = 1;
       ctx.fill();
       ctx.stroke();
 
-      // Circular Checkbox [ ] / [✓]
+      // Circular Mint Checkbox [ ] / [✓]
       const checkSize = 18;
       const checkX = contentX + 12;
       const checkY = ry + (rowH - checkSize) / 2;
@@ -7617,15 +8737,15 @@ function renderTodoTabView(x, y, w, h) {
 
       ctx.beginPath();
       ctx.arc(checkX + checkSize / 2, checkY + checkSize / 2, checkSize / 2, 0, Math.PI * 2);
-      ctx.fillStyle = task.completed ? '#22c55e' : (isCheckHov ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.06)');
-      ctx.strokeStyle = task.completed ? '#16a34a' : 'rgba(255, 255, 255, 0.25)';
-      ctx.lineWidth = 1.2;
+      ctx.fillStyle = task.completed ? '#32c59b' : (isCheckHov ? 'rgba(50, 197, 155, 0.18)' : 'rgba(255, 255, 255, 0.05)');
+      ctx.strokeStyle = task.completed ? '#32c59b' : (isCheckHov ? '#5eead4' : 'rgba(255, 255, 255, 0.24)');
+      ctx.lineWidth = 1.25;
       ctx.fill();
       ctx.stroke();
 
       if (task.completed) {
-        ctx.font = '700 11px sans-serif';
-        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 10.5px sans-serif';
+        ctx.fillStyle = '#09090b';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('✓', checkX + checkSize / 2, checkY + checkSize / 2);
@@ -7642,22 +8762,22 @@ function renderTodoTabView(x, y, w, h) {
 
       ctx.beginPath();
       ctx.roundRect(catBadgeX, catBadgeY, catBadgeW, catBadgeH, 4);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.fillStyle = 'rgba(50, 197, 155, 0.10)';
+      ctx.strokeStyle = 'rgba(50, 197, 155, 0.22)';
       ctx.lineWidth = 1;
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = '#94a3b8';
+      ctx.fillStyle = '#99f6e4';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(catBadge, catBadgeX + catBadgeW / 2, catBadgeY + catBadgeH / 2);
 
-      // Task Description Text (with strike-through if completed)
+      // Task Text (crossed out when completed)
       const textX = catBadgeX + catBadgeW + 10;
       const maxTextW = contentW - (textX - contentX) - 36;
       ctx.font = task.completed ? '500 11.5px "Segoe UI Variable Text", Inter, sans-serif' : '600 12px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = task.completed ? '#64748b' : '#f4f4f5';
+      ctx.fillStyle = task.completed ? '#71717a' : '#f4f4f5';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       const renderedText = truncateToWidth(task.text, maxTextW, ctx.font);
@@ -7668,12 +8788,12 @@ function renderTodoTabView(x, y, w, h) {
         ctx.beginPath();
         ctx.moveTo(textX, ry + rowH / 2);
         ctx.lineTo(textX + textW, ry + rowH / 2);
-        ctx.strokeStyle = '#64748b';
+        ctx.strokeStyle = '#71717a';
         ctx.lineWidth = 1.2;
         ctx.stroke();
       }
 
-      // Delete ✖ button
+      // Delete ✕ button
       const delW = 18;
       const delH = 18;
       const delX = contentX + contentW - delW - 10;
@@ -7682,17 +8802,18 @@ function renderTodoTabView(x, y, w, h) {
 
       ctx.beginPath();
       ctx.roundRect(delX, delY, delW, delH, 4);
-      ctx.fillStyle = isDelHov ? 'rgba(239, 68, 68, 0.25)' : 'transparent';
+      ctx.fillStyle = isDelHov ? 'rgba(255, 69, 58, 0.25)' : 'transparent';
       ctx.fill();
 
       ctx.font = '600 10px sans-serif';
-      ctx.fillStyle = isDelHov ? '#ef4444' : '#71717a';
+      ctx.fillStyle = isDelHov ? '#ff6961' : '#71717a';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('✕', delX + delW / 2, delY + delH / 2);
       interactiveButtons.push({ id: `todo_del_${task.id}`, data: task.id, x: delX, y: delY, w: delW, h: delH });
     }
   }
+  ctx.restore();
 }
 
 function renderHomeView(x, y, w, h) {
@@ -7766,9 +8887,9 @@ function renderHomeView(x, y, w, h) {
 
   // 1b. Latest Notification Card below Date/Battery
   const notifCardX = clockX;
-  const notifCardY = y + 106;
-  const notifCardW = 132;
-  const notifCardH = 44;
+  const notifCardY = y + 100;
+  const notifCardW = 148;
+  const notifCardH = 40;
   const isNotifHov = hoveredButtonId === 'nav_notif_card';
 
   ctx.save();
@@ -7791,19 +8912,19 @@ function renderHomeView(x, y, w, h) {
     const appName = latestNotif.app || 'Notification';
     const bodySnippet = latestNotif.title || latestNotif.body || 'New alert';
 
-    drawVectorSymbol(ctx, 'bell', notifCardX + 13, notifCardY + 14, 10, '#38bdf8');
+    drawVectorSymbol(ctx, 'bell', notifCardX + 13, notifCardY + 13, 9.5, '#f5b942');
     ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#e4e4e7';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(truncateToWidth(appName, notifCardW - 28, ctx.font), notifCardX + 23, notifCardY + 14);
+    ctx.fillText(truncateToWidth(appName, notifCardW - 28, ctx.font), notifCardX + 23, notifCardY + 13);
 
     // Body text snippet
     ctx.font = '400 9.5px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText(truncateToWidth(bodySnippet, notifCardW - 16, ctx.font), notifCardX + 8, notifCardY + 32);
+    ctx.fillText(truncateToWidth(bodySnippet, notifCardW - 16, ctx.font), notifCardX + 8, notifCardY + 29);
   } else {
-    drawVectorSymbol(ctx, 'bell', notifCardX + 14, notifCardY + notifCardH / 2, 10, '#64748b');
+    drawVectorSymbol(ctx, 'bell', notifCardX + 14, notifCardY + notifCardH / 2, 9.5, '#64748b');
     ctx.font = '500 10px "Segoe UI Variable Text", Inter, sans-serif';
     ctx.fillStyle = '#64748b';
     ctx.textAlign = 'left';
@@ -7814,11 +8935,11 @@ function renderHomeView(x, y, w, h) {
 
   interactiveButtons.push({ id: 'nav_notif_card', x: notifCardX, y: notifCardY, w: notifCardW, h: notifCardH });
 
-  // 2. Expanded Right Calendar Widget Card (minimal Home layout without Antigravity card)
-  const calX = clockX + 168;
+  // 2. Compact Right Calendar Widget (tight Apple day spacing, fits narrower Home capsule)
+  const calW = 196;
+  const calH = 100;
+  const calX = x + w - calW - 18;
   const calY = y + 40;
-  const calW = (x + w - 20) - calX;
-  const calH = 110;
   renderCalendarWidget(calX, calY, calW, calH);
 }
 
@@ -8929,14 +10050,14 @@ function renderDropZoneView(x, y, w, h) {
 
       ctx.beginPath();
       ctx.roundRect(openBtnX, openBtnY, openBtnW, openBtnH, 6);
-      ctx.fillStyle = isOpenHov ? '#2563eb' : 'rgba(37, 99, 235, 0.2)';
-      ctx.strokeStyle = isOpenHov ? '#3b82f6' : 'rgba(59, 130, 246, 0.4)';
+      ctx.fillStyle = isOpenHov ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.10)';
+      ctx.strokeStyle = isOpenHov ? 'rgba(255, 255, 255, 0.36)' : 'rgba(255, 255, 255, 0.18)';
       ctx.lineWidth = 1;
       ctx.fill();
       ctx.stroke();
 
       ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = isOpenHov ? '#ffffff' : '#93c5fd';
+      ctx.fillStyle = '#f4f4f5';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('Open ↗', openBtnX + openBtnW / 2, openBtnY + openBtnH / 2);
