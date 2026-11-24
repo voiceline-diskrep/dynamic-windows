@@ -6280,10 +6280,8 @@ function renderExpandedView(x, y, w, h, alpha) {
     return;
   }
 
-  // Navigation Pills at Top
-  renderTopNav(x, y, w);
-
-  // View Body with Directional Slide & Cross-fade Transition
+  // View Body shifted upward cleanly so bottom navigation dock has dedicated space
+  const contentY = y - 26;
   const now = performance.now();
   const tabDuration = Math.max(120, 220 / (animSpeedMultiplier || 1.0));
   const elapsed = now - tabTransitionStartTime;
@@ -6298,7 +6296,7 @@ function renderExpandedView(x, y, w, h, alpha) {
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(x - 20, y + 38, w + 40, Math.max(0, h - 38));
+    ctx.rect(x - 20, y + 4, w + 40, Math.max(0, h - 42));
     ctx.clip();
 
     // 1. Outgoing View
@@ -6308,7 +6306,7 @@ function renderExpandedView(x, y, w, h, alpha) {
       ctx.save();
       ctx.globalAlpha = outAlpha;
       ctx.translate(offsets.outgoingOffset, 0);
-      renderViewContent(previousView, x, y, w, h);
+      renderViewContent(previousView, x, contentY, w, h);
       ctx.restore();
       interactiveButtons.length = savedLen;
     }
@@ -6320,7 +6318,7 @@ function renderExpandedView(x, y, w, h, alpha) {
     ctx.save();
     ctx.globalAlpha = inAlpha;
     ctx.translate(inOffset, 0);
-    renderViewContent(currentView, x, y, w, h);
+    renderViewContent(currentView, x, contentY, w, h);
     ctx.restore();
     for (let i = incomingStartIndex; i < interactiveButtons.length; i++) {
       interactiveButtons[i].x += inOffset;
@@ -6328,8 +6326,11 @@ function renderExpandedView(x, y, w, h, alpha) {
 
     ctx.restore();
   } else {
-    renderViewContent(currentView, x, y, w, h);
+    renderViewContent(currentView, x, contentY, w, h);
   }
+
+  // Bottom Icon-Only -> Expanding Active Tab Dock
+  renderTopNav(x, y, w, h);
 
   ctx.restore();
 }
@@ -6639,39 +6640,189 @@ function renderCallView(x, y, w, h) {
   });
 }
 
-function renderTopNav(x, y, w) {
+const navTabWidths = {};
+
+function drawNavTabIcon(c, tabId, cx, cy, color, hasBadge = false) {
+  c.save();
+  c.strokeStyle = color;
+  c.fillStyle = color;
+  c.lineWidth = 1.35;
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+
+  if (tabId === 'nav_home') {
+    c.beginPath();
+    c.moveTo(cx - 4.8, cy + 0.2);
+    c.lineTo(cx, cy - 4.3);
+    c.lineTo(cx + 4.8, cy + 0.2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx - 3.3, cy - 0.6);
+    c.lineTo(cx - 3.3, cy + 4.0);
+    c.lineTo(cx + 3.3, cy + 4.0);
+    c.lineTo(cx + 3.3, cy - 0.6);
+    c.stroke();
+  } else if (tabId === 'nav_notif') {
+    c.beginPath();
+    c.arc(cx, cy - 1.0, 3.0, Math.PI, 0, false);
+    c.lineTo(cx + 3.8, cy + 2.5);
+    c.lineTo(cx - 3.8, cy + 2.5);
+    c.closePath();
+    c.stroke();
+    c.beginPath();
+    c.arc(cx, cy + 3.8, 1.0, 0, Math.PI * 2);
+    c.fill();
+    if (hasBadge) {
+      c.beginPath();
+      c.arc(cx + 4.2, cy - 3.6, 2.0, 0, Math.PI * 2);
+      c.fillStyle = '#ff453a';
+      c.fill();
+    }
+  } else if (tabId === 'nav_calendar') {
+    c.beginPath();
+    c.roundRect(cx - 4.2, cy - 3.5, 8.4, 7.6, 1.8);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx - 2.0, cy - 4.8);
+    c.lineTo(cx - 2.0, cy - 2.8);
+    c.moveTo(cx + 2.0, cy - 4.8);
+    c.lineTo(cx + 2.0, cy - 2.8);
+    c.moveTo(cx - 4.0, cy - 1.0);
+    c.lineTo(cx + 4.0, cy - 1.0);
+    c.stroke();
+  } else if (tabId === 'nav_clock') {
+    c.beginPath();
+    c.arc(cx, cy, 4.4, 0, Math.PI * 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx, cy - 2.4);
+    c.lineTo(cx, cy);
+    c.lineTo(cx + 2.0, cy + 1.0);
+    c.stroke();
+  } else if (tabId === 'nav_todo') {
+    c.beginPath();
+    c.roundRect(cx - 3.8, cy - 4.4, 7.6, 8.8, 1.6);
+    c.stroke();
+    c.lineWidth = 1.1;
+    c.beginPath();
+    c.moveTo(cx - 1.8, cy - 1.4);
+    c.lineTo(cx + 1.8, cy - 1.4);
+    c.moveTo(cx - 1.8, cy + 0.8);
+    c.lineTo(cx + 1.8, cy + 0.8);
+    c.moveTo(cx - 1.8, cy + 2.8);
+    c.lineTo(cx + 0.6, cy + 2.8);
+    c.stroke();
+  } else if (tabId === 'nav_media') {
+    c.beginPath();
+    c.arc(cx - 2.4, cy + 2.8, 1.5, 0, Math.PI * 2);
+    c.fill();
+    c.beginPath();
+    c.arc(cx + 2.4, cy + 1.8, 1.5, 0, Math.PI * 2);
+    c.fill();
+    c.beginPath();
+    c.moveTo(cx - 1.0, cy + 2.6);
+    c.lineTo(cx - 1.0, cy - 3.2);
+    c.lineTo(cx + 3.8, cy - 4.2);
+    c.lineTo(cx + 3.8, cy + 1.6);
+    c.stroke();
+  } else if (tabId === 'nav_call') {
+    c.beginPath();
+    c.arc(cx, cy, 4.0, 0.75 * Math.PI, 1.75 * Math.PI);
+    c.stroke();
+  } else if (tabId === 'nav_dropzone') {
+    c.beginPath();
+    c.moveTo(cx - 4.2, cy + 0.8);
+    c.lineTo(cx - 4.2, cy + 3.8);
+    c.lineTo(cx + 4.2, cy + 3.8);
+    c.lineTo(cx + 4.2, cy + 0.8);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx, cy - 4.2);
+    c.lineTo(cx, cy + 1.4);
+    c.moveTo(cx - 2.2, cy - 0.6);
+    c.lineTo(cx, cy + 1.6);
+    c.lineTo(cx + 2.2, cy - 0.6);
+    c.stroke();
+  } else if (tabId === 'nav_clipboard') {
+    c.beginPath();
+    c.roundRect(cx - 3.6, cy - 3.4, 7.2, 7.8, 1.5);
+    c.stroke();
+    c.beginPath();
+    c.roundRect(cx - 1.8, cy - 4.8, 3.6, 2.0, 0.8);
+    c.stroke();
+  } else if (tabId === 'nav_settings') {
+    c.beginPath();
+    c.arc(cx, cy, 1.8, 0, Math.PI * 2);
+    c.stroke();
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI) / 3;
+      c.beginPath();
+      c.moveTo(cx + Math.cos(a) * 2.6, cy + Math.sin(a) * 2.6);
+      c.lineTo(cx + Math.cos(a) * 4.3, cy + Math.sin(a) * 4.3);
+      c.stroke();
+    }
+  }
+  c.restore();
+}
+
+function renderTopNav(x, y, w, h = 160) {
   const hasUnreadNotifs = notificationList.some(n => !n.read && !String(`${n.app || ''} ${n.title || ''}`).toLowerCase().includes('antigravity'));
   const navItems = [
-    { id: 'nav_home', label: 'Home', w: 38 },
-    { id: 'nav_notif', label: hasUnreadNotifs ? 'Notif •' : 'Notif', w: 42 },
-    { id: 'nav_calendar', label: 'Calendar', w: 46 },
-    { id: 'nav_clock', label: 'Clock', w: 36 },
-    { id: 'nav_todo', label: 'Notes', w: 38 },
-    { id: 'nav_media', label: 'Media', w: 38 }
+    { id: 'nav_home', label: 'Home', expW: 66 },
+    { id: 'nav_notif', label: 'Notif', expW: 64, badge: hasUnreadNotifs },
+    { id: 'nav_calendar', label: 'Calendar', expW: 78 },
+    { id: 'nav_clock', label: 'Clock', expW: 64 },
+    { id: 'nav_todo', label: 'Notes', expW: 66 },
+    { id: 'nav_media', label: 'Media', expW: 66 }
   ];
   if (hasActiveCall() || currentView === 'call') {
-    navItems.push({ id: 'nav_call', label: 'Call', w: 34 });
+    navItems.push({ id: 'nav_call', label: 'Call', expW: 58 });
   }
   navItems.push(
-    { id: 'nav_dropzone', label: 'Shelf', w: 36 },
-    { id: 'nav_clipboard', label: 'Clip', w: 32 },
-    { id: 'nav_settings', label: '⚙', w: 24 }
+    { id: 'nav_dropzone', label: 'Shelf', expW: 64 },
+    { id: 'nav_clipboard', label: 'Clip', expW: 58 },
+    { id: 'nav_settings', label: '', expW: 26, iconOnly: true }
   );
 
   const pillH = 22;
+  const iconOnlyW = 26;
   const spacing = 4;
   let curX = x + 14;
-  const topY = y + 12;
+  const topY = y + h - pillH - 10;
+
+  // Delicate hairline above bottom dock
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x + 16, topY - 5);
+  ctx.lineTo(x + w - 16, topY - 5);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
 
   let activePillX = null;
   let activePillW = null;
+  let anyTabWidthAnimating = false;
   const itemLayouts = [];
 
   navItems.forEach((item) => {
+    const isCur = !item.iconOnly && (currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif'));
+    const targetW = isCur ? item.expW : iconOnlyW;
+    let curW = navTabWidths[item.id];
+    if (curW === undefined || reducedMotionEnabled || liteModeEnabled) {
+      curW = targetW;
+    } else if (Math.abs(targetW - curW) > 0.25) {
+      curW = computeLiquidHeightStep(curW, targetW, currentDt, animSpeedMultiplier * 1.35);
+      if (Math.abs(targetW - curW) > 0.25) anyTabWidthAnimating = true;
+      else curW = targetW;
+    } else {
+      curW = targetW;
+    }
+    navTabWidths[item.id] = curW;
+
     const px = curX;
-    const pillW = item.w;
+    const pillW = curW;
     curX += pillW + spacing;
-    const isCur = currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif');
     if (isCur) {
       activePillX = px;
       activePillW = pillW;
@@ -6684,9 +6835,9 @@ function renderTopNav(x, y, w) {
     const step = computeSlidingPillStep(navIndicatorX, navIndicatorW, activePillX, activePillW, currentDt, animSpeedMultiplier);
     navIndicatorX = step.x;
     navIndicatorW = step.w;
-    isNavPillAnimating = !step.isSettled;
+    isNavPillAnimating = !step.isSettled || anyTabWidthAnimating;
   } else {
-    isNavPillAnimating = false;
+    isNavPillAnimating = anyTabWidthAnimating;
   }
 
   // 1. Inactive pill base backgrounds
@@ -6694,11 +6845,11 @@ function renderTopNav(x, y, w) {
     const isHov = hoveredButtonId === item.id;
     ctx.beginPath();
     ctx.roundRect(px, topY, pillW, pillH, 11);
-    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.05)';
+    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.13)' : 'rgba(255, 255, 255, 0.055)';
     ctx.fill();
   });
 
-  // 2. Smooth gliding active indicator pill (Apple luminous frosted glass — never generic blue)
+  // 2. Smooth gliding active indicator pill (Apple luminous frosted glass)
   if (navIndicatorX !== null && navIndicatorW !== null) {
     ctx.save();
     ctx.beginPath();
@@ -6715,14 +6866,29 @@ function renderTopNav(x, y, w) {
     ctx.restore();
   }
 
-  // 3. Tab text labels & button registration
+  // 3. Tab vector logos + smoothly revealed active text label
   itemLayouts.forEach(({ item, px, pillW, isCur }) => {
     const isHov = hoveredButtonId === item.id;
-    ctx.font = isCur ? '700 10px "Segoe UI Variable Text", Inter, sans-serif' : '600 10px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.fillStyle = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(item.label, px + pillW / 2, topY + pillH / 2);
+    const fg = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
+    const expandRatio = item.iconOnly ? 0 : Math.max(0, Math.min(1, (pillW - iconOnlyW) / Math.max(1, item.expW - iconOnlyW)));
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(px, topY, pillW, pillH, 11);
+    ctx.clip();
+
+    const iconCx = px + (iconOnlyW / 2) * (1 - expandRatio) + 13 * expandRatio;
+    drawNavTabIcon(ctx, item.id, iconCx, topY + pillH / 2, fg, Boolean(item.badge && !isCur));
+
+    if (expandRatio > 0.12 && item.label) {
+      ctx.globalAlpha = Math.min(1, (expandRatio - 0.12) / 0.72);
+      ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(item.label, px + 23, topY + pillH / 2);
+    }
+    ctx.restore();
 
     interactiveButtons.push({ id: item.id, x: px, y: topY, w: pillW, h: pillH });
   });
@@ -8236,16 +8402,6 @@ function renderTodoTabView(x, y, w, h) {
 
   const isNotesMode = notesSubMode === 'notes';
   const modeAccent = isNotesMode ? '#f5b942' : '#32c59b';
-
-  // Subtle ambient mode wash so Notes (Warm Apple Amber) and To-Do (Apple Mint) feel unmistakably distinct
-  ctx.save();
-  const modeWash = ctx.createLinearGradient(x, y + 34, x, y + h);
-  modeWash.addColorStop(0.0, colorWithAlpha(modeAccent, 0.08));
-  modeWash.addColorStop(0.38, colorWithAlpha(modeAccent, 0.02));
-  modeWash.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = modeWash;
-  ctx.fillRect(x, y + 34, w, h - 34);
-  ctx.restore();
 
   // 0. Animated 2-Tab Segmented Switcher: [ Notes (Amber + Doc) | To-Do (Mint + Checklist) ]
   const subTabs = [
