@@ -5,8 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const configManager = require('../src/main/config-manager');
 
-test('FontConfig: default font family is Theater', () => {
-  assert.strictEqual(configManager.DEFAULT_CONFIG.fontFamily, 'Theater');
+test('FontConfig: default font family is Segoe UI Variable Text', () => {
+  assert.strictEqual(configManager.DEFAULT_CONFIG.fontFamily, 'Segoe UI Variable Text');
   const font = configManager.get('fontFamily');
   assert.ok(typeof font === 'string' && font.length > 0);
 });

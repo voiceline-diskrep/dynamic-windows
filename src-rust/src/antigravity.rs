@@ -2,7 +2,7 @@
 
 use regex::Regex;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -74,6 +74,7 @@ pub struct AntigravityMonitor {
     projects: HashMap<String, ProjectState>,
     file_offsets: HashMap<String, u64>,
     last_state: ProjectState,
+    pub enabled_providers: HashSet<String>,
     pub paused: bool,
 }
 
@@ -135,6 +136,10 @@ impl AntigravityMonitor {
     }
 
     pub fn with_brain_dir(brain_dir: PathBuf) -> Self {
+        let mut enabled_providers = HashSet::new();
+        enabled_providers.insert("antigravity".to_string());
+        enabled_providers.insert("claude".to_string());
+        enabled_providers.insert("codex".to_string());
         Self {
             brain_dir,
             claude_projects_dir: PathBuf::new(),
@@ -142,8 +147,13 @@ impl AntigravityMonitor {
             projects: HashMap::new(),
             file_offsets: HashMap::new(),
             last_state: ProjectState::default_idle(),
+            enabled_providers,
             paused: false,
         }
+    }
+
+    pub fn set_enabled_providers(&mut self, list: &[String]) {
+        self.enabled_providers = list.iter().map(|s| s.to_lowercase()).collect();
     }
 
     pub fn has_active(&self) -> bool {
@@ -520,16 +530,15 @@ impl AntigravityMonitor {
 
     /// Returns true if visible state changed.
     pub fn poll(&mut self) -> bool {
-        if self.paused || !self.brain_dir.exists() {
+        if self.paused {
             return false;
         }
-        let Ok(entries) = fs::read_dir(&self.brain_dir) else {
-            return false;
-        };
-        let now = now_ms();
         let mut any_changed = false;
+        if self.enabled_providers.contains("antigravity") && self.brain_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&self.brain_dir) {
+                let now = now_ms();
 
-        for entry in entries.flatten() {
+                for entry in entries.flatten() {
             let Ok(ft) = entry.file_type() else { continue };
             if !ft.is_dir() {
                 continue;
@@ -706,10 +715,12 @@ impl AntigravityMonitor {
                 break;
             }
         }
-        if self.poll_claude_code() {
+            }
+        }
+        if self.enabled_providers.contains("claude") && self.poll_claude_code() {
             any_changed = true;
         }
-        if self.poll_codex() {
+        if self.enabled_providers.contains("codex") && self.poll_codex() {
             any_changed = true;
         }
         any_changed

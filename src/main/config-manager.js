@@ -29,7 +29,8 @@ const DEFAULT_CONFIG = {
   soundEffects: true, // Tactical Web Audio UI sound effects
   soundVolume: 0.7, // 0.05 to 1.00 volume
   soundPreset: 'modern', // 'modern' | 'mechanical' | 'soft' | 'retro'
-  fontFamily: 'Theater', // App-wide typography: 'Theater' | 'Segoe UI Variable Text' | 'Inter' | custom
+  fontFamily: 'Segoe UI Variable Text', // App-wide typography: 'Segoe UI Variable Text' | custom
+  fpsLimit: 0, // 0 = Uncapped, or 30 / 60 / 90 / 144
   userName: '', // Personalized user name for greetings and dynamic island interactions
   startup: false,
   startupTakeover: false,

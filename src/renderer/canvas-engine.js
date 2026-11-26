@@ -43,20 +43,21 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
 // -------------------------------------------------------------
-// Typography & Custom Font Management (Theater default)
+// Typography & Custom Font Management (Segoe UI Variable Text default)
 // -------------------------------------------------------------
-let appFontFamily = 'Theater';
+let appFontFamily = 'Segoe UI Variable Text';
 try {
   const savedFont = localStorage.getItem('app_font_family');
-  if (savedFont) appFontFamily = savedFont;
+  if (savedFont && savedFont !== 'Theater') appFontFamily = savedFont;
 } catch (e) {}
 
 function applyFontFamily(font) {
   if (!font || typeof font !== 'string') return;
-  appFontFamily = font.trim();
+  const clean = font.trim();
+  appFontFamily = (!clean || clean === 'Default') ? 'Segoe UI Variable Text' : clean;
   fontReplaceCache.clear();
   try { localStorage.setItem('app_font_family', appFontFamily); } catch (e) {}
-  document.documentElement.style.setProperty('--app-font-family', `"${appFontFamily}", 'Segoe UI Variable Text', -apple-system, sans-serif`);
+  document.documentElement.style.setProperty('--app-font-family', `"${appFontFamily}", 'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif`);
   if (typeof requestFrame === 'function') requestFrame();
 }
 
@@ -658,6 +659,21 @@ let tabBarOrder = DEFAULT_TAB_ORDER.slice();
 let tabBarHidden = [];
 let currentRailW = 44;
 let targetRailW = 44;
+let fpsLimit = 0; // 0 = Uncapped, or 30 / 60 / 90 / 144
+let lastFpsFrameAt = 0;
+let displayModeBtnAnim = 0.0; // 0.0 = island, 1.0 = notch
+let displayModeClickPulse = 0.0; // 1.0 -> 0.0 spring bounce on click
+window.__dwOnboardingActive = false;
+window.dwSetOnboardingActive = function (active) {
+  window.__dwOnboardingActive = Boolean(active);
+  if (active) {
+    targetProgress = 0.0;
+    animProgress = 0.0;
+    hideNotesDocOverlay();
+    setIgnoreMouseEventsCached(false);
+  }
+  requestFrame();
+};
 let mediaTabLyricsVisible = true;
 let mediaLyricsPanelAnim = 1.0;
 let currentExpandedH = UI.HOME_H;
@@ -2706,7 +2722,7 @@ canvas.addEventListener('mousemove', (e) => {
   mouseX = e.clientX;
   mouseY = e.clientY;
 
-  if (isInlineModalOpen) {
+  if (isInlineModalOpen || window.__dwOnboardingActive) {
     if (leaveTimer) {
       clearTimeout(leaveTimer);
       leaveTimer = null;
@@ -3470,7 +3486,11 @@ function handleButtonClick(id, data) {
     ipcRenderer.send('set-dynamic-lyrics', dynamicLyricsEnabled);
   } else if (id === 'toggle_display_mode') {
     displayMode = displayMode === 'island' ? 'notch' : 'island';
+    displayModeClickPulse = 1.0;
+    isNavPillAnimating = true;
+    soundFX.play('tap');
     ipcRenderer.send('set-display-mode', displayMode);
+    requestFrame();
   } else if (id === 'btn_top_exit') {
     soundFX.play('click');
     ipcRenderer.send('exit-app');
@@ -3838,6 +3858,18 @@ function applyTabBarConfig(cfg) {
 ipcRenderer.on('tab-bar-config-changed', (event, data) => {
   applyTabBarConfig(data);
 });
+ipcRenderer.on('fps-limit-changed', (event, data) => {
+  if (data && typeof data.fpsLimit === 'number') {
+    fpsLimit = Math.max(0, Math.round(data.fpsLimit));
+    lastFpsFrameAt = 0;
+    requestFrame();
+  }
+});
+ipcRenderer.on('start-onboarding', (event, data) => {
+  if (typeof window.startDynamicOnboarding === 'function') {
+    window.startDynamicOnboarding(Boolean(data && data.replay));
+  }
+});
 ipcRenderer.on('performance-settings-changed', (event, data) => {
   if (data && typeof data === 'object') {
     if (typeof data.liteMode === 'boolean') liteModeEnabled = data.liteMode;
@@ -3958,14 +3990,20 @@ try {
       if (typeof res.config.soundPreset === 'string') {
         soundFX.setPreset(res.config.soundPreset);
       }
+      if (typeof res.config.fpsLimit === 'number') {
+        fpsLimit = Math.max(0, Math.round(res.config.fpsLimit));
+      }
+      if (typeof res.config.fontFamily === 'string' && res.config.fontFamily.trim()) {
+        applyFontFamily(res.config.fontFamily);
+      }
       if (typeof res.config.userName === 'string') {
         currentUserName = res.config.userName.trim();
       }
-      if (!currentUserName && !hasPromptedForUserName) {
+      if (res.config.onboardingCompleted === false && typeof window.startDynamicOnboarding === 'function') {
         hasPromptedForUserName = true;
         setTimeout(() => {
-          promptForUserName(true);
-        }, 650);
+          window.startDynamicOnboarding(false);
+        }, 420);
       } else if (currentUserName) {
         activeGreeting = getNextPersonalizedGreeting(currentUserName);
         setTimeout(() => {
@@ -4200,6 +4238,15 @@ function animate(now) {
     clearTimeout(idleFrameTimeout);
     idleFrameTimeout = null;
   }
+  if (fpsLimit > 0 && lastFpsFrameAt > 0) {
+    const minFrameMs = 1000 / fpsLimit;
+    if ((now - lastFpsFrameAt) < (minFrameMs - 0.5)) {
+      animFrameRequested = true;
+      requestAnimationFrame(animate);
+      return;
+    }
+  }
+  lastFpsFrameAt = now;
   const rawDt = Math.max(0, (now - lastTime) / 1000);
   // Prevent first waking frame after 0 FPS idle sleep from jumping 50ms in one step
   const dt = rawDt > 0.06 ? (1 / 120) : Math.min(rawDt, 0.05);
@@ -4615,6 +4662,30 @@ function getNotificationBannerWidth() {
   return Math.max(320, Math.min(440, Math.round(maxTextW + 108)));
 }
 
+function getHorizontalNavRequiredWidth() {
+  const navItems = getConfiguredNavItems();
+  const pillW = 28;
+  const gap = 4;
+  let total = 0;
+  ctx.save();
+  ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+  navItems.forEach((item) => {
+    const isCur = (currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif'));
+    const isHov = hoveredButtonId === item.id;
+    const labelW = item.label ? Math.ceil(ctx.measureText(item.label).width) : 0;
+    const targetW = ((isCur || isHov) && labelW > 0) ? (pillW + labelW + 10) : pillW;
+    const measuredW = Math.max(targetW, navTabWidths[item.id] || pillW);
+    total += measuredW;
+  });
+  ctx.restore();
+  total += Math.max(0, navItems.length - 1) * gap;
+  if (tabBarPosition === 'top') {
+    // 14px left pad + tabs + 12px gap + 72px Notch/Island + 6px gap + 22px X + 14px right pad
+    return Math.ceil(total + 14 + 12 + 72 + 6 + 22 + 14);
+  }
+  return Math.ceil(total + 28);
+}
+
 function getTargetExpandedWidthForView(view) {
   if (view === 'notification_banner') return getNotificationBannerWidth();
   const baseW = (view === 'home')
@@ -4623,6 +4694,9 @@ function getTargetExpandedWidthForView(view) {
   if (tabBarPosition === 'left' || tabBarPosition === 'right') {
     const extraRail = Math.max(0, Math.round((currentRailW || 44) - 44));
     return baseW + extraRail;
+  }
+  if (tabBarPosition === 'top' || tabBarPosition === 'bottom') {
+    return Math.min(960, Math.max(baseW, getHorizontalNavRequiredWidth()));
   }
   return baseW;
 }
@@ -5112,6 +5186,11 @@ function paintCapsuleSurface(c, {
 function render() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   interactiveButtons = [];
+
+  if (window.__dwOnboardingActive) {
+    hideNotesDocOverlay();
+    return;
+  }
 
   if (gameModeEnabled && isGameModeFullscreen && !gameModeOpenedAnyway && !pendingPrompt) {
     hideNotesDocOverlay();
@@ -7278,47 +7357,91 @@ function renderTopNav(x, y, w, h = 160) {
   const exitX = x + w - rightRailReserve - exitW - 14;
   const isExitHov = hoveredButtonId === 'btn_top_exit';
 
-  // Display Mode Quick Switcher immediately to the left of the Exit Button
+  // Display Mode Quick Switcher immediately to the left of the Exit Button (with smooth morph & click bounce animation)
   const modeW = 72;
   const modeH = 22;
   const modeX = exitX - modeW - 6;
   const isModeHov = hoveredButtonId === 'toggle_display_mode';
 
+  const targetModeAnim = displayMode === 'notch' ? 1.0 : 0.0;
+  if (reducedMotionEnabled || liteModeEnabled) {
+    displayModeBtnAnim = targetModeAnim;
+    displayModeClickPulse = 0.0;
+  } else {
+    const mk = Math.min(1.0, (currentDt || 0.016) * 14.0 * (animSpeedMultiplier || 1.0));
+    if (Math.abs(targetModeAnim - displayModeBtnAnim) > 0.004) {
+      displayModeBtnAnim += (targetModeAnim - displayModeBtnAnim) * mk;
+      isNavPillAnimating = true;
+    } else {
+      displayModeBtnAnim = targetModeAnim;
+    }
+    if (displayModeClickPulse > 0.005) {
+      displayModeClickPulse = Math.max(0, displayModeClickPulse - (currentDt || 0.016) * 3.8 * (animSpeedMultiplier || 1.0));
+      isNavPillAnimating = true;
+    } else {
+      displayModeClickPulse = 0;
+    }
+  }
+
+  const modeT = displayModeBtnAnim;
+  const modeScale = 1.0 - Math.sin(displayModeClickPulse * Math.PI) * 0.08 + Math.sin(displayModeClickPulse * Math.PI * 2) * 0.02;
+
+  ctx.save();
+  ctx.translate(modeX + modeW / 2, topY + modeH / 2);
+  ctx.scale(modeScale, modeScale);
+  ctx.translate(-(modeX + modeW / 2), -(topY + modeH / 2));
+
   ctx.beginPath();
   ctx.roundRect(modeX, topY, modeW, modeH, 11);
-  ctx.fillStyle = isModeHov ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.06)';
+  const pulseFlash = displayModeClickPulse * 0.14;
+  ctx.fillStyle = isModeHov
+    ? `rgba(255, 255, 255, ${(0.15 + pulseFlash).toFixed(3)})`
+    : `rgba(255, 255, 255, ${(0.06 + pulseFlash).toFixed(3)})`;
   ctx.fill();
+  if (displayModeClickPulse > 0.02) {
+    ctx.strokeStyle = `rgba(255, 255, 255, ${(0.35 * displayModeClickPulse).toFixed(3)})`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
 
-  // Monochrome black & white vector island / notch emblem
+  // Smoothly morphing monochrome vector island <-> notch emblem
   const iconCx = modeX + 13;
   const iconCy = topY + modeH / 2;
+  const topCornerR = 3.5 * (1 - modeT);
+  const botCornerR = 3.5 - 0.5 * modeT;
+  const embH = 7.0 + 1.0 * modeT;
   ctx.save();
-  if (displayMode === 'island') {
-    ctx.beginPath();
-    ctx.roundRect(iconCx - 7, iconCy - 3.5, 14, 7, 3.5);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(iconCx - 2.5, iconCy, 1.2, 0, Math.PI * 2);
-    ctx.fillStyle = '#000000';
-    ctx.fill();
-  } else {
-    ctx.beginPath();
-    ctx.roundRect(iconCx - 7, iconCy - 4, 14, 8, [0, 0, 3, 3]);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(iconCx, iconCy - 1, 1.2, 0, Math.PI * 2);
-    ctx.fillStyle = '#000000';
-    ctx.fill();
-  }
+  ctx.beginPath();
+  ctx.roundRect(iconCx - 7, iconCy - embH / 2, 14, embH, [topCornerR, topCornerR, botCornerR, botCornerR]);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(iconCx - 2.5 * (1 - modeT), iconCy - 1.0 * modeT, 1.2, 0, Math.PI * 2);
+  ctx.fillStyle = '#000000';
+  ctx.fill();
   ctx.restore();
 
+  // Smooth vertical cross-fade/slide between "Notch" and "Island"
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(iconCx + 9, topY + 1, modeW - 24, modeH - 2);
+  ctx.clip();
   ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
-  ctx.fillStyle = '#cbd5e1';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(displayMode === 'island' ? 'Notch' : 'Island', iconCx + 11, topY + modeH / 2);
+  const slidePx = 9;
+  if (1 - modeT > 0.02) {
+    ctx.globalAlpha = 1 - modeT;
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText('Notch', iconCx + 11, topY + modeH / 2 - modeT * slidePx);
+  }
+  if (modeT > 0.02) {
+    ctx.globalAlpha = modeT;
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText('Island', iconCx + 11, topY + modeH / 2 + (1 - modeT) * slidePx);
+  }
+  ctx.restore();
+  ctx.restore();
   interactiveButtons.push({ id: 'toggle_display_mode', x: modeX, y: topY, w: modeW, h: modeH });
 
   // Draw Exit Application Button (✕)

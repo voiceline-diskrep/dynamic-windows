@@ -4,16 +4,8 @@
   <meta charset="UTF-8">
   <title>Settings & Preferences — Dynamic Windows</title>
   <style>
-    @font-face {
-      font-family: 'Theater';
-      src: url('assets/fonts/Theaterv04_Bold.ttf') format('truetype'),
-           local('Theater'),
-           local('Theaterv04_Bold');
-      font-weight: normal;
-      font-style: normal;
-    }
     :root {
-      --app-font-family: 'Theater', 'Segoe UI Variable Text', -apple-system, sans-serif;
+      --app-font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -575,6 +567,19 @@
             <span class="slider"></span>
           </label>
         </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Frame Rate Limit (FPS)</span>
+            <span class="setting-desc">Cap rendering refresh rate or run uncapped</span>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;" id="fps-presets-container">
+            <button class="btn btn-fps-preset" data-fps="30">30</button>
+            <button class="btn btn-fps-preset" data-fps="60">60</button>
+            <button class="btn btn-fps-preset" data-fps="90">90</button>
+            <button class="btn btn-fps-preset" data-fps="144">144</button>
+            <button class="btn btn-fps-preset" data-fps="0">Uncapped</button>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -628,23 +633,13 @@
         <div class="card-header">Typography</div>
         <div class="setting-row">
           <div class="setting-info">
-            <span class="setting-label">Font Family</span>
-          </div>
-          <div style="display: flex; gap: 6px; flex-wrap: wrap;" id="font-presets-container">
-            <button class="btn btn-font-preset" data-font="Theater">Theater</button>
-            <button class="btn btn-font-preset" data-font="Segoe UI Variable Text">Segoe UI</button>
-            <button class="btn btn-font-preset" data-font="Inter">Inter</button>
-            <button class="btn btn-font-preset" data-font="Impact">Impact</button>
-            <button class="btn btn-font-preset" data-font="Consolas">Consolas</button>
-          </div>
-        </div>
-        <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
-          <div class="setting-info">
             <span class="setting-label">Custom Font</span>
+            <span class="setting-desc">Default is Segoe UI Variable Text. Enter any installed system font.</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <input type="text" id="setting-customFont" placeholder="Installed font name" style="background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; padding: 6px 12px; color: #ffffff; font-size: 13px; width: 200px; outline: none;">
-            <button class="btn" id="btn-apply-custom-font" type="button" style="padding: 6px 12px; font-size: 12px; font-weight: 600;">Apply</button>
+            <input type="text" id="setting-customFont" placeholder="Segoe UI Variable Text" style="background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; padding: 6px 12px; color: #ffffff; font-size: 13px; width: 190px; outline: none;">
+            <button class="btn btn-primary" id="btn-apply-custom-font" type="button" style="padding: 6px 12px; font-size: 12px; font-weight: 600;">Apply</button>
+            <button class="btn" id="btn-reset-font" type="button" style="padding: 6px 10px; font-size: 12px;">Default</button>
           </div>
         </div>
         <div class="setting-row" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
@@ -923,6 +918,24 @@
           <button class="btn" id="btn-open-repo">GitHub Repository</button>
           <button class="btn" id="btn-view-releases">Release History</button>
         </div>
+        <div id="about-dev-hint" style="font-size: 11px; color: #71717a; margin-top: 14px; min-height: 16px;"></div>
+      </div>
+
+      <div class="card" id="developer-mode-card" style="display: none; border-color: rgba(56, 189, 248, 0.35);">
+        <div class="card-header" style="color: #38bdf8;">Developer Mode</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">First-Time Experience Test</span>
+            <span class="setting-desc">Launch the centered first-time onboarding flow as if installing for the first time</span>
+          </div>
+          <button class="btn btn-primary" id="btn-test-first-time" type="button">Test First-Time Setup</button>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Hide Developer Mode</span>
+          </div>
+          <button class="btn" id="btn-disable-dev-mode" type="button">Disable</button>
+        </div>
       </div>
     </div>
 
@@ -977,6 +990,8 @@
         if (elLiteMode) elLiteMode.checked = !!cfg.liteMode;
         const elReducedMotion = document.getElementById('setting-reducedMotion');
         if (elReducedMotion) elReducedMotion.checked = !!cfg.reducedMotion;
+        updateFpsButtons(typeof cfg.fpsLimit === 'number' ? cfg.fpsLimit : 0);
+        syncDeveloperModeUI(!!cfg.developerMode);
         
 
         // General
@@ -1016,7 +1031,7 @@
         syncSoundControlsUI(isSoundEnabled);
 
         // Typography / Font
-        const curFont = cfg.fontFamily || 'Theater';
+        const curFont = cfg.fontFamily || 'Segoe UI Variable Text';
         updateFontUI(curFont);
 
         // Tab Bar Customization
@@ -1367,32 +1382,81 @@
       });
     });
 
-    function updateFontUI(font) {
-      document.documentElement.style.setProperty('--app-font-family', `"${font}", 'Segoe UI Variable Text', -apple-system, sans-serif`);
-      document.querySelectorAll('.btn-font-preset').forEach(btn => {
-        if (btn.dataset.font.toLowerCase() === font.toLowerCase()) {
-          btn.classList.add('btn-primary');
-        } else {
-          btn.classList.remove('btn-primary');
+    function updateFpsButtons(limit) {
+      document.querySelectorAll('.btn-fps-preset').forEach(btn => {
+        const val = parseInt(btn.dataset.fps, 10) || 0;
+        if (val === limit) btn.classList.add('btn-primary');
+        else btn.classList.remove('btn-primary');
+      });
+    }
+
+    document.querySelectorAll('.btn-fps-preset').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const val = parseInt(btn.dataset.fps, 10) || 0;
+        updateFpsButtons(val);
+        if (typeof soundFX !== 'undefined') soundFX.play('tap', true);
+        await ipcRenderer.invoke('save-app-settings', { fpsLimit: val });
+      });
+    });
+
+    // 5-Click About -> Developer Mode Unlock
+    let aboutTapCount = 0;
+    let aboutLastTapAt = 0;
+    function syncDeveloperModeUI(enabled) {
+      const card = document.getElementById('developer-mode-card');
+      if (card) card.style.display = enabled ? 'block' : 'none';
+    }
+    const aboutNavItem = document.querySelector('.nav-item[data-page="about"]');
+    const aboutDevHint = document.getElementById('about-dev-hint');
+    if (aboutNavItem) {
+      aboutNavItem.addEventListener('click', async () => {
+        const now = Date.now();
+        if (now - aboutLastTapAt > 2500) {
+          aboutTapCount = 0;
+        }
+        aboutLastTapAt = now;
+        aboutTapCount++;
+        const card = document.getElementById('developer-mode-card');
+        if (card && card.style.display === 'block') return;
+        if (aboutTapCount >= 5) {
+          aboutTapCount = 0;
+          syncDeveloperModeUI(true);
+          if (aboutDevHint) aboutDevHint.textContent = 'Developer Mode unlocked.';
+          await ipcRenderer.invoke('save-app-settings', { developerMode: true });
+        } else if (aboutTapCount >= 2 && aboutDevHint) {
+          const left = 5 - aboutTapCount;
+          aboutDevHint.textContent = `${left} more click${left === 1 ? '' : 's'} to unlock Developer Mode`;
         }
       });
+    }
+    document.getElementById('btn-test-first-time')?.addEventListener('click', () => {
+      ipcRenderer.send('trigger-first-time-onboarding');
+    });
+    document.getElementById('btn-disable-dev-mode')?.addEventListener('click', async () => {
+      syncDeveloperModeUI(false);
+      if (aboutDevHint) aboutDevHint.textContent = '';
+      await ipcRenderer.invoke('save-app-settings', { developerMode: false });
+    });
+
+    function updateFontUI(font) {
+      const cleanFont = (font && font.trim()) ? font.trim() : 'Segoe UI Variable Text';
+      document.documentElement.style.setProperty('--app-font-family', `"${cleanFont}", 'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif`);
       const customInput = document.getElementById('setting-customFont');
-      if (customInput) customInput.value = font;
+      if (customInput) customInput.value = cleanFont;
       const previewBox = document.getElementById('font-preview-box');
       if (previewBox) {
-        previewBox.style.fontFamily = `"${font}", 'Segoe UI Variable Text', -apple-system, sans-serif`;
+        previewBox.style.fontFamily = `"${cleanFont}", 'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif`;
       }
     }
 
-    document.querySelectorAll('.btn-font-preset').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const font = btn.dataset.font;
-        if (!font) return;
-        updateFontUI(font);
+    const btnResetFont = document.getElementById('btn-reset-font');
+    if (btnResetFont) {
+      btnResetFont.addEventListener('click', async () => {
+        updateFontUI('Segoe UI Variable Text');
         if (typeof soundFX !== 'undefined') soundFX.play('tap', true);
-        await ipcRenderer.invoke('save-app-settings', { fontFamily: font });
+        await ipcRenderer.invoke('save-app-settings', { fontFamily: 'Segoe UI Variable Text' });
       });
-    });
+    }
 
     const btnApplyCustomFont = document.getElementById('btn-apply-custom-font');
     const customFontInput = document.getElementById('setting-customFont');

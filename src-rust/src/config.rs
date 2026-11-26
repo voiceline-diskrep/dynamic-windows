@@ -62,7 +62,11 @@ pub fn default_config_map() -> Map<String, Value> {
         "soundEffects": true,
         "soundVolume": 0.7,
         "soundPreset": "modern",
-        "fontFamily": "Theater",
+        "fontFamily": "Segoe UI Variable Text",
+        "fpsLimit": 0,
+        "onboardingCompleted": false,
+        "developerMode": false,
+        "aiProviders": ["antigravity", "claude", "codex"],
         "userName": "",
         "startup": false,
         "startupTakeover": false,
@@ -107,8 +111,19 @@ impl ConfigManager {
         let mut merged = default_config_map();
         if let Ok(raw) = fs::read_to_string(path) {
             if let Ok(Value::Object(parsed)) = serde_json::from_str::<Value>(&raw) {
+                let had_onboarding_key = parsed.contains_key("onboardingCompleted");
                 for (k, v) in parsed {
                     merged.insert(k, v);
+                }
+                if !had_onboarding_key {
+                    let has_name = merged
+                        .get("userName")
+                        .and_then(|v| v.as_str())
+                        .map(|s| !s.trim().is_empty())
+                        .unwrap_or(false);
+                    if has_name {
+                        merged.insert("onboardingCompleted".to_string(), Value::Bool(true));
+                    }
                 }
             }
         }

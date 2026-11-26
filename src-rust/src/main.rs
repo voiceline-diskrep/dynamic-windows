@@ -155,6 +155,8 @@ enum UserEvent {
     EvalIsland(String),
     SetIgnoreCursor(bool),
     SetOverlayVisible(bool),
+    SetOnboardingFullscreen(bool),
+    TriggerOnboarding,
     Hook(HookEvent),
     FullscreenChanged(bool),
     MediaTick,
@@ -515,7 +517,7 @@ fn push_initial_states(state: &AppState, proxy: &EventLoopProxy<UserEvent>) {
             cfg.get_bool("soundEffects", true),
             cfg.get_f64("soundVolume", 0.7),
             cfg.get_str("soundPreset", "modern"),
-            cfg.get_str("fontFamily", "Theater"),
+            cfg.get_str("fontFamily", "Segoe UI Variable Text"),
             cfg.get_str("userName", ""),
             cfg.get_bool("clock24h", false),
             cfg.get_bool("showSeconds", false),
@@ -538,6 +540,10 @@ fn push_initial_states(state: &AppState, proxy: &EventLoopProxy<UserEvent>) {
     {
         let cfg = state.config.lock().unwrap();
         send(
+            "fps-limit-changed",
+            json!({ "fpsLimit": cfg.get("fpsLimit").and_then(|v| v.as_u64()).unwrap_or(0) }),
+        );
+        send(
             "tab-bar-config-changed",
             json!({
                 "tabBarPosition": cfg.get_str("tabBarPosition", "top"),
@@ -545,6 +551,12 @@ fn push_initial_states(state: &AppState, proxy: &EventLoopProxy<UserEvent>) {
                 "tabBarHidden": cfg.get("tabBarHidden").cloned().unwrap_or_else(|| json!([]))
             }),
         );
+        if let Some(arr) = cfg.get("aiProviders").and_then(|v| v.as_array()) {
+            let list: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            if let Ok(mut ag) = state.antigravity.lock() {
+                ag.set_enabled_providers(&list);
+            }
+        }
     }
     send(
         "performance-settings-changed",
@@ -736,6 +748,21 @@ fn handle_ipc_message(
                 }
                 if let Some(ff) = patch.get("fontFamily").and_then(|v| v.as_str()) {
                     bcast("font-family-changed", json!({ "fontFamily": ff }));
+                }
+                if let Some(fps) = patch.get("fpsLimit").and_then(|v| v.as_u64()) {
+                    bcast("fps-limit-changed", json!({ "fpsLimit": fps }));
+                }
+                if let Some(arr) = patch.get("aiProviders").and_then(|v| v.as_array()) {
+                    let list: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                    if let Ok(mut ag) = state.antigravity.lock() {
+                        ag.set_enabled_providers(&list);
+                    }
+                    bcast("ai-providers-changed", json!({ "aiProviders": list }));
+                }
+                if let Some(mon) = patch.get("antigravityMonitor").and_then(|v| v.as_bool()) {
+                    if let Ok(mut ag) = state.antigravity.lock() {
+                        ag.paused = !mon;
+                    }
                 }
                 if let Some(un) = patch.get("userName").and_then(|v| v.as_str()) {
                     bcast("user-name-changed", json!({ "userName": un }));
@@ -1044,6 +1071,13 @@ fn handle_ipc_message(
             let ignore = arg0.as_bool().unwrap_or(true);
             state.ignore_mouse.store(ignore, Ordering::SeqCst);
             let _ = proxy.send_event(UserEvent::SetIgnoreCursor(ignore));
+        }
+        "set-onboarding-fullscreen" => {
+            let full = arg0.as_bool().unwrap_or(false);
+            let _ = proxy.send_event(UserEvent::SetOnboardingFullscreen(full));
+        }
+        "trigger-first-time-onboarding" => {
+            let _ = proxy.send_event(UserEvent::TriggerOnboarding);
         }
         "window-bounds-update" | "island-hover-start" | "island-hover-end" => {}
         "focus-antigravity" => {
@@ -2207,6 +2241,37 @@ fn main() {
                     if visible {
                         island_window.set_always_on_top(true);
                     }
+                }
+                UserEvent::SetOnboardingFullscreen(full) => {
+                    if full {
+                        if let Some(mon) = island_window.primary_monitor().or_else(|| island_window.current_monitor()) {
+                            let sz = mon.size();
+                            let pos = mon.position();
+                            island_window.set_outer_position(pos);
+                            island_window.set_inner_size(sz);
+                        }
+                        state.ignore_mouse.store(false, Ordering::SeqCst);
+                        let _ = island_window.set_ignore_cursor_events(false);
+                        island_window.set_visible(true);
+                        island_window.set_always_on_top(true);
+                        island_window.set_focus();
+                    } else {
+                        if let Some(mon) = island_window.primary_monitor().or_else(|| island_window.current_monitor()) {
+                            let sz = mon.size();
+                            let pos = mon.position();
+                            let scale = mon.scale_factor();
+                            let phys_w = (ISLAND_W * scale).round() as i32;
+                            let cx = pos.x + (sz.width as i32 - phys_w) / 2;
+                            island_window.set_inner_size(LogicalSize::new(ISLAND_W, ISLAND_H));
+                            island_window.set_outer_position(PhysicalPosition::new(cx, pos.y));
+                        }
+                    }
+                }
+                UserEvent::TriggerOnboarding => {
+                    if let Some((ref sw, _)) = settings_pair {
+                        sw.set_visible(false);
+                    }
+                    dispatch_to_webview(&island_webview, "start-onboarding", &json!({ "replay": true }));
                 }
                 UserEvent::Hook(evt) => match evt {
                     HookEvent::McpNotify(data) => {

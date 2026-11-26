@@ -4,16 +4,8 @@
   <meta charset="UTF-8">
   <title>Dynamic Windows Island</title>
   <style>
-    @font-face {
-      font-family: 'Theater';
-      src: url('assets/fonts/Theaterv04_Bold.ttf') format('truetype'),
-           local('Theater'),
-           local('Theaterv04_Bold');
-      font-weight: normal;
-      font-style: normal;
-    }
     :root {
-      --app-font-family: 'Theater', 'Segoe UI Variable Text', -apple-system, sans-serif;
+      --app-font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -521,6 +513,447 @@
       background: rgba(245, 185, 66, 0.26);
       color: #ffffff;
     }
+
+    /* ================================================================ */
+    /* First-Time Center-of-Screen Onboarding Overlay                   */
+    /* ================================================================ */
+    #onboarding-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 20000;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at center, rgba(0, 0, 0, 0.36) 0%, rgba(0, 0, 0, 0.16) 100%);
+      transition: background 420ms ease;
+      pointer-events: auto;
+    }
+    #onboarding-overlay.visible {
+      display: flex;
+    }
+    #onboarding-overlay.flying-up {
+      background: transparent;
+      pointer-events: none;
+    }
+    #onboarding-card {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: 520px;
+      padding: 26px 28px 24px 28px;
+      border-radius: 26px;
+      background: rgba(14, 14, 18, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+      color: #f4f4f5;
+      transform: translate(-50%, -50%) scale(0.84);
+      opacity: 0;
+      overflow: hidden;
+      transition:
+        transform 460ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 320ms ease,
+        top 560ms cubic-bezier(0.22, 1, 0.36, 1),
+        width 560ms cubic-bezier(0.22, 1, 0.36, 1),
+        height 560ms cubic-bezier(0.22, 1, 0.36, 1),
+        padding 480ms cubic-bezier(0.22, 1, 0.36, 1),
+        border-radius 520ms cubic-bezier(0.22, 1, 0.36, 1),
+        background 420ms ease;
+    }
+    #onboarding-card.entered {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+    }
+    #onboarding-card.shrinking-to-top {
+      top: 8px;
+      width: 210px;
+      height: 32px;
+      padding: 0;
+      border-radius: 16px;
+      background: #050507;
+      border-color: rgba(255, 255, 255, 0.18);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+      transform: translate(-50%, 0) scale(1);
+    }
+    #onboarding-inner {
+      transition: opacity 180ms ease, transform 220ms ease;
+    }
+    #onboarding-card.shrinking-to-top #onboarding-inner {
+      opacity: 0;
+      transform: scale(0.92);
+    }
+    .ob-dots {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-bottom: 18px;
+    }
+    .ob-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1), background 220ms ease;
+    }
+    .ob-dot.active {
+      width: 22px;
+      background: #ffffff;
+    }
+    .ob-dot.done {
+      background: rgba(255, 255, 255, 0.48);
+    }
+    .ob-step {
+      display: none;
+      animation: obStepIn 260ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+    .ob-step.active {
+      display: block;
+    }
+    @keyframes obStepIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .ob-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: -0.3px;
+      text-align: center;
+      margin-bottom: 6px;
+    }
+    .ob-sub {
+      font-size: 12.5px;
+      color: #a1a1aa;
+      text-align: center;
+      line-height: 1.45;
+      margin-bottom: 18px;
+    }
+    .ob-hint-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .ob-hint-box {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .ob-hint-head {
+      font-size: 12px;
+      font-weight: 600;
+      color: #ffffff;
+      margin-bottom: 4px;
+    }
+    .ob-hint-body {
+      font-size: 11.5px;
+      color: #a1a1aa;
+      line-height: 1.4;
+    }
+    .ob-input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: #ffffff;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 180ms ease, background 180ms ease;
+    }
+    .ob-input:focus {
+      background: rgba(255, 255, 255, 0.11);
+      border-color: rgba(255, 255, 255, 0.45);
+    }
+    .ob-preview-stage {
+      height: 112px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding-top: 14px;
+      margin-bottom: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+    .ob-mini-pill {
+      width: 116px;
+      height: 24px;
+      border-radius: 14px;
+      background: #050507;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      will-change: width, height, border-radius;
+    }
+    .ob-mini-pill-content {
+      font-size: 10.5px;
+      color: #e4e4e7;
+      font-weight: 600;
+      white-space: nowrap;
+      opacity: 0.92;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ob-mini-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #38bdf8;
+    }
+    .ob-preset-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .ob-preset-btn {
+      flex: 1;
+      min-width: 78px;
+      padding: 10px 8px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      color: #d4d4d8;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 160ms ease, border-color 160ms ease, transform 120ms ease, color 160ms ease;
+    }
+    .ob-preset-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+    }
+    .ob-preset-btn:active {
+      transform: scale(0.96);
+    }
+    .ob-preset-btn.active {
+      background: #ffffff;
+      color: #09090b;
+      border-color: #ffffff;
+    }
+    .ob-preset-sub {
+      display: block;
+      font-size: 10px;
+      font-weight: 500;
+      opacity: 0.72;
+      margin-top: 2px;
+    }
+    .ob-ai-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .ob-ai-card {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 16px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      cursor: pointer;
+      transition: background 200ms ease, border-color 200ms ease, box-shadow 220ms ease, transform 140ms ease;
+    }
+    .ob-ai-card:active {
+      transform: scale(0.985);
+    }
+    .ob-ai-card[data-ai="antigravity"]:hover,
+    .ob-ai-card[data-ai="antigravity"].selected {
+      background: rgba(255, 255, 255, 0.10);
+      border-color: rgba(255, 255, 255, 0.65);
+      box-shadow: 0 0 26px rgba(255, 255, 255, 0.28), inset 0 0 12px rgba(255, 255, 255, 0.08);
+    }
+    .ob-ai-card[data-ai="claude"]:hover,
+    .ob-ai-card[data-ai="claude"].selected {
+      background: rgba(217, 119, 87, 0.14);
+      border-color: rgba(217, 119, 87, 0.85);
+      box-shadow: 0 0 26px rgba(217, 119, 87, 0.42), inset 0 0 12px rgba(217, 119, 87, 0.14);
+    }
+    .ob-ai-card[data-ai="codex"]:hover,
+    .ob-ai-card[data-ai="codex"].selected {
+      background: #040406;
+      border-color: rgba(255, 255, 255, 0.24);
+      box-shadow: 0 0 32px rgba(0, 0, 0, 0.98), 0 0 14px rgba(0, 0, 0, 0.92), inset 0 0 18px rgba(0, 0, 0, 0.85);
+    }
+    .ob-ai-logo {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+    .ob-ai-info {
+      flex: 1;
+      text-align: left;
+    }
+    .ob-ai-name {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+    .ob-ai-desc {
+      font-size: 11px;
+      color: #a1a1aa;
+      margin-top: 1px;
+    }
+    .ob-ai-check {
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      border: 1.5px solid rgba(255, 255, 255, 0.26);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: transparent;
+      transition: all 160ms ease;
+    }
+    .ob-ai-card.selected .ob-ai-check {
+      background: #ffffff;
+      border-color: #ffffff;
+      color: #09090b;
+    }
+    .ob-skip-ai {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #a1a1aa;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 160ms ease, color 160ms ease;
+    }
+    .ob-skip-ai:hover {
+      background: rgba(255, 255, 255, 0.10);
+      color: #ffffff;
+    }
+    .ob-welcome-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px 0 8px 0;
+      position: relative;
+    }
+    .ob-rings {
+      position: relative;
+      width: 120px;
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 18px;
+    }
+    .ob-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1.5px solid rgba(255, 255, 255, 0.22);
+      animation: obRingPulse 2.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+    }
+    .ob-ring:nth-child(2) {
+      animation-delay: 0.7s;
+    }
+    .ob-ring:nth-child(3) {
+      animation-delay: 1.4s;
+    }
+    @keyframes obRingPulse {
+      0% { transform: scale(0.55); opacity: 0.85; }
+      100% { transform: scale(1.38); opacity: 0; }
+    }
+    .ob-emblem-pill {
+      width: 82px;
+      height: 28px;
+      border-radius: 14px;
+      background: #050507;
+      border: 1.5px solid rgba(255, 255, 255, 0.55);
+      box-shadow: 0 0 32px rgba(255, 255, 255, 0.20);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 11px;
+      z-index: 2;
+      animation: obEmblemMorph 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
+    }
+    @keyframes obEmblemMorph {
+      0% { width: 76px; }
+      100% { width: 102px; }
+    }
+    .ob-emblem-cam {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.88);
+    }
+    .ob-emblem-wave {
+      display: flex;
+      gap: 2.5px;
+      align-items: center;
+    }
+    .ob-emblem-wave span {
+      width: 2.5px;
+      height: 10px;
+      border-radius: 2px;
+      background: #38bdf8;
+      animation: obWaveBar 0.9s ease-in-out infinite alternate;
+    }
+    .ob-emblem-wave span:nth-child(2) { height: 14px; animation-delay: 0.15s; }
+    .ob-emblem-wave span:nth-child(3) { height: 8px; animation-delay: 0.3s; }
+    @keyframes obWaveBar {
+      from { transform: scaleY(0.45); }
+      to { transform: scaleY(1.1); }
+    }
+    .ob-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 18px;
+      gap: 10px;
+    }
+    .ob-btn {
+      padding: 9px 18px;
+      border-radius: 10px;
+      font-size: 12.5px;
+      font-weight: 600;
+      font-family: inherit;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.07);
+      color: #e4e4e7;
+      cursor: pointer;
+      transition: background 150ms ease, transform 100ms ease, color 150ms ease;
+    }
+    .ob-btn:hover {
+      background: rgba(255, 255, 255, 0.14);
+      color: #ffffff;
+    }
+    .ob-btn:active {
+      transform: scale(0.97);
+    }
+    .ob-btn-primary {
+      background: #ffffff;
+      color: #09090b;
+      border-color: #ffffff;
+      margin-left: auto;
+    }
+    .ob-btn-primary:hover {
+      background: #e4e4e7;
+      color: #09090b;
+    }
   </style>
 </head>
 <body>
@@ -610,7 +1043,368 @@
       <button class="modal-btn modal-btn-submit" id="inline-modal-submit">Add</button>
     </div>
   </div>
+  <!-- First-Time Onboarding Wizard (Centered, shrinks & glides to top on finish) -->
+  <div id="onboarding-overlay">
+    <div id="onboarding-card">
+      <div id="onboarding-inner">
+        <div class="ob-dots" id="ob-dots">
+          <span class="ob-dot active"></span>
+          <span class="ob-dot"></span>
+          <span class="ob-dot"></span>
+          <span class="ob-dot"></span>
+          <span class="ob-dot"></span>
+          <span class="ob-dot"></span>
+        </div>
+
+        <!-- Step 1: How it works & what to include -->
+        <div class="ob-step active" data-step="0">
+          <div class="ob-title">Welcome to Dynamic Windows</div>
+          <div class="ob-sub">A quick tour so everything feels effortless from day one.</div>
+          <div class="ob-hint-grid">
+            <div class="ob-hint-box">
+              <div class="ob-hint-head">Hover Top Bar to Hide</div>
+              <div class="ob-hint-body">Move your cursor over the resting bar at the top edge and it peeks away cleanly out of your sight.</div>
+            </div>
+            <div class="ob-hint-box">
+              <div class="ob-hint-head">Click to Expand</div>
+              <div class="ob-hint-body">Click the bar or top handle to open your clock, media, calendar, notes, shelf, and AI monitor.</div>
+            </div>
+            <div class="ob-hint-box">
+              <div class="ob-hint-head">What to Include</div>
+              <div class="ob-hint-body">Keep daily tools you check often: Home, Media, Notes, Clock, and any AI assistants you actively run.</div>
+            </div>
+            <div class="ob-hint-box">
+              <div class="ob-hint-head">What to Skip</div>
+              <div class="ob-hint-body">Hide unused tabs in Settings → Appearance → Tab Bar to keep the strip uncluttered and fast.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Name -->
+        <div class="ob-step" data-step="1">
+          <div class="ob-title">What should we call you?</div>
+          <div class="ob-sub">Used for your personal greetings in the island. You can change this anytime in Settings.</div>
+          <input id="ob-name-input" class="ob-input" type="text" placeholder="Enter your name" maxlength="32" />
+        </div>
+
+        <!-- Step 3: Animation Speed + Live Mini Dynamic Island Preview -->
+        <div class="ob-step" data-step="2">
+          <div class="ob-title">Animation Speed</div>
+          <div class="ob-sub">Pick how fast the island opens and morphs. Watch the live preview below.</div>
+          <div class="ob-preview-stage">
+            <div class="ob-mini-pill" id="ob-mini-pill">
+              <div class="ob-mini-pill-content" id="ob-mini-pill-content">
+                <span class="ob-mini-dot"></span>
+                <span id="ob-mini-pill-label">1.0x Standard</span>
+              </div>
+            </div>
+          </div>
+          <div class="ob-preset-row" id="ob-speed-row">
+            <button type="button" class="ob-preset-btn" data-speed="0.6">0.6x<span class="ob-preset-sub">Slow</span></button>
+            <button type="button" class="ob-preset-btn active" data-speed="1.0">1.0x<span class="ob-preset-sub">Standard</span></button>
+            <button type="button" class="ob-preset-btn" data-speed="1.5">1.5x<span class="ob-preset-sub">Fast</span></button>
+            <button type="button" class="ob-preset-btn" data-speed="2.2">2.2x<span class="ob-preset-sub">Snappy</span></button>
+          </div>
+        </div>
+
+        <!-- Step 4: FPS Limit -->
+        <div class="ob-step" data-step="3">
+          <div class="ob-title">Frame Rate Limit</div>
+          <div class="ob-sub">Balance motion fluidity against battery and CPU usage.</div>
+          <div class="ob-preset-row" id="ob-fps-row">
+            <button type="button" class="ob-preset-btn" data-fps="30">30<span class="ob-preset-sub">Battery</span></button>
+            <button type="button" class="ob-preset-btn" data-fps="60">60<span class="ob-preset-sub">Smooth</span></button>
+            <button type="button" class="ob-preset-btn" data-fps="90">90<span class="ob-preset-sub">Fluid</span></button>
+            <button type="button" class="ob-preset-btn" data-fps="144">144<span class="ob-preset-sub">High Hz</span></button>
+            <button type="button" class="ob-preset-btn active" data-fps="0">Uncapped<span class="ob-preset-sub">Native</span></button>
+          </div>
+        </div>
+
+        <!-- Step 5: AI Assistants (Stacked: Antigravity -> Claude Code -> Codex + Skip) -->
+        <div class="ob-step" data-step="4">
+          <div class="ob-title">AI Coding Assistants</div>
+          <div class="ob-sub">Select the AI tools you use so Dynamic Windows can track live progress.</div>
+          <div class="ob-ai-stack">
+            <div class="ob-ai-card selected" data-ai="antigravity">
+              <img class="ob-ai-logo" src="antigravity_logo.png" alt="Antigravity" />
+              <div class="ob-ai-info">
+                <div class="ob-ai-name">Antigravity</div>
+                <div class="ob-ai-desc">Track agent tasks, tool steps, and progress live</div>
+              </div>
+              <div class="ob-ai-check">✓</div>
+            </div>
+            <div class="ob-ai-card selected" data-ai="claude">
+              <img class="ob-ai-logo" src="claude_code_logo.svg" alt="Claude Code" />
+              <div class="ob-ai-info">
+                <div class="ob-ai-name">Claude Code</div>
+                <div class="ob-ai-desc">Monitor Claude Code terminal sessions and edits</div>
+              </div>
+              <div class="ob-ai-check">✓</div>
+            </div>
+            <div class="ob-ai-card selected" data-ai="codex">
+              <img class="ob-ai-logo" src="codex_logo.svg" alt="Codex" />
+              <div class="ob-ai-info">
+                <div class="ob-ai-name">ChatGPT Codex</div>
+                <div class="ob-ai-desc">Monitor Codex CLI reasoning and shell runs</div>
+              </div>
+              <div class="ob-ai-check">✓</div>
+            </div>
+          </div>
+          <button type="button" class="ob-skip-ai" id="ob-skip-ai-btn">I don't use AI / I'll do it later</button>
+        </div>
+
+        <!-- Step 6: Welcome Motion Graphic Finale -->
+        <div class="ob-step" data-step="5">
+          <div class="ob-welcome-stage">
+            <div class="ob-rings">
+              <div class="ob-ring"></div>
+              <div class="ob-ring"></div>
+              <div class="ob-ring"></div>
+              <div class="ob-emblem-pill">
+                <span class="ob-emblem-cam"></span>
+                <span class="ob-emblem-wave"><span></span><span></span><span></span></span>
+              </div>
+            </div>
+            <div class="ob-title" id="ob-welcome-heading">Welcome to Dynamic Windows</div>
+            <div class="ob-sub" id="ob-welcome-sub">Everything is set up. Click OK and watch it dock at the top of your screen.</div>
+          </div>
+        </div>
+
+        <div class="ob-actions">
+          <button type="button" class="ob-btn" id="ob-back-btn" style="visibility:hidden;">Back</button>
+          <button type="button" class="ob-btn ob-btn-primary" id="ob-next-btn">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="rust-bridge.js"></script>
   <script src="canvas-engine.js"></script>
+  <script>
+    (function () {
+      const obIpc = (typeof window.require === 'function')
+        ? window.require('electron').ipcRenderer
+        : window.ipcRenderer;
+      const overlay = document.getElementById('onboarding-overlay');
+      const card = document.getElementById('onboarding-card');
+      const dots = Array.from(document.querySelectorAll('#ob-dots .ob-dot'));
+      const steps = Array.from(document.querySelectorAll('.ob-step'));
+      const btnBack = document.getElementById('ob-back-btn');
+      const btnNext = document.getElementById('ob-next-btn');
+      const nameInput = document.getElementById('ob-name-input');
+      const miniPill = document.getElementById('ob-mini-pill');
+      const miniPillLabel = document.getElementById('ob-mini-pill-label');
+      const skipAiBtn = document.getElementById('ob-skip-ai-btn');
+      const welcomeHeading = document.getElementById('ob-welcome-heading');
+      const welcomeSub = document.getElementById('ob-welcome-sub');
+
+      let stepIdx = 0;
+      let chosenSpeed = 1.0;
+      let chosenFps = 0;
+      let chosenAi = new Set(['antigravity', 'claude', 'codex']);
+      let skippedAi = false;
+      let miniPreviewTimer = null;
+      let miniExpanded = false;
+      let isClosing = false;
+
+      function updateStepUI() {
+        steps.forEach((el, i) => el.classList.toggle('active', i === stepIdx));
+        dots.forEach((d, i) => {
+          d.classList.toggle('active', i === stepIdx);
+          d.classList.toggle('done', i < stepIdx);
+        });
+        btnBack.style.visibility = stepIdx === 0 ? 'hidden' : 'visible';
+        btnNext.textContent = stepIdx === steps.length - 1 ? 'OK' : 'Next';
+
+        if (stepIdx === 1) {
+          setTimeout(() => nameInput && nameInput.focus(), 80);
+        }
+        if (stepIdx === 2) {
+          startMiniPreviewLoop();
+        } else {
+          stopMiniPreviewLoop();
+        }
+        if (stepIdx === 5) {
+          const nm = (nameInput && nameInput.value || '').trim();
+          welcomeHeading.textContent = nm ? ('Welcome, ' + nm) : 'Welcome to Dynamic Windows';
+          welcomeSub.textContent = 'You are ready to use Dynamic Windows. Click OK to dock it to the top of your screen.';
+        }
+      }
+
+      function applyMiniPillFrame(expanded) {
+        if (!miniPill) return;
+        const durMs = Math.round((expanded ? 380 : 300) / Math.max(0.4, chosenSpeed));
+        miniPill.style.transition = `width ${durMs}ms cubic-bezier(0.22, 1.18, 0.36, 1), height ${durMs}ms cubic-bezier(0.22, 1.18, 0.36, 1), border-radius ${durMs}ms ease`;
+        if (expanded) {
+          miniPill.style.width = '252px';
+          miniPill.style.height = '76px';
+          miniPill.style.borderRadius = '20px';
+        } else {
+          miniPill.style.width = '126px';
+          miniPill.style.height = '26px';
+          miniPill.style.borderRadius = '13px';
+        }
+        const labels = { 0.6: '0.6x Slow', 1.0: '1.0x Standard', 1.5: '1.5x Fast', 2.2: '2.2x Snappy' };
+        if (miniPillLabel) miniPillLabel.textContent = labels[chosenSpeed] || (chosenSpeed.toFixed(1) + 'x');
+      }
+
+      function stopMiniPreviewLoop() {
+        if (miniPreviewTimer) {
+          clearInterval(miniPreviewTimer);
+          miniPreviewTimer = null;
+        }
+      }
+
+      function startMiniPreviewLoop() {
+        stopMiniPreviewLoop();
+        miniExpanded = false;
+        applyMiniPillFrame(false);
+        const cycleMs = Math.max(520, Math.round(1150 / Math.max(0.5, chosenSpeed)));
+        setTimeout(() => {
+          if (stepIdx !== 2) return;
+          miniExpanded = true;
+          applyMiniPillFrame(true);
+        }, 220);
+        miniPreviewTimer = setInterval(() => {
+          if (stepIdx !== 2) {
+            stopMiniPreviewLoop();
+            return;
+          }
+          miniExpanded = !miniExpanded;
+          applyMiniPillFrame(miniExpanded);
+        }, cycleMs);
+      }
+
+      document.querySelectorAll('#ob-speed-row .ob-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          chosenSpeed = parseFloat(btn.dataset.speed) || 1.0;
+          document.querySelectorAll('#ob-speed-row .ob-preset-btn').forEach(b => b.classList.toggle('active', b === btn));
+          startMiniPreviewLoop();
+        });
+      });
+
+      document.querySelectorAll('#ob-fps-row .ob-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          chosenFps = parseInt(btn.dataset.fps, 10) || 0;
+          document.querySelectorAll('#ob-fps-row .ob-preset-btn').forEach(b => b.classList.toggle('active', b === btn));
+        });
+      });
+
+      document.querySelectorAll('.ob-ai-card').forEach(cardEl => {
+        cardEl.addEventListener('click', () => {
+          skippedAi = false;
+          const id = cardEl.dataset.ai;
+          if (chosenAi.has(id)) {
+            chosenAi.delete(id);
+            cardEl.classList.remove('selected');
+          } else {
+            chosenAi.add(id);
+            cardEl.classList.add('selected');
+          }
+        });
+      });
+
+      if (skipAiBtn) {
+        skipAiBtn.addEventListener('click', () => {
+          skippedAi = true;
+          chosenAi.clear();
+          document.querySelectorAll('.ob-ai-card').forEach(c => c.classList.remove('selected'));
+          stepIdx = 5;
+          updateStepUI();
+        });
+      }
+
+      if (nameInput) {
+        nameInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && stepIdx === 1) {
+            stepIdx = 2;
+            updateStepUI();
+          }
+        });
+      }
+
+      btnBack.addEventListener('click', () => {
+        if (isClosing || stepIdx <= 0) return;
+        stepIdx--;
+        updateStepUI();
+      });
+
+      async function finishOnboarding() {
+        if (isClosing) return;
+        isClosing = true;
+        stopMiniPreviewLoop();
+
+        const userNameVal = (nameInput && nameInput.value || '').trim();
+        const aiList = skippedAi ? [] : Array.from(chosenAi);
+        const useAi = aiList.length > 0;
+
+        try {
+          const curRes = await obIpc.invoke('get-app-settings');
+          const curHidden = (curRes && curRes.config && Array.isArray(curRes.config.tabBarHidden))
+            ? curRes.config.tabBarHidden.slice()
+            : [];
+          const nextHidden = useAi
+            ? curHidden.filter(t => t !== 'agent')
+            : (curHidden.includes('agent') ? curHidden : curHidden.concat(['agent']));
+
+          await obIpc.invoke('save-app-settings', {
+            userName: userNameVal,
+            animationSpeed: chosenSpeed,
+            fpsLimit: chosenFps,
+            aiProviders: aiList,
+            antigravityMonitor: useAi,
+            tabBarHidden: nextHidden,
+            onboardingCompleted: true
+          });
+        } catch (e) {}
+
+        // Smooth shrink into top resting pill and glide upward to top bezel
+        const flyDur = Math.max(320, Math.round(560 / Math.max(0.5, chosenSpeed)));
+        card.style.transitionDuration = `${flyDur}ms`;
+        overlay.classList.add('flying-up');
+        card.classList.add('shrinking-to-top');
+
+        setTimeout(() => {
+          overlay.classList.remove('visible', 'flying-up');
+          card.classList.remove('entered', 'shrinking-to-top');
+          card.style.transitionDuration = '';
+          if (obIpc) obIpc.send('set-onboarding-fullscreen', false);
+          if (typeof window.dwSetOnboardingActive === 'function') {
+            window.dwSetOnboardingActive(false);
+          }
+          isClosing = false;
+        }, flyDur + 80);
+      }
+
+      btnNext.addEventListener('click', () => {
+        if (isClosing) return;
+        if (stepIdx < steps.length - 1) {
+          stepIdx++;
+          updateStepUI();
+        } else {
+          finishOnboarding();
+        }
+      });
+
+      window.startDynamicOnboarding = function () {
+        isClosing = false;
+        stepIdx = 0;
+        skippedAi = false;
+        if (typeof window.dwSetOnboardingActive === 'function') {
+          window.dwSetOnboardingActive(true);
+        }
+        if (obIpc) obIpc.send('set-onboarding-fullscreen', true);
+        overlay.classList.remove('flying-up');
+        card.classList.remove('entered', 'shrinking-to-top');
+        overlay.classList.add('visible');
+        updateStepUI();
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            card.classList.add('entered');
+          });
+        });
+      };
+    })();
+  </script>
 </body>
 </html>
