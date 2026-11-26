@@ -616,8 +616,8 @@ const UI = {
   ACTIVE_REST_W: 226,
   ACTIVE_BAR_H: 36,
 
-  EXPANDED_W: 616,
-  HOME_EXPANDED_W: 516,
+  EXPANDED_W: 648,
+  HOME_EXPANDED_W: 548,
   HOME_H: 152,
   CALENDAR_H: 330,
   CLOCK_H: 260,
@@ -649,7 +649,10 @@ let tabTransitionStartTime = 0;
 let tabTransitionDirection = 1;
 let navIndicatorX = null;
 let navIndicatorW = null;
+let navIndicatorY = null;
+let navIndicatorH = null;
 let isNavPillAnimating = false;
+let mediaTabLyricsVisible = true;
 let currentExpandedH = UI.HOME_H;
 let currentExpandedW = UI.HOME_EXPANDED_W;
 let currentDt = 0.016;
@@ -3357,6 +3360,9 @@ function handleButtonClick(id, data) {
     targetProgress = 1.0;
   } else if (id === 'nav_call') {
     switchTab('call');
+  } else if (id === 'media_toggle_tab_lyrics') {
+    mediaTabLyricsVisible = !mediaTabLyricsVisible;
+    soundFX.play('switch');
   } else if (id === 'nav_media') {
     switchTab('media');
   } else if (id === 'call_toggle_mute') {
@@ -4520,7 +4526,7 @@ function getTargetExpandedHeightForView(view) {
     clockSubMode,
     alarmsCount: (alarmsList && alarmsList.length) || 0,
     projectCount: getActiveProjects().length,
-    liveLyricsEnabled
+    liveLyricsEnabled: liveLyricsEnabled && mediaTabLyricsVisible
   });
 }
 
@@ -4832,120 +4838,109 @@ function paintCapsuleSurface(c, {
     return;
   }
 
-  // Apple Liquid Glass Mode: neutral smoked crystal, curved specular catchlight, fine silk diffusion, refractive dual-layer rim
-  const glassFactor = 0.56 + 0.18 * Math.max(0, Math.min(1, p));
-  const baseGlassAlpha = Math.max(0.50, Math.min(0.78, islandOpacity * glassFactor));
-  const bodyGrad = c.createLinearGradient(x, y, x, y + h);
-  bodyGrad.addColorStop(0.0, `rgba(38, 38, 43, ${Math.min(0.84, baseGlassAlpha * 0.96)})`);
-  bodyGrad.addColorStop(0.38, `rgba(20, 20, 24, ${baseGlassAlpha})`);
-  bodyGrad.addColorStop(1.0, `rgba(12, 12, 15, ${Math.min(0.86, baseGlassAlpha * 1.06)})`);
+  // Apple Optical Liquid Glass Mode: ultra-clear crystal lens, curved bevel refraction, prismatic RGB chromatic dispersion rim, zero noisy grain
+  const glassFactor = 0.40 + 0.16 * Math.max(0, Math.min(1, p));
+  const baseGlassAlpha = Math.max(0.34, Math.min(0.60, islandOpacity * glassFactor));
 
   c.save();
   tracePath();
+  // Optical depth gradient: clearer optical center, gently denser smoked glass toward edges
+  const cxGlass = x + w * 0.5;
+  const cyGlass = y + h * 0.45;
+  const lensRad = Math.max(w, h) * 0.68;
+  const bodyGrad = c.createRadialGradient(cxGlass, cyGlass, Math.min(w, h) * 0.08, cxGlass, cyGlass, lensRad);
+  bodyGrad.addColorStop(0.0, `rgba(22, 22, 26, ${(baseGlassAlpha * 0.86).toFixed(3)})`);
+  bodyGrad.addColorStop(0.68, `rgba(18, 18, 22, ${baseGlassAlpha.toFixed(3)})`);
+  bodyGrad.addColorStop(1.0, `rgba(30, 30, 36, ${Math.min(0.72, baseGlassAlpha * 1.18).toFixed(3)})`);
   c.fillStyle = bodyGrad;
   c.fill();
   c.clip();
 
-  // Neutral silk diffusion veil (pure achromatic light scatter, no muddy blue cast)
-  const veilGrad = c.createLinearGradient(x, y, x + w, y + h);
-  veilGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.085)');
-  veilGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.025)');
-  veilGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.055)');
-  c.fillStyle = veilGrad;
+  // Subtle top-to-bottom optical sky reflection
+  const skyGrad = c.createLinearGradient(x, y, x, y + h);
+  skyGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.13)');
+  skyGrad.addColorStop(0.24, 'rgba(255, 255, 255, 0.025)');
+  skyGrad.addColorStop(0.78, 'rgba(255, 255, 255, 0.01)');
+  skyGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.075)');
+  c.fillStyle = skyGrad;
   c.fillRect(x - 24, y, w + 48, h);
-
-  // Ultra-fine optical silk micro-grain texture (subtle, never noisy)
-  if (!paintCapsuleSurface._frostPattern && typeof document !== 'undefined' && document.createElement) {
-    try {
-      const fc = document.createElement('canvas');
-      fc.width = 64;
-      fc.height = 64;
-      const fctx = fc.getContext('2d');
-      if (fctx) {
-        const img = fctx.createImageData(64, 64);
-        let seed = 1337;
-        for (let i = 0; i < img.data.length; i += 4) {
-          seed = (seed * 16807) % 2147483647;
-          const v = 210 + (seed % 45);
-          img.data[i] = v;
-          img.data[i + 1] = v;
-          img.data[i + 2] = v;
-          img.data[i + 3] = 4 + (seed % 5);
-        }
-        fctx.putImageData(img, 0, 0);
-        paintCapsuleSurface._frostPattern = c.createPattern(fc, 'repeat');
-      }
-    } catch (e) {}
-  }
-  if (paintCapsuleSurface._frostPattern) {
-    c.fillStyle = paintCapsuleSurface._frostPattern;
-    c.fillRect(x - 24, y, w + 48, h);
-  }
 
   if (accentTintStrength > 0.05 && palette) {
     const c0 = palette[0];
     const c1 = palette[1] || c0;
     const c2 = palette[2] || c1;
     const tintGrad = c.createLinearGradient(x, y, x + w, y + h);
-    tintGrad.addColorStop(0.0, colorWithAlpha(c0, 0.30 * accentTintStrength));
-    tintGrad.addColorStop(0.5, colorWithAlpha(c1, 0.20 * accentTintStrength));
-    tintGrad.addColorStop(1.0, colorWithAlpha(c2, 0.16 * accentTintStrength));
+    tintGrad.addColorStop(0.0, colorWithAlpha(c0, 0.24 * accentTintStrength));
+    tintGrad.addColorStop(0.5, colorWithAlpha(c1, 0.16 * accentTintStrength));
+    tintGrad.addColorStop(1.0, colorWithAlpha(c2, 0.14 * accentTintStrength));
     c.fillStyle = tintGrad;
     c.fillRect(x - 24, y, w + 48, h);
   }
 
-  // Delicate curved top meniscus catchlight
-  const topSheenH = Math.min(18, Math.max(8, h * 0.22));
-  const topSheen = c.createLinearGradient(x, y, x, y + topSheenH);
-  topSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.17)');
-  topSheen.addColorStop(0.45, 'rgba(255, 255, 255, 0.04)');
-  topSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
-  c.fillStyle = topSheen;
-  c.fillRect(x - 24, y, w + 48, topSheenH);
-
-  // Subtle bottom internal refraction bounce
-  const botSheenH = Math.min(14, Math.max(6, h * 0.14));
-  const botSheen = c.createLinearGradient(x, y + h - botSheenH, x, y + h);
-  botSheen.addColorStop(0.0, 'rgba(255, 255, 255, 0.0)');
-  botSheen.addColorStop(1.0, 'rgba(255, 255, 255, 0.075)');
-  c.fillStyle = botSheen;
-  c.fillRect(x - 24, y + h - botSheenH, w + 48, botSheenH);
+  // Thick curved-lens inner refraction bevel (bright glass edge thickness)
+  c.save();
+  traceRim();
+  const bevelGrad = c.createLinearGradient(x, y, x + w * 0.35, y + h);
+  bevelGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.22)');
+  bevelGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.04)');
+  bevelGrad.addColorStop(0.75, 'rgba(255, 255, 255, 0.03)');
+  bevelGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.15)');
+  c.lineWidth = 4.2;
+  c.strokeStyle = bevelGrad;
+  c.stroke();
+  c.restore();
 
   // Soft optical cursor specular spotlight
   if (mouseX >= x - 60 && mouseX <= x + w + 60 && mouseY >= y - 20 && mouseY <= y + h + 40) {
-    const bloomR = Math.max(80, Math.min(190, w * 0.38));
+    const bloomR = Math.max(85, Math.min(200, w * 0.40));
     const bloom = c.createRadialGradient(mouseX, mouseY, 2, mouseX, mouseY, bloomR);
-    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.11)');
-    bloom.addColorStop(0.5, 'rgba(255, 255, 255, 0.03)');
+    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.14)');
+    bloom.addColorStop(0.45, 'rgba(255, 255, 255, 0.035)');
     bloom.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
     c.fillStyle = bloom;
     c.fillRect(x - 24, y, w + 48, h);
   }
   c.restore();
 
-  // Dual-layer Apple optical fresnel glass rim
+  // Prismatic RGB Chromatic Dispersion + Specular Fresnel Glass Rim
   c.save();
+  // 1. Subtle outer dark glass depth contour
   traceRim();
-  c.lineWidth = 2.0;
-  c.strokeStyle = 'rgba(0, 0, 0, 0.28)';
+  c.lineWidth = 2.2;
+  c.strokeStyle = 'rgba(0, 0, 0, 0.26)';
   c.stroke();
 
+  // 2. Chromatic dispersion layer (cyan -> magenta -> warm amber prism along curved edge)
+  if (!forceSemanticRim) {
+    traceRim();
+    const prismGrad = c.createLinearGradient(x, y, x + w, y + h);
+    prismGrad.addColorStop(0.0, 'rgba(120, 210, 255, 0.34)');
+    prismGrad.addColorStop(0.28, 'rgba(255, 255, 255, 0.14)');
+    prismGrad.addColorStop(0.55, 'rgba(244, 114, 182, 0.26)');
+    prismGrad.addColorStop(0.82, 'rgba(251, 191, 36, 0.22)');
+    prismGrad.addColorStop(1.0, 'rgba(120, 210, 255, 0.30)');
+    c.lineWidth = 1.65;
+    c.strokeStyle = prismGrad;
+    c.stroke();
+  }
+
+  // 3. Razor-crisp bright specular white lens catchlight
   traceRim();
-  const rimGrad = c.createLinearGradient(x, y, x + w * 0.55, y + h);
+  const rimGrad = c.createLinearGradient(x, y, x + w * 0.52, y + h);
   if (accentTintStrength > 0.05 && palette) {
     const c0 = palette[0];
     const c1 = palette[1] || c0;
-    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.58)');
-    rimGrad.addColorStop(0.32, colorWithAlpha(c0, 0.42 * accentTintStrength));
-    rimGrad.addColorStop(0.72, colorWithAlpha(c1, 0.28 * accentTintStrength));
-    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.34)');
+    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.78)');
+    rimGrad.addColorStop(0.25, colorWithAlpha(c0, 0.45 * accentTintStrength));
+    rimGrad.addColorStop(0.75, colorWithAlpha(c1, 0.32 * accentTintStrength));
+    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.52)');
   } else {
-    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.56)');
-    rimGrad.addColorStop(0.28, 'rgba(255, 255, 255, 0.18)');
-    rimGrad.addColorStop(0.68, 'rgba(255, 255, 255, 0.10)');
-    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.32)');
+    rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.78)');
+    rimGrad.addColorStop(0.22, 'rgba(255, 255, 255, 0.22)');
+    rimGrad.addColorStop(0.72, 'rgba(255, 255, 255, 0.14)');
+    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.48)');
   }
-  c.lineWidth = 1.05;
+  c.lineWidth = 1.0;
   c.strokeStyle = forceSemanticRim ? rimColor : rimGrad;
   c.stroke();
   c.restore();
@@ -6280,8 +6275,11 @@ function renderExpandedView(x, y, w, h, alpha) {
     return;
   }
 
-  // View Body shifted upward cleanly so bottom navigation dock has dedicated space
-  const contentY = y - 26;
+  // View Body positioned to the right of the left vertical icon rail
+  const railW = 38;
+  const contentX = x + railW;
+  const contentW = Math.max(200, w - railW);
+  const contentY = y - 6;
   const now = performance.now();
   const tabDuration = Math.max(120, 220 / (animSpeedMultiplier || 1.0));
   const elapsed = now - tabTransitionStartTime;
@@ -6296,7 +6294,7 @@ function renderExpandedView(x, y, w, h, alpha) {
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(x - 20, y + 4, w + 40, Math.max(0, h - 42));
+    ctx.rect(contentX, y + 4, contentW + 20, Math.max(0, h - 8));
     ctx.clip();
 
     // 1. Outgoing View
@@ -6306,7 +6304,7 @@ function renderExpandedView(x, y, w, h, alpha) {
       ctx.save();
       ctx.globalAlpha = outAlpha;
       ctx.translate(offsets.outgoingOffset, 0);
-      renderViewContent(previousView, x, contentY, w, h);
+      renderViewContent(previousView, contentX, contentY, contentW, h);
       ctx.restore();
       interactiveButtons.length = savedLen;
     }
@@ -6318,7 +6316,7 @@ function renderExpandedView(x, y, w, h, alpha) {
     ctx.save();
     ctx.globalAlpha = inAlpha;
     ctx.translate(inOffset, 0);
-    renderViewContent(currentView, x, contentY, w, h);
+    renderViewContent(currentView, contentX, contentY, contentW, h);
     ctx.restore();
     for (let i = incomingStartIndex; i < interactiveButtons.length; i++) {
       interactiveButtons[i].x += inOffset;
@@ -6326,10 +6324,10 @@ function renderExpandedView(x, y, w, h, alpha) {
 
     ctx.restore();
   } else {
-    renderViewContent(currentView, x, contentY, w, h);
+    renderViewContent(currentView, contentX, contentY, contentW, h);
   }
 
-  // Bottom Icon-Only -> Expanding Active Tab Dock
+  // Left-Side Vertical Icon Rail + Top-Right Mode/Exit Controls
   renderTopNav(x, y, w, h);
 
   ctx.restore();
@@ -6768,130 +6766,136 @@ function drawNavTabIcon(c, tabId, cx, cy, color, hasBadge = false) {
 function renderTopNav(x, y, w, h = 160) {
   const hasUnreadNotifs = notificationList.some(n => !n.read && !String(`${n.app || ''} ${n.title || ''}`).toLowerCase().includes('antigravity'));
   const navItems = [
-    { id: 'nav_home', label: 'Home', expW: 66 },
-    { id: 'nav_notif', label: 'Notif', expW: 64, badge: hasUnreadNotifs },
-    { id: 'nav_calendar', label: 'Calendar', expW: 78 },
-    { id: 'nav_clock', label: 'Clock', expW: 64 },
-    { id: 'nav_todo', label: 'Notes', expW: 66 },
-    { id: 'nav_media', label: 'Media', expW: 66 }
+    { id: 'nav_home', label: 'Home' },
+    { id: 'nav_notif', label: 'Notif', badge: hasUnreadNotifs },
+    { id: 'nav_calendar', label: 'Calendar' },
+    { id: 'nav_clock', label: 'Clock' },
+    { id: 'nav_todo', label: 'Notes' },
+    { id: 'nav_media', label: 'Media' }
   ];
   if (hasActiveCall() || currentView === 'call') {
-    navItems.push({ id: 'nav_call', label: 'Call', expW: 58 });
+    navItems.push({ id: 'nav_call', label: 'Call' });
   }
   navItems.push(
-    { id: 'nav_dropzone', label: 'Shelf', expW: 64 },
-    { id: 'nav_clipboard', label: 'Clip', expW: 58 },
-    { id: 'nav_settings', label: '', expW: 26, iconOnly: true }
+    { id: 'nav_dropzone', label: 'Shelf' },
+    { id: 'nav_clipboard', label: 'Clip' },
+    { id: 'nav_settings', label: 'Settings', iconOnly: true }
   );
 
-  const pillH = 22;
-  const iconOnlyW = 26;
-  const spacing = 4;
-  let curX = x + 14;
-  const topY = y + h - pillH - 10;
+  // Left Vertical Icon Rail inside expanded capsule (dynamically fits any capsule height)
+  const railW = 38;
+  const pillW = 24;
+  const railX = x + Math.round((railW - pillW) / 2) + 2;
+  const count = navItems.length;
+  const vPad = 10;
+  const gap = h < 190 ? 2 : 3;
+  const availH = Math.max(count * 13, h - vPad * 2);
+  const pillH = Math.max(13, Math.min(22, Math.floor((availH - (count - 1) * gap) / count)));
+  const totalRailH = count * pillH + (count - 1) * gap;
+  let curY = y + Math.round((h - totalRailH) / 2);
 
-  // Delicate hairline above bottom dock
+  // Subtle vertical hairline separating the left rail from view content
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(x + 16, topY - 5);
-  ctx.lineTo(x + w - 16, topY - 5);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+  ctx.moveTo(x + railW + 1, y + 14);
+  ctx.lineTo(x + railW + 1, y + h - 14);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
   ctx.lineWidth = 1;
   ctx.stroke();
   ctx.restore();
 
-  let activePillX = null;
-  let activePillW = null;
-  let anyTabWidthAnimating = false;
+  let activePillY = null;
+  let activePillH = null;
+  let hoveredTooltip = null;
   const itemLayouts = [];
 
   navItems.forEach((item) => {
     const isCur = !item.iconOnly && (currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif'));
-    const targetW = isCur ? item.expW : iconOnlyW;
-    let curW = navTabWidths[item.id];
-    if (curW === undefined || reducedMotionEnabled || liteModeEnabled) {
-      curW = targetW;
-    } else if (Math.abs(targetW - curW) > 0.25) {
-      curW = computeLiquidHeightStep(curW, targetW, currentDt, animSpeedMultiplier * 1.35);
-      if (Math.abs(targetW - curW) > 0.25) anyTabWidthAnimating = true;
-      else curW = targetW;
-    } else {
-      curW = targetW;
-    }
-    navTabWidths[item.id] = curW;
-
-    const px = curX;
-    const pillW = curW;
-    curX += pillW + spacing;
+    const py = curY;
+    curY += pillH + gap;
     if (isCur) {
-      activePillX = px;
-      activePillW = pillW;
+      activePillY = py;
+      activePillH = pillH;
     }
-    itemLayouts.push({ item, px, pillW, isCur });
+    itemLayouts.push({ item, py, isCur });
   });
 
-  // Smooth sliding pill interpolation
-  if (activePillX !== null) {
-    const step = computeSlidingPillStep(navIndicatorX, navIndicatorW, activePillX, activePillW, currentDt, animSpeedMultiplier);
-    navIndicatorX = step.x;
-    navIndicatorW = step.w;
-    isNavPillAnimating = !step.isSettled || anyTabWidthAnimating;
+  // Smooth vertical gliding active pill
+  if (activePillY !== null) {
+    const step = computeSlidingPillStep(navIndicatorY, navIndicatorH, activePillY, activePillH, currentDt, animSpeedMultiplier);
+    navIndicatorY = step.x;
+    navIndicatorH = step.w;
+    isNavPillAnimating = !step.isSettled;
   } else {
-    isNavPillAnimating = anyTabWidthAnimating;
+    isNavPillAnimating = false;
   }
 
-  // 1. Inactive pill base backgrounds
-  itemLayouts.forEach(({ item, px, pillW }) => {
+  // 1. Inactive icon backdrops
+  itemLayouts.forEach(({ item, py }) => {
     const isHov = hoveredButtonId === item.id;
     ctx.beginPath();
-    ctx.roundRect(px, topY, pillW, pillH, 11);
-    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.13)' : 'rgba(255, 255, 255, 0.055)';
+    ctx.roundRect(railX, py, pillW, pillH, Math.min(8, pillH / 2));
+    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.04)';
     ctx.fill();
   });
 
-  // 2. Smooth gliding active indicator pill (Apple luminous frosted glass)
-  if (navIndicatorX !== null && navIndicatorW !== null) {
+  // 2. Gliding Apple frosted glass active pill
+  if (navIndicatorY !== null && navIndicatorH !== null) {
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(navIndicatorX, topY, navIndicatorW, pillH, 11);
-    const glassPillGrad = ctx.createLinearGradient(navIndicatorX, topY, navIndicatorX, topY + pillH);
-    glassPillGrad.addColorStop(0, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.22)');
+    ctx.roundRect(railX, navIndicatorY, pillW, navIndicatorH, Math.min(8, navIndicatorH / 2));
+    const glassPillGrad = ctx.createLinearGradient(railX, navIndicatorY, railX, navIndicatorY + navIndicatorH);
+    glassPillGrad.addColorStop(0, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.30)' : 'rgba(255, 255, 255, 0.22)');
     glassPillGrad.addColorStop(1, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.12)');
     ctx.fillStyle = glassPillGrad;
     ctx.fill();
-
     ctx.lineWidth = 0.9;
-    ctx.strokeStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.26)';
+    ctx.strokeStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.44)' : 'rgba(255, 255, 255, 0.28)';
     ctx.stroke();
     ctx.restore();
   }
 
-  // 3. Tab vector logos + smoothly revealed active text label
-  itemLayouts.forEach(({ item, px, pillW, isCur }) => {
+  // 3. Draw vertical vector icons & capture hover tooltip
+  itemLayouts.forEach(({ item, py, isCur }) => {
     const isHov = hoveredButtonId === item.id;
     const fg = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
-    const expandRatio = item.iconOnly ? 0 : Math.max(0, Math.min(1, (pillW - iconOnlyW) / Math.max(1, item.expW - iconOnlyW)));
-
+    const scaleIcon = pillH < 17 ? 0.84 : 1.0;
     ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(px, topY, pillW, pillH, 11);
-    ctx.clip();
-
-    const iconCx = px + (iconOnlyW / 2) * (1 - expandRatio) + 13 * expandRatio;
-    drawNavTabIcon(ctx, item.id, iconCx, topY + pillH / 2, fg, Boolean(item.badge && !isCur));
-
-    if (expandRatio > 0.12 && item.label) {
-      ctx.globalAlpha = Math.min(1, (expandRatio - 0.12) / 0.72);
-      ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(item.label, px + 23, topY + pillH / 2);
-    }
+    ctx.translate(railX + pillW / 2, py + pillH / 2);
+    ctx.scale(scaleIcon, scaleIcon);
+    drawNavTabIcon(ctx, item.id, 0, 0, fg, Boolean(item.badge && !isCur));
     ctx.restore();
 
-    interactiveButtons.push({ id: item.id, x: px, y: topY, w: pillW, h: pillH });
+    if (isHov && item.label) {
+      hoveredTooltip = { label: item.label, y: py + pillH / 2 };
+    }
+    interactiveButtons.push({ id: item.id, x: railX - 2, y: py, w: pillW + 4, h: pillH });
   });
+
+  // Compact hover tooltip floating right beside hovered rail icon
+  if (hoveredTooltip) {
+    ctx.save();
+    ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
+    const tw = ctx.measureText(hoveredTooltip.label).width + 12;
+    const th = 18;
+    const tx = x + railW + 6;
+    const ty = Math.max(y + 8, Math.min(y + h - th - 8, hoveredTooltip.y - th / 2));
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, tw, th, 6);
+    ctx.fillStyle = 'rgba(18, 18, 22, 0.92)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(hoveredTooltip.label, tx + tw / 2, ty + th / 2);
+    ctx.restore();
+  }
+
+  // Top-Right Mode Switcher + Exit Button (compact, unobtrusive)
+  const topY = y + 10;
 
   // Dedicated Exit Application Button (✕) on the far right
   const exitW = 22;
@@ -9437,59 +9441,107 @@ function renderMediaView(x, y, w, h) {
   ctx.fillText(`${srcName}${lyrStatus}`, metaX, artY + 41);
   const badgeTextW = ctx.measureText(`${srcName}${lyrStatus}`).width;
 
-  // Sliding 2-State Segmented Pill: [ Line | Word ]
+  // Message / Speech Bubble Lyrics Hide/Show Icon + Sliding [ Line | Word ] Pill
+  const showMediaLyrics = Boolean(liveLyricsEnabled && mediaTabLyricsVisible);
   if (liveLyricsEnabled) {
-    const toggleW = 86;
-    const toggleH = 18;
-    const toggleX = metaX + badgeTextW + 10;
-    const toggleY = artY + 38;
-    const isDyn = Boolean(dynamicLyricsEnabled && !liteModeEnabled);
-    const isHovToggle = hoveredButtonId === 'toggle_dynamic_lyrics';
-
-    const targetThumb = isDyn ? 1.0 : 0.0;
-    if (reducedMotionEnabled || liteModeEnabled) {
-      lyricModeToggleAnim = targetThumb;
-    } else {
-      const tk = Math.min(1.0, (currentDt || 0.016) * 16.0 * (animSpeedMultiplier || 1.0));
-      lyricModeToggleAnim += (targetThumb - lyricModeToggleAnim) * tk;
-      if (Math.abs(targetThumb - lyricModeToggleAnim) < 0.005) lyricModeToggleAnim = targetThumb;
-    }
+    const msgBtnW = 22;
+    const msgBtnH = 18;
+    const msgBtnX = metaX + badgeTextW + 8;
+    const msgBtnY = artY + 38;
+    const isMsgHov = hoveredButtonId === 'media_toggle_tab_lyrics';
 
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(toggleX, toggleY, toggleW, toggleH, 9);
-    ctx.fillStyle = isHovToggle ? 'rgba(255, 255, 255, 0.11)' : 'rgba(255, 255, 255, 0.06)';
-    ctx.strokeStyle = isDyn ? colorWithAlpha(albumAccentColor || '#3b82f6', 0.45) : 'rgba(255, 255, 255, 0.12)';
+    ctx.roundRect(msgBtnX, msgBtnY, msgBtnW, msgBtnH, 6);
+    ctx.fillStyle = showMediaLyrics
+      ? colorWithAlpha(albumAccentColor || '#f4f4f5', isMsgHov ? 0.30 : 0.18)
+      : (isMsgHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.06)');
+    ctx.strokeStyle = showMediaLyrics
+      ? colorWithAlpha(albumAccentColor || '#f4f4f5', 0.48)
+      : 'rgba(255, 255, 255, 0.12)';
     ctx.lineWidth = 1;
     ctx.fill();
     ctx.stroke();
 
-    const thumbPad = 2;
-    const thumbW = (toggleW - thumbPad * 2) / 2;
-    const thumbH = toggleH - thumbPad * 2;
-    const thumbX = toggleX + thumbPad + lyricModeToggleAnim * thumbW;
+    // Vector speech-bubble / message icon
+    const mcx = msgBtnX + msgBtnW / 2;
+    const mcy = msgBtnY + msgBtnH / 2;
+    ctx.strokeStyle = showMediaLyrics ? '#ffffff' : (isMsgHov ? '#e4e4e7' : '#94a3b8');
+    ctx.lineWidth = 1.25;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.roundRect(thumbX, toggleY + thumbPad, thumbW, thumbH, 7);
-    ctx.fillStyle = isDyn ? (albumAccentColor || '#2563eb') : 'rgba(255, 255, 255, 0.18)';
-    ctx.fill();
-
-    ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = lyricModeToggleAnim < 0.5 ? '#ffffff' : '#94a3b8';
-    ctx.fillText('Line', toggleX + thumbPad + thumbW / 2, toggleY + toggleH / 2);
-    ctx.fillStyle = lyricModeToggleAnim >= 0.5 ? '#ffffff' : '#94a3b8';
-    ctx.fillText('Word', toggleX + thumbPad + thumbW * 1.5, toggleY + toggleH / 2);
+    ctx.roundRect(mcx - 4.8, mcy - 4.0, 9.6, 6.6, 2.2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(mcx - 2.0, mcy + 2.6);
+    ctx.lineTo(mcx - 3.6, mcy + 4.4);
+    ctx.lineTo(mcx - 0.2, mcy + 2.6);
+    ctx.stroke();
+    // Quote lines inside bubble
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.moveTo(mcx - 2.6, mcy - 1.5);
+    ctx.lineTo(mcx + 2.6, mcy - 1.5);
+    ctx.moveTo(mcx - 2.6, mcy + 0.6);
+    ctx.lineTo(mcx + 1.0, mcy + 0.6);
+    ctx.stroke();
     ctx.restore();
+    interactiveButtons.push({ id: 'media_toggle_tab_lyrics', x: msgBtnX, y: msgBtnY, w: msgBtnW, h: msgBtnH });
 
-    interactiveButtons.push({ id: 'toggle_dynamic_lyrics', x: toggleX, y: toggleY, w: toggleW, h: toggleH });
+    if (showMediaLyrics) {
+      const toggleW = 84;
+      const toggleH = 18;
+      const toggleX = msgBtnX + msgBtnW + 6;
+      const toggleY = artY + 38;
+      const isDyn = Boolean(dynamicLyricsEnabled && !liteModeEnabled);
+      const isHovToggle = hoveredButtonId === 'toggle_dynamic_lyrics';
+
+      const targetThumb = isDyn ? 1.0 : 0.0;
+      if (reducedMotionEnabled || liteModeEnabled) {
+        lyricModeToggleAnim = targetThumb;
+      } else {
+        const tk = Math.min(1.0, (currentDt || 0.016) * 16.0 * (animSpeedMultiplier || 1.0));
+        lyricModeToggleAnim += (targetThumb - lyricModeToggleAnim) * tk;
+        if (Math.abs(targetThumb - lyricModeToggleAnim) < 0.005) lyricModeToggleAnim = targetThumb;
+      }
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(toggleX, toggleY, toggleW, toggleH, 9);
+      ctx.fillStyle = isHovToggle ? 'rgba(255, 255, 255, 0.11)' : 'rgba(255, 255, 255, 0.06)';
+      ctx.strokeStyle = isDyn ? colorWithAlpha(albumAccentColor || '#ffffff', 0.45) : 'rgba(255, 255, 255, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+
+      const thumbPad = 2;
+      const thumbW = (toggleW - thumbPad * 2) / 2;
+      const thumbH = toggleH - thumbPad * 2;
+      const thumbX = toggleX + thumbPad + lyricModeToggleAnim * thumbW;
+      ctx.beginPath();
+      ctx.roundRect(thumbX, toggleY + thumbPad, thumbW, thumbH, 7);
+      ctx.fillStyle = isDyn ? (albumAccentColor || 'rgba(255, 255, 255, 0.24)') : 'rgba(255, 255, 255, 0.18)';
+      ctx.fill();
+
+      ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = lyricModeToggleAnim < 0.5 ? '#ffffff' : '#94a3b8';
+      ctx.fillText('Line', toggleX + thumbPad + thumbW / 2, toggleY + toggleH / 2);
+      ctx.fillStyle = lyricModeToggleAnim >= 0.5 ? '#ffffff' : '#94a3b8';
+      ctx.fillText('Word', toggleX + thumbPad + thumbW * 1.5, toggleY + toggleH / 2);
+      ctx.restore();
+
+      interactiveButtons.push({ id: 'toggle_dynamic_lyrics', x: toggleX, y: toggleY, w: toggleW, h: toggleH });
+    }
   }
 
-  // 2. Middle Row: Rolling Lyrics Stage (hidden when Live Lyrics Output is disabled)
+  // 2. Middle Row: Rolling Lyrics Stage (hidden when toggled off via message icon or Live Lyrics setting)
   const lyricsY = topY + 62;
-  const lyricsH = liveLyricsEnabled ? 54 : 0;
+  const lyricsH = showMediaLyrics ? 54 : 0;
 
-  if (liveLyricsEnabled) {
+  if (showMediaLyrics) {
     const around = getExpandedAroundLyrics();
     const stageElapsed = (lyricModeStageAnimStart > 0 && !reducedMotionEnabled && !liteModeEnabled)
       ? Math.min(1.0, (performance.now() - lyricModeStageAnimStart) / 420)
