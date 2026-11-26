@@ -1,6 +1,6 @@
 [package]
 name = "dynamic-windows"
-version = "2.2.4"
+version = "2.2.5"
 edition = "2021"
 description = "Dynamic Windows - Native Rust Apple Dynamic Island & Notch overlay"
 
