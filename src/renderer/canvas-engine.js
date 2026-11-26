@@ -619,7 +619,7 @@ const UI = {
 
   EXPANDED_W: 648,
   HOME_EXPANDED_W: 452,
-  HOME_H: 228,
+  HOME_H: 182,
   CALENDAR_H: 330,
   CLOCK_H: 260,
   TODO_H: 342,
@@ -4721,8 +4721,15 @@ function getTargetExpandedHeightForView(view) {
     projectCount: getActiveProjects().length,
     liveLyricsEnabled: liveLyricsEnabled && mediaTabLyricsVisible
   });
+  if (view === 'home') {
+    if (tabBarPosition === 'left' || tabBarPosition === 'right') {
+      const count = getConfiguredNavItems().length;
+      return Math.max(baseH, count * 20 + 22);
+    }
+    return baseH; // 182px tight height for top/bottom bar (37px bar + 116px content + balanced margins)
+  }
   if (view !== 'notification_banner' && (tabBarPosition === 'top' || tabBarPosition === 'bottom')) {
-    return baseH + 34;
+    return baseH + 28;
   }
   return baseH;
 }
@@ -9480,7 +9487,11 @@ function renderHomeView(x, y, w, h) {
   const dateStr = now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
   const clockX = x + 18;
-  const homeBaseY = y + Math.max(44, Math.round((h - 118) / 2) + 8);
+  const homeBaseY = (tabBarPosition === 'top')
+    ? (y + Math.max(14, Math.round((h - 116) / 2) + 5))
+    : (tabBarPosition === 'bottom'
+      ? (y + Math.max(16, Math.round((h - 116) / 2) + 8))
+      : (y + Math.max(38, Math.round((h - 116) / 2) + 8)));
 
   // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation
   const isHomeClockHov = hoveredButtonId === 'home_clock_display';

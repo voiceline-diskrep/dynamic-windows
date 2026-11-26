@@ -93,7 +93,7 @@ function computeLiquidHeightStep(currentH, targetH, dt = 0.016, speedMultiplier 
  */
 function getTargetExpandedHeight(view, options = {}) {
   const UI = {
-    HOME_H: 228,
+    HOME_H: 182,
     CALENDAR_H: 330,
     CLOCK_H: 260,
     TODO_H: 342,
