@@ -602,6 +602,29 @@
       </div>
 
       <div class="card">
+        <div class="card-header">Tab Bar &amp; Navigation</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Tab Bar Position</span>
+            <span class="setting-desc">Place the navigation bar on the left, top, right, or bottom edge</span>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;" id="tab-pos-container">
+            <button class="btn btn-tab-pos" data-pos="left">Left</button>
+            <button class="btn btn-tab-pos" data-pos="top">Top</button>
+            <button class="btn btn-tab-pos" data-pos="right">Right</button>
+            <button class="btn btn-tab-pos" data-pos="bottom">Bottom</button>
+          </div>
+        </div>
+        <div class="setting-row" style="flex-direction: column; align-items: stretch; gap: 10px;">
+          <div class="setting-info" style="max-width: 100%;">
+            <span class="setting-label">Visible Tabs &amp; Order</span>
+            <span class="setting-desc">Toggle tabs on/off and reorder them. Home and Settings are always kept.</span>
+          </div>
+          <div id="tab-order-list" style="display: flex; flex-direction: column; gap: 6px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-header">Typography</div>
         <div class="setting-row">
           <div class="setting-info">
@@ -996,6 +1019,9 @@
         const curFont = cfg.fontFamily || 'Theater';
         updateFontUI(curFont);
 
+        // Tab Bar Customization
+        renderTabBarConfigUI(cfg);
+
         // Antigravity
         const elAntigravity = document.getElementById('setting-antigravityMonitor');
         if (elAntigravity) elAntigravity.checked = !!cfg.antigravityMonitor;
@@ -1185,6 +1211,162 @@
     });
 
     // Typography & Font Configuration Controls
+    const TAB_META = [
+      { id: 'home', label: 'Home', locked: true },
+      { id: 'notifications', label: 'Notifications', locked: false },
+      { id: 'calendar', label: 'Calendar', locked: false },
+      { id: 'clock', label: 'Clock', locked: false },
+      { id: 'todo', label: 'Notes & To-Do', locked: false },
+      { id: 'media', label: 'Media', locked: false },
+      { id: 'agent', label: 'AI Monitor', locked: false },
+      { id: 'dropzone', label: 'Drop Shelf', locked: false },
+      { id: 'clipboard', label: 'Clipboard', locked: false },
+      { id: 'settings', label: 'Settings', locked: true }
+    ];
+    let currentTabPos = 'left';
+    let currentTabOrder = TAB_META.map(t => t.id);
+    let currentTabHidden = [];
+
+    function normalizeTabOrder(order) {
+      const valid = TAB_META.map(t => t.id);
+      const out = [];
+      if (Array.isArray(order)) {
+        order.forEach(id => {
+          if (valid.includes(id) && !out.includes(id)) out.push(id);
+        });
+      }
+      valid.forEach(id => {
+        if (!out.includes(id)) out.push(id);
+      });
+      return out;
+    }
+
+    function updateTabPosButtons(pos) {
+      document.querySelectorAll('.btn-tab-pos').forEach(btn => {
+        if (btn.dataset.pos === pos) btn.classList.add('btn-primary');
+        else btn.classList.remove('btn-primary');
+      });
+    }
+
+    function saveTabBarConfig() {
+      const cleanHidden = currentTabHidden.filter(id => id !== 'home' && id !== 'settings');
+      currentTabHidden = cleanHidden;
+      ipcRenderer.invoke('save-app-settings', {
+        tabBarPosition: currentTabPos,
+        tabBarOrder: currentTabOrder,
+        tabBarHidden: cleanHidden
+      });
+    }
+
+    function renderTabBarConfigUI(cfg) {
+      if (cfg) {
+        currentTabPos = ['left', 'top', 'right', 'bottom'].includes(cfg.tabBarPosition) ? cfg.tabBarPosition : 'left';
+        currentTabOrder = normalizeTabOrder(cfg.tabBarOrder);
+        currentTabHidden = Array.isArray(cfg.tabBarHidden)
+          ? cfg.tabBarHidden.filter(id => id !== 'home' && id !== 'settings')
+          : [];
+      }
+      updateTabPosButtons(currentTabPos);
+      const listEl = document.getElementById('tab-order-list');
+      if (!listEl) return;
+      listEl.innerHTML = '';
+      currentTabOrder.forEach((tabId, idx) => {
+        const meta = TAB_META.find(t => t.id === tabId);
+        if (!meta) return;
+        const isVisible = meta.locked || !currentTabHidden.includes(tabId);
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;';
+
+        const left = document.createElement('div');
+        left.style.cssText = 'display:flex;align-items:center;gap:10px;';
+        const title = document.createElement('span');
+        title.textContent = meta.label;
+        title.style.cssText = 'font-size:12.5px;font-weight:600;color:' + (isVisible ? '#f4f4f5' : '#71717a') + ';';
+        left.appendChild(title);
+        if (meta.locked) {
+          const badge = document.createElement('span');
+          badge.textContent = 'Required';
+          badge.style.cssText = 'font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,0.08);color:#a1a1aa;';
+          left.appendChild(badge);
+        }
+
+        const right = document.createElement('div');
+        right.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
+        const btnUp = document.createElement('button');
+        btnUp.type = 'button';
+        btnUp.className = 'btn';
+        btnUp.textContent = '↑';
+        btnUp.style.cssText = 'padding:3px 8px;font-size:11px;';
+        btnUp.disabled = idx === 0;
+        btnUp.style.opacity = idx === 0 ? '0.35' : '1';
+        btnUp.addEventListener('click', () => {
+          if (idx <= 0) return;
+          const tmp = currentTabOrder[idx - 1];
+          currentTabOrder[idx - 1] = currentTabOrder[idx];
+          currentTabOrder[idx] = tmp;
+          renderTabBarConfigUI(null);
+          saveTabBarConfig();
+        });
+
+        const btnDown = document.createElement('button');
+        btnDown.type = 'button';
+        btnDown.className = 'btn';
+        btnDown.textContent = '↓';
+        btnDown.style.cssText = 'padding:3px 8px;font-size:11px;';
+        btnDown.disabled = idx === currentTabOrder.length - 1;
+        btnDown.style.opacity = idx === currentTabOrder.length - 1 ? '0.35' : '1';
+        btnDown.addEventListener('click', () => {
+          if (idx >= currentTabOrder.length - 1) return;
+          const tmp = currentTabOrder[idx + 1];
+          currentTabOrder[idx + 1] = currentTabOrder[idx];
+          currentTabOrder[idx] = tmp;
+          renderTabBarConfigUI(null);
+          saveTabBarConfig();
+        });
+
+        const labelSwitch = document.createElement('label');
+        labelSwitch.className = 'switch';
+        labelSwitch.style.cssText = 'width:38px;height:20px;' + (meta.locked ? 'opacity:0.45;pointer-events:none;' : '');
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.checked = isVisible;
+        chk.disabled = meta.locked;
+        chk.addEventListener('change', () => {
+          if (meta.locked) return;
+          if (chk.checked) {
+            currentTabHidden = currentTabHidden.filter(id => id !== tabId);
+          } else if (!currentTabHidden.includes(tabId)) {
+            currentTabHidden.push(tabId);
+          }
+          renderTabBarConfigUI(null);
+          saveTabBarConfig();
+        });
+        const slider = document.createElement('span');
+        slider.className = 'slider';
+        labelSwitch.appendChild(chk);
+        labelSwitch.appendChild(slider);
+
+        right.appendChild(btnUp);
+        right.appendChild(btnDown);
+        right.appendChild(labelSwitch);
+        row.appendChild(left);
+        row.appendChild(right);
+        listEl.appendChild(row);
+      });
+    }
+
+    document.querySelectorAll('.btn-tab-pos').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pos = btn.dataset.pos;
+        if (!pos) return;
+        currentTabPos = pos;
+        updateTabPosButtons(pos);
+        if (typeof soundFX !== 'undefined') soundFX.play('tap', true);
+        saveTabBarConfig();
+      });
+    });
+
     function updateFontUI(font) {
       document.documentElement.style.setProperty('--app-font-family', `"${font}", 'Segoe UI Variable Text', -apple-system, sans-serif`);
       document.querySelectorAll('.btn-font-preset').forEach(btn => {

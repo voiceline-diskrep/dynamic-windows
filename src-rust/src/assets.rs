@@ -54,6 +54,14 @@ pub fn get_asset(raw_path: &str) -> Option<Asset> {
             bytes: include_bytes!("../../antigravity_logo.png"),
             mime: "image/png",
         }),
+        "claude_code_logo.svg" => Some(Asset {
+            bytes: include_bytes!("../../claude_code_logo.svg"),
+            mime: "image/svg+xml; charset=utf-8",
+        }),
+        "codex_logo.svg" => Some(Asset {
+            bytes: include_bytes!("../../codex_logo.svg"),
+            mime: "image/svg+xml; charset=utf-8",
+        }),
         "app_icon.png" => Some(Asset {
             bytes: APP_ICON_PNG,
             mime: "image/png",

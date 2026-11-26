@@ -69,6 +69,8 @@ impl ProjectState {
 
 pub struct AntigravityMonitor {
     brain_dir: PathBuf,
+    claude_projects_dir: PathBuf,
+    codex_sessions_dir: PathBuf,
     projects: HashMap<String, ProjectState>,
     file_offsets: HashMap<String, u64>,
     last_state: ProjectState,
@@ -122,16 +124,21 @@ impl AntigravityMonitor {
         let user_home = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .unwrap_or_else(|_| "C:\\Users\\russell".to_string());
-        let brain_dir = PathBuf::from(user_home)
-            .join(".gemini")
-            .join("antigravity")
-            .join("brain");
-        Self::with_brain_dir(brain_dir)
+        let home = PathBuf::from(&user_home);
+        let brain_dir = home.join(".gemini").join("antigravity").join("brain");
+        let claude_projects_dir = home.join(".claude").join("projects");
+        let codex_sessions_dir = home.join(".codex").join("sessions");
+        let mut m = Self::with_brain_dir(brain_dir);
+        m.claude_projects_dir = claude_projects_dir;
+        m.codex_sessions_dir = codex_sessions_dir;
+        m
     }
 
     pub fn with_brain_dir(brain_dir: PathBuf) -> Self {
         Self {
             brain_dir,
+            claude_projects_dir: PathBuf::new(),
+            codex_sessions_dir: PathBuf::new(),
             projects: HashMap::new(),
             file_offsets: HashMap::new(),
             last_state: ProjectState::default_idle(),
@@ -244,6 +251,11 @@ impl AntigravityMonitor {
             .and_then(|v| v.as_str())
             .unwrap_or("Agent Active")
             .to_string();
+        if let Some(s) = data.get("provider").and_then(|v| v.as_str()) {
+            if !s.is_empty() {
+                entry.provider = s.to_string();
+            }
+        }
         if let Some(s) = data.get("project").and_then(|v| v.as_str()) {
             if !s.is_empty() {
                 entry.project = s.to_string();
@@ -694,6 +706,393 @@ impl AntigravityMonitor {
                 break;
             }
         }
+        if self.poll_claude_code() {
+            any_changed = true;
+        }
+        if self.poll_codex() {
+            any_changed = true;
+        }
+        any_changed
+    }
+
+    fn collect_recent_jsonl(root: &Path, max_depth: usize, max_age_ms: u64, out: &mut Vec<(PathBuf, u64, u64)>) {
+        let Ok(entries) = fs::read_dir(root) else { return };
+        let now = now_ms();
+        for entry in entries.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            let path = entry.path();
+            if ft.is_dir() {
+                if max_depth > 0 {
+                    Self::collect_recent_jsonl(&path, max_depth - 1, max_age_ms, out);
+                }
+            } else if ft.is_file() {
+                if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+                    if let Ok(meta) = fs::metadata(&path) {
+                        let mtime_ms = meta
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        if now.saturating_sub(mtime_ms) <= max_age_ms {
+                            out.push((path, mtime_ms, meta.len()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn parse_claude_step(step: &Value, conv_key: &str, fallback_project: &str) -> Option<ProjectState> {
+        if !step.is_object() {
+            return None;
+        }
+        let ty = step.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let cwd_proj = step
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .and_then(|c| Path::new(c).file_name())
+            .map(|s| s.to_string_lossy().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| fallback_project.to_string());
+
+        let mut status = "running";
+        let mut phase = String::new();
+        let mut tool_name = String::new();
+        let mut file_name = String::new();
+        let mut cmd = String::new();
+
+        if ty == "assistant" {
+            if let Some(content) = step
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+            {
+                let mut found_tool = false;
+                let mut found_thinking = false;
+                let mut found_text = false;
+                for block in content.iter().rev() {
+                    let bty = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    if bty == "tool_use" {
+                        found_tool = true;
+                        let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                        tool_name = name.to_string();
+                        let input = block.get("input").and_then(|v| v.as_object());
+                        let get_in = |k: &str| -> String {
+                            input.and_then(|m| m.get(k)).map(clean_arg).unwrap_or_default()
+                        };
+                        match name {
+                            "Bash" => {
+                                let c = get_in("command");
+                                cmd = c.clone();
+                                let short: String = c.chars().take(34).collect();
+                                phase = if short.is_empty() { "Running Bash".to_string() } else { format!("Command: {}", short) };
+                            }
+                            "Edit" | "Write" | "MultiEdit" => {
+                                let fp = get_in("file_path");
+                                file_name = Path::new(&fp)
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| "file".to_string());
+                                phase = format!("Editing {}", file_name);
+                            }
+                            "Read" => {
+                                let fp = get_in("file_path");
+                                file_name = Path::new(&fp)
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| "file".to_string());
+                                phase = format!("Reading {}", file_name);
+                            }
+                            "AskUserQuestion" => {
+                                status = "waiting";
+                                phase = "Waiting for your answer".to_string();
+                            }
+                            _ => {
+                                phase = format!("Tool: {}", name);
+                            }
+                        }
+                        break;
+                    } else if bty == "thinking" {
+                        found_thinking = true;
+                    } else if bty == "text" {
+                        found_text = true;
+                    }
+                }
+                if !found_tool {
+                    if found_thinking && !found_text {
+                        status = "thinking";
+                        phase = "Thinking...".to_string();
+                    } else if found_text {
+                        status = "done";
+                        phase = "Task finished".to_string();
+                    } else {
+                        return None;
+                    }
+                }
+            } else {
+                return None;
+            }
+        } else if ty == "user" {
+            status = "running";
+            phase = "Processing request...".to_string();
+        } else {
+            return None;
+        }
+
+        Some(ProjectState {
+            provider: "Claude Code".to_string(),
+            project: if cwd_proj.is_empty() { "Claude Code".to_string() } else { cwd_proj },
+            task: String::new(),
+            status: status.to_string(),
+            phase,
+            tool: tool_name,
+            file: file_name,
+            command: cmd,
+            progress: None,
+            conversation_id: conv_key.to_string(),
+            last_mcp_time: 0,
+            updated_at: now_ms(),
+        })
+    }
+
+    pub fn parse_codex_step(step: &Value, conv_key: &str, fallback_project: &str) -> Option<ProjectState> {
+        if !step.is_object() {
+            return None;
+        }
+        let ty = step.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let payload = step.get("payload");
+        let pty = payload.and_then(|p| p.get("type")).and_then(|v| v.as_str()).unwrap_or("");
+
+        let mut status = "running";
+        let phase: String;
+        let mut tool_name = String::new();
+        let mut cmd = String::new();
+
+        if ty == "response_item" {
+            match pty {
+                "function_call" | "custom_tool_call" => {
+                    let name = payload
+                        .and_then(|p| p.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tool");
+                    tool_name = name.to_string();
+                    if name == "shell" || name == "exec_command" || name == "shell_command" {
+                        let args_str = payload
+                            .and_then(|p| p.get("arguments"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        cmd = args_str.chars().take(36).collect();
+                        phase = format!("Command: {}", name);
+                    } else {
+                        phase = format!("Tool: {}", name);
+                    }
+                }
+                "reasoning" => {
+                    status = "thinking";
+                    phase = "Reasoning...".to_string();
+                }
+                "message" => {
+                    let role = payload
+                        .and_then(|p| p.get("role"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if role == "assistant" {
+                        status = "done";
+                        phase = "Task finished".to_string();
+                    } else if role == "user" {
+                        status = "running";
+                        phase = "Processing request...".to_string();
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        } else if ty == "event_msg" {
+            match pty {
+                "task_complete" | "turn_complete" => {
+                    status = "done";
+                    phase = "Task finished".to_string();
+                }
+                "agent_reasoning" => {
+                    status = "thinking";
+                    phase = "Reasoning...".to_string();
+                }
+                "user_message" => {
+                    status = "running";
+                    phase = "Processing request...".to_string();
+                }
+                _ => return None,
+            }
+        } else {
+            return None;
+        }
+
+        Some(ProjectState {
+            provider: "Codex".to_string(),
+            project: if fallback_project.is_empty() { "Codex".to_string() } else { fallback_project.to_string() },
+            task: String::new(),
+            status: status.to_string(),
+            phase,
+            tool: tool_name,
+            file: String::new(),
+            command: cmd,
+            progress: None,
+            conversation_id: conv_key.to_string(),
+            last_mcp_time: 0,
+            updated_at: now_ms(),
+        })
+    }
+
+    fn poll_claude_code(&mut self) -> bool {
+        if self.claude_projects_dir.as_os_str().is_empty() || !self.claude_projects_dir.exists() {
+            return false;
+        }
+        let mut files = Vec::new();
+        Self::collect_recent_jsonl(&self.claude_projects_dir, 2, 25 * 60 * 1000, &mut files);
+        let now = now_ms();
+        let mut any_changed = false;
+
+        for (path, mtime_ms, file_size) in files {
+            let key = format!("claude:{}", path.file_stem().and_then(|s| s.to_str()).unwrap_or("session"));
+            let age_ms = now.saturating_sub(mtime_ms);
+            let last_size = self.file_offsets.get(&key).copied().unwrap_or(0);
+            if file_size == last_size && self.projects.contains_key(&key) {
+                if let Some(cur) = self.projects.get_mut(&key) {
+                    if is_active_status(&cur.status) && age_ms > 120_000 {
+                        cur.status = "idle".to_string();
+                        cur.phase = "Ready".to_string();
+                        any_changed = true;
+                    } else if cur.status == "done" && now.saturating_sub(cur.updated_at) > 8000 {
+                        cur.status = "idle".to_string();
+                        cur.phase = "Ready".to_string();
+                        any_changed = true;
+                    }
+                }
+                continue;
+            }
+            self.file_offsets.insert(key.clone(), file_size);
+            let read_len = file_size.min(131_072) as usize;
+            if read_len == 0 { continue; }
+            let Ok(mut f) = File::open(&path) else { continue };
+            if f.seek(SeekFrom::Start(file_size.saturating_sub(read_len as u64))).is_err() { continue; }
+            let mut buf = vec![0u8; read_len];
+            let Ok(n) = f.read(&mut buf) else { continue };
+            let chunk = String::from_utf8_lossy(&buf[..n]);
+            let fallback_proj = path
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Claude Code".to_string());
+
+            for line in chunk.lines().rev() {
+                let Ok(step) = serde_json::from_str::<Value>(line.trim()) else { continue };
+                let Some(mut parsed) = Self::parse_claude_step(&step, &key, &fallback_proj) else { continue };
+                if age_ms > 120_000 && is_active_status(&parsed.status) {
+                    parsed.status = "idle".to_string();
+                    parsed.phase = "Ready".to_string();
+                    parsed.updated_at = mtime_ms;
+                } else if age_ms > 8000 && parsed.status == "done" {
+                    parsed.status = "idle".to_string();
+                    parsed.phase = "Ready".to_string();
+                    parsed.updated_at = mtime_ms;
+                }
+                let changed = self.projects.get(&key).map(|p| p.status != parsed.status || p.phase != parsed.phase).unwrap_or(true);
+                self.projects.insert(key.clone(), parsed.clone());
+                if changed {
+                    self.last_state = parsed;
+                    any_changed = true;
+                }
+                break;
+            }
+        }
+        any_changed
+    }
+
+    fn poll_codex(&mut self) -> bool {
+        if self.codex_sessions_dir.as_os_str().is_empty() || !self.codex_sessions_dir.exists() {
+            return false;
+        }
+        let mut files = Vec::new();
+        Self::collect_recent_jsonl(&self.codex_sessions_dir, 4, 25 * 60 * 1000, &mut files);
+        let now = now_ms();
+        let mut any_changed = false;
+
+        for (path, mtime_ms, file_size) in files {
+            let key = format!("codex:{}", path.file_stem().and_then(|s| s.to_str()).unwrap_or("session"));
+            let age_ms = now.saturating_sub(mtime_ms);
+            let last_size = self.file_offsets.get(&key).copied().unwrap_or(0);
+            if file_size == last_size && self.projects.contains_key(&key) {
+                if let Some(cur) = self.projects.get_mut(&key) {
+                    if is_active_status(&cur.status) && age_ms > 120_000 {
+                        cur.status = "idle".to_string();
+                        cur.phase = "Ready".to_string();
+                        any_changed = true;
+                    } else if cur.status == "done" && now.saturating_sub(cur.updated_at) > 8000 {
+                        cur.status = "idle".to_string();
+                        cur.phase = "Ready".to_string();
+                        any_changed = true;
+                    }
+                }
+                continue;
+            }
+            self.file_offsets.insert(key.clone(), file_size);
+            let read_len = file_size.min(131_072) as usize;
+            if read_len == 0 { continue; }
+            let Ok(mut f) = File::open(&path) else { continue };
+
+            // Try to read session_meta from first 4KB for project cwd
+            let mut fallback_proj = self
+                .projects
+                .get(&key)
+                .map(|p| p.project.clone())
+                .unwrap_or_else(|| "Codex".to_string());
+            if fallback_proj == "Codex" {
+                let mut head = vec![0u8; file_size.min(4096) as usize];
+                if let Ok(hn) = f.read(&mut head) {
+                    if let Some(first_line) = String::from_utf8_lossy(&head[..hn]).lines().next() {
+                        if let Ok(v) = serde_json::from_str::<Value>(first_line.trim()) {
+                            if let Some(cwd) = v.get("payload").and_then(|p| p.get("cwd")).and_then(|c| c.as_str()) {
+                                if let Some(name) = Path::new(cwd).file_name().map(|s| s.to_string_lossy().to_string()) {
+                                    if !name.is_empty() {
+                                        fallback_proj = name;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if f.seek(SeekFrom::Start(file_size.saturating_sub(read_len as u64))).is_err() { continue; }
+            let mut buf = vec![0u8; read_len];
+            let Ok(n) = f.read(&mut buf) else { continue };
+            let chunk = String::from_utf8_lossy(&buf[..n]);
+
+            for line in chunk.lines().rev() {
+                let Ok(step) = serde_json::from_str::<Value>(line.trim()) else { continue };
+                let Some(mut parsed) = Self::parse_codex_step(&step, &key, &fallback_proj) else { continue };
+                if age_ms > 120_000 && is_active_status(&parsed.status) {
+                    parsed.status = "idle".to_string();
+                    parsed.phase = "Ready".to_string();
+                    parsed.updated_at = mtime_ms;
+                } else if age_ms > 8000 && parsed.status == "done" {
+                    parsed.status = "idle".to_string();
+                    parsed.phase = "Ready".to_string();
+                    parsed.updated_at = mtime_ms;
+                }
+                let changed = self.projects.get(&key).map(|p| p.status != parsed.status || p.phase != parsed.phase).unwrap_or(true);
+                self.projects.insert(key.clone(), parsed.clone());
+                if changed {
+                    self.last_state = parsed;
+                    any_changed = true;
+                }
+                break;
+            }
+        }
         any_changed
     }
 }
@@ -715,5 +1114,29 @@ mod tests {
         let done_step = json!({ "type": "PLANNER_RESPONSE", "status": "DONE" });
         let st2 = AntigravityMonitor::parse_step_to_state(&done_step, "conv1", "Island").unwrap();
         assert_eq!(st2.status, "done");
+    }
+
+    #[test]
+    fn parses_claude_and_codex_steps() {
+        let claude = json!({
+            "type": "assistant",
+            "cwd": "C:\\Users\\russell\\Documents\\Island",
+            "message": {
+                "content": [{ "type": "tool_use", "name": "Edit", "input": { "file_path": "C:\\repo\\app.js" } }]
+            }
+        });
+        let cs = AntigravityMonitor::parse_claude_step(&claude, "claude:1", "Fallback").unwrap();
+        assert_eq!(cs.provider, "Claude Code");
+        assert_eq!(cs.project, "Island");
+        assert_eq!(cs.status, "running");
+        assert_eq!(cs.phase, "Editing app.js");
+
+        let codex = json!({
+            "type": "response_item",
+            "payload": { "type": "function_call", "name": "shell_command", "arguments": "{\"cmd\":\"npm test\"}" }
+        });
+        let xs = AntigravityMonitor::parse_codex_step(&codex, "codex:1", "Island").unwrap();
+        assert_eq!(xs.provider, "Codex");
+        assert_eq!(xs.status, "running");
     }
 }

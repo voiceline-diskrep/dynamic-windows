@@ -1,6 +1,6 @@
 {
   "name": "dynamic-windows",
-  "version": "2.2.3",
+  "version": "2.2.4",
   "description": "Dynamic Windows: Native Rust Apple Dynamic Island & Notch for Windows with Google Antigravity & Liner Synced Lyrics",
   "main": "src/main/main.js",
   "type": "commonjs",

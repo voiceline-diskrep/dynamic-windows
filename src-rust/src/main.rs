@@ -532,7 +532,20 @@ fn push_initial_states(state: &AppState, proxy: &EventLoopProxy<UserEvent>) {
         json!({ "enabled": album_grad }),
     );
     send("island-opacity-changed", json!({ "opacity": opacity }));
+    let hwnd_init = state.overlay_hwnd.load(Ordering::SeqCst);
+    sys_win::set_window_exclude_from_capture(hwnd_init, liquid_glass);
     send("liquid-glass-toggled", json!({ "enabled": liquid_glass }));
+    {
+        let cfg = state.config.lock().unwrap();
+        send(
+            "tab-bar-config-changed",
+            json!({
+                "tabBarPosition": cfg.get_str("tabBarPosition", "left"),
+                "tabBarOrder": cfg.get("tabBarOrder").cloned().unwrap_or_else(|| json!([])),
+                "tabBarHidden": cfg.get("tabBarHidden").cloned().unwrap_or_else(|| json!([]))
+            }),
+        );
+    }
     send(
         "performance-settings-changed",
         json!({ "liteMode": lite_mode, "reducedMotion": reduced_motion }),
@@ -672,7 +685,23 @@ fn handle_ipc_message(
                     bcast("island-opacity-changed", json!({ "opacity": op }));
                 }
                 if let Some(lg) = patch.get("liquidGlass").and_then(|v| v.as_bool()) {
+                    let hwnd = state.overlay_hwnd.load(Ordering::SeqCst);
+                    sys_win::set_window_exclude_from_capture(hwnd, lg);
                     bcast("liquid-glass-toggled", json!({ "enabled": lg }));
+                }
+                if patch.contains_key("tabBarPosition")
+                    || patch.contains_key("tabBarOrder")
+                    || patch.contains_key("tabBarHidden")
+                {
+                    let cfg = state.config.lock().unwrap();
+                    bcast(
+                        "tab-bar-config-changed",
+                        json!({
+                            "tabBarPosition": cfg.get_str("tabBarPosition", "left"),
+                            "tabBarOrder": cfg.get("tabBarOrder").cloned().unwrap_or_else(|| json!([])),
+                            "tabBarHidden": cfg.get("tabBarHidden").cloned().unwrap_or_else(|| json!([]))
+                        }),
+                    );
                 }
                 if patch.contains_key("liteMode") || patch.contains_key("reducedMotion") {
                     let cfg = state.config.lock().unwrap();
@@ -726,6 +755,24 @@ fn handle_ipc_message(
                     );
                 }
                 reply(updated);
+            }
+            "capture-liquid-backdrop" => {
+                let hwnd = state.overlay_hwnd.load(Ordering::SeqCst);
+                let scale = *state.overlay_scale.lock().unwrap();
+                let x = arg0.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let y = arg0.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let w = arg0.get("w").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let h = arg0.get("h").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let p = proxy.clone();
+                thread::spawn(move || {
+                    let data_url = sys_win::capture_desktop_region_png_data_url(hwnd, x, y, w, h, scale);
+                    let _ = p.send_event(UserEvent::ResolveInvoke {
+                        target: from,
+                        id: req_id,
+                        ok: true,
+                        payload: json!({ "dataUrl": data_url }),
+                    });
+                });
             }
             "check-github-update" => {
                 let (owner, repo) = {
@@ -1002,8 +1049,28 @@ fn handle_ipc_message(
         "focus-antigravity" => {
             let ag = state.antigravity.clone();
             let p = proxy.clone();
+            let provider_hint = arg0
+                .as_str()
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    arg0.get("provider")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_default();
             thread::spawn(move || {
-                if !sys_win::focus_process("Antigravity") {
+                let focused = if provider_hint.to_lowercase().contains("claude") {
+                    sys_win::focus_process("Claude")
+                        || sys_win::focus_process("WindowsTerminal")
+                        || sys_win::focus_process("Code")
+                } else if provider_hint.to_lowercase().contains("codex") {
+                    sys_win::focus_process("Codex")
+                        || sys_win::focus_process("ChatGPT")
+                        || sys_win::focus_process("WindowsTerminal")
+                } else {
+                    sys_win::focus_process("Antigravity")
+                };
+                if !focused && provider_hint.is_empty() {
                     let mut g = ag.lock().unwrap();
                     g.mark_not_running();
                     let st = g.get_state();

@@ -52,15 +52,19 @@ use windows::Win32::UI::Shell::{
     QUNS_APP, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
 };
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
+    GetMonitorInfoW, MonitorFromWindow, ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt,
+    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HALFTONE, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST, SRCCOPY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW,
     GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-    IsWindowVisible, IsZoomed, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, GWL_EXSTYLE, HWND_TOPMOST, SPIF_SENDCHANGE, SPI_GETWORKAREA,
-    SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_MAXIMIZE, SW_RESTORE,
-    SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    IsWindowVisible, IsZoomed, SetForegroundWindow, SetWindowDisplayAffinity, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, SystemParametersInfoW, GWL_EXSTYLE, HWND_TOPMOST, SPIF_SENDCHANGE,
+    SPI_GETWORKAREA, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE,
+    SW_MAXIMIZE, SW_RESTORE, SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_APPWINDOW,
+    WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -1295,5 +1299,138 @@ pub fn get_call_audio() -> CallAudioSnapshot {
             active_mic_apps,
             window_titles,
         }
+    }
+}
+
+pub fn set_window_exclude_from_capture(hwnd_raw: isize, exclude: bool) {
+    if hwnd_raw == 0 {
+        return;
+    }
+    unsafe {
+        let hwnd = HWND(hwnd_raw as *mut _);
+        let affinity = if exclude {
+            WDA_EXCLUDEFROMCAPTURE
+        } else {
+            WDA_NONE
+        };
+        let _ = SetWindowDisplayAffinity(hwnd, affinity);
+    }
+}
+
+/// Captures the desktop region directly behind the overlay capsule (excluding our own window
+/// when WDA_EXCLUDEFROMCAPTURE is active) and returns a compact PNG data URL for real optical
+/// edge distortion in Liquid Glass mode.
+pub fn capture_desktop_region_png_data_url(
+    hwnd_raw: isize,
+    css_x: f64,
+    css_y: f64,
+    css_w: f64,
+    css_h: f64,
+    scale: f64,
+) -> Option<String> {
+    if hwnd_raw == 0 || css_w < 12.0 || css_h < 12.0 {
+        return None;
+    }
+    let scale = if scale.is_finite() && scale > 0.25 { scale } else { 1.0 };
+    unsafe {
+        let hwnd = HWND(hwnd_raw as *mut _);
+        let mut wrect = RECT::default();
+        if GetWindowRect(hwnd, &mut wrect).is_err() {
+            return None;
+        }
+        let src_x = wrect.left + (css_x * scale).round() as i32;
+        let src_y = wrect.top + (css_y * scale).round() as i32;
+        let src_w = ((css_w * scale).round() as i32).clamp(8, 2000);
+        let src_h = ((css_h * scale).round() as i32).clamp(8, 1200);
+
+        // Downsample moderately to keep capture fast (<1ms) and RAM tiny
+        let max_dim = 320.0_f64;
+        let down = (max_dim / (src_w.max(src_h) as f64)).min(1.0);
+        let dst_w = ((src_w as f64 * down).round() as i32).clamp(8, 320);
+        let dst_h = ((src_h as f64 * down).round() as i32).clamp(8, 320);
+
+        let screen_dc = GetDC(None);
+        if screen_dc.is_invalid() {
+            return None;
+        }
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        if mem_dc.is_invalid() {
+            let _ = ReleaseDC(None, screen_dc);
+            return None;
+        }
+        let bmp = CreateCompatibleBitmap(screen_dc, dst_w, dst_h);
+        if bmp.is_invalid() {
+            let _ = DeleteDC(mem_dc);
+            let _ = ReleaseDC(None, screen_dc);
+            return None;
+        }
+        let old = SelectObject(mem_dc, bmp);
+        let _ = SetStretchBltMode(mem_dc, HALFTONE);
+        let ok = StretchBlt(
+            mem_dc,
+            0,
+            0,
+            dst_w,
+            dst_h,
+            screen_dc,
+            src_x,
+            src_y,
+            src_w,
+            src_h,
+            SRCCOPY,
+        )
+        .as_bool();
+
+        let mut rgba = vec![0u8; (dst_w * dst_h * 4) as usize];
+        let mut got_bits = false;
+        if ok {
+            let mut bmi = BITMAPINFO::default();
+            bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            bmi.bmiHeader.biWidth = dst_w;
+            bmi.bmiHeader.biHeight = -dst_h; // top-down
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB.0;
+
+            let rows = GetDIBits(
+                mem_dc,
+                bmp,
+                0,
+                dst_h as u32,
+                Some(rgba.as_mut_ptr() as *mut _),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            );
+            got_bits = rows > 0;
+        }
+
+        let _ = SelectObject(mem_dc, old);
+        let _ = DeleteObject(bmp);
+        let _ = DeleteDC(mem_dc);
+        let _ = ReleaseDC(None, screen_dc);
+
+        if !got_bits {
+            return None;
+        }
+
+        // Convert BGRA -> RGBA with opaque alpha
+        for px in rgba.chunks_exact_mut(4) {
+            px.swap(0, 2);
+            px[3] = 255;
+        }
+
+        let mut png_bytes = Vec::with_capacity((dst_w * dst_h) as usize);
+        {
+            let mut enc = png::Encoder::new(&mut png_bytes, dst_w as u32, dst_h as u32);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.set_compression(png::Compression::Fast);
+            let mut writer = enc.write_header().ok()?;
+            writer.write_image_data(&rgba).ok()?;
+        }
+
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+        Some(format!("data:image/png;base64,{}", b64))
     }
 }

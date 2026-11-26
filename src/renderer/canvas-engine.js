@@ -651,7 +651,15 @@ let navIndicatorX = null;
 let navIndicatorW = null;
 let navIndicatorY = null;
 let navIndicatorH = null;
+let navIndicatorX = null;
+let navIndicatorW = null;
 let isNavPillAnimating = false;
+let tabBarPosition = 'left'; // 'left' | 'top' | 'right' | 'bottom'
+const DEFAULT_TAB_ORDER = ['home', 'notifications', 'calendar', 'clock', 'todo', 'media', 'agent', 'dropzone', 'clipboard', 'settings'];
+let tabBarOrder = DEFAULT_TAB_ORDER.slice();
+let tabBarHidden = [];
+let currentRailW = 44;
+let targetRailW = 44;
 let mediaTabLyricsVisible = true;
 let mediaLyricsPanelAnim = 1.0;
 let currentExpandedH = UI.HOME_H;
@@ -2498,8 +2506,68 @@ function getAntigravityProgress(state) {
   };
 }
 
-// Lazy Antigravity Logo placeholder (not preloaded at startup to save decoded bitmap RAM)
-const antigravityLogo = { complete: false, naturalWidth: 0 };
+// Lazy AI Provider Logos (loaded only on first use to keep idle RAM minimal)
+const providerLogoCache = {};
+function getProviderLogoImage(provider) {
+  const p = String(provider || '').toLowerCase();
+  let key = 'antigravity';
+  let src = 'antigravity_logo.png';
+  if (p.includes('claude')) {
+    key = 'claude';
+    src = 'claude_code_logo.svg';
+  } else if (p.includes('codex') || p.includes('openai') || p.includes('chatgpt')) {
+    key = 'codex';
+    src = 'codex_logo.svg';
+  }
+  if (!providerLogoCache[key]) {
+    const img = new Image();
+    img.onload = () => requestFrame();
+    img.src = src;
+    providerLogoCache[key] = img;
+  }
+  return providerLogoCache[key];
+}
+
+// Liquid Glass Real Desktop Backdrop Capture (throttled, only active when liquidGlassEnabled)
+let liquidBackdropImg = null;
+let liquidBackdropPending = false;
+let liquidBackdropLastAt = 0;
+let liquidBackdropLastRectSig = '';
+
+function requestLiquidBackdropCapture(x, y, w, h) {
+  if (!liquidGlassEnabled || liteModeEnabled || liquidBackdropPending) return;
+  if (w < 24 || h < 16) return;
+  const now = performance.now();
+  const rectSig = `${Math.round(x / 2)},${Math.round(y / 2)},${Math.round(w / 2)},${Math.round(h / 2)}`;
+  const moved = rectSig !== liquidBackdropLastRectSig;
+  const minInterval = moved ? 180 : 750;
+  if (now - liquidBackdropLastAt < minInterval) return;
+
+  liquidBackdropPending = true;
+  liquidBackdropLastAt = now;
+  liquidBackdropLastRectSig = rectSig;
+  try {
+    ipcRenderer.invoke('capture-liquid-backdrop', { x, y, w, h }).then(res => {
+      liquidBackdropPending = false;
+      if (!liquidGlassEnabled) {
+        liquidBackdropImg = null;
+        return;
+      }
+      if (res && res.dataUrl) {
+        const nextImg = new Image();
+        nextImg.onload = () => {
+          liquidBackdropImg = nextImg;
+          requestFrame();
+        };
+        nextImg.src = res.dataUrl;
+      }
+    }).catch(() => {
+      liquidBackdropPending = false;
+    });
+  } catch (e) {
+    liquidBackdropPending = false;
+  }
+}
 
 // High-DPI Canvas Resizing
 let dpr = 1;
@@ -3452,7 +3520,18 @@ function handleButtonClick(id, data) {
   } else if (id && (id === 'dropzone_delete_file' || id.startsWith('dropzone_delete_file_'))) {
     ipcRenderer.send('dropzone-delete-file', data);
   } else if (id === 'jump_antigravity' || (id && id.startsWith('focus_proj_'))) {
-    ipcRenderer.send('focus-antigravity');
+    let providerHint = '';
+    if (id && id.startsWith('focus_proj_')) {
+      const idx = parseInt(id.replace('focus_proj_', ''), 10);
+      const projs = getActiveProjects();
+      if (!isNaN(idx) && projs[idx] && projs[idx].provider) {
+        providerHint = projs[idx].provider;
+      }
+    } else {
+      const projs = getActiveProjects();
+      if (projs[0] && projs[0].provider) providerHint = projs[0].provider;
+    }
+    ipcRenderer.send('focus-antigravity', { provider: providerHint });
   } else if (id === 'media_volume_mute') {
     ipcRenderer.send('toggle-media-mute', getMediaAppHint());
   } else if (id === 'media_play_pause') {
@@ -3722,8 +3801,44 @@ ipcRenderer.on('island-opacity-changed', (event, data) => {
 ipcRenderer.on('liquid-glass-toggled', (event, data) => {
   if (data && typeof data.enabled === 'boolean') {
     liquidGlassEnabled = data.enabled;
+    if (!liquidGlassEnabled) {
+      liquidBackdropImg = null;
+      liquidBackdropLastRectSig = '';
+    }
     requestFrame();
   }
+});
+function applyTabBarConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object') return;
+  if (typeof cfg.tabBarPosition === 'string' && ['left', 'top', 'right', 'bottom'].includes(cfg.tabBarPosition)) {
+    if (tabBarPosition !== cfg.tabBarPosition) {
+      tabBarPosition = cfg.tabBarPosition;
+      navIndicatorX = null;
+      navIndicatorY = null;
+      navIndicatorW = null;
+      navIndicatorH = null;
+    }
+  }
+  if (Array.isArray(cfg.tabBarOrder) && cfg.tabBarOrder.length > 0) {
+    const out = [];
+    cfg.tabBarOrder.forEach(id => {
+      if (DEFAULT_TAB_ORDER.includes(id) && !out.includes(id)) out.push(id);
+    });
+    DEFAULT_TAB_ORDER.forEach(id => {
+      if (!out.includes(id)) out.push(id);
+    });
+    tabBarOrder = out;
+  }
+  if (Array.isArray(cfg.tabBarHidden)) {
+    tabBarHidden = cfg.tabBarHidden.filter(id => id !== 'home' && id !== 'settings');
+    if (tabBarHidden.includes(currentView)) {
+      switchTab('home');
+    }
+  }
+  requestFrame();
+}
+ipcRenderer.on('tab-bar-config-changed', (event, data) => {
+  applyTabBarConfig(data);
 });
 ipcRenderer.on('performance-settings-changed', (event, data) => {
   if (data && typeof data === 'object') {
@@ -3828,6 +3943,7 @@ try {
       if (typeof res.config.liquidGlass === 'boolean') {
         liquidGlassEnabled = res.config.liquidGlass;
       }
+      applyTabBarConfig(res.config);
       if (typeof res.config.liteMode === 'boolean') {
         liteModeEnabled = res.config.liteMode;
       }
@@ -4503,10 +4619,14 @@ function getNotificationBannerWidth() {
 
 function getTargetExpandedWidthForView(view) {
   if (view === 'notification_banner') return getNotificationBannerWidth();
-  if (view === 'home') {
-    return hasActiveCall() ? 556 : UI.HOME_EXPANDED_W;
+  const baseW = (view === 'home')
+    ? (hasActiveCall() ? 556 : UI.HOME_EXPANDED_W)
+    : UI.EXPANDED_W;
+  if (tabBarPosition === 'left' || tabBarPosition === 'right') {
+    const extraRail = Math.max(0, Math.round((currentRailW || 44) - 44));
+    return baseW + extraRail;
   }
-  return UI.EXPANDED_W;
+  return baseW;
 }
 
 function getTargetWidth(p) {
@@ -4522,13 +4642,17 @@ function getTargetWidth(p) {
 }
 
 function getTargetExpandedHeightForView(view) {
-  return getTargetExpandedHeight(view, {
+  const baseH = getTargetExpandedHeight(view, {
     activeAlarmRinging,
     clockSubMode,
     alarmsCount: (alarmsList && alarmsList.length) || 0,
     projectCount: getActiveProjects().length,
     liveLyricsEnabled: liveLyricsEnabled && mediaTabLyricsVisible
   });
+  if (view !== 'notification_banner' && (tabBarPosition === 'top' || tabBarPosition === 'bottom')) {
+    return baseH + 34;
+  }
+  return baseH;
 }
 
 function getTargetHeight(p) {
@@ -4839,30 +4963,86 @@ function paintCapsuleSurface(c, {
     return;
   }
 
-  // Apple Optical Liquid Glass Mode: ultra-clear crystal lens, curved bevel refraction, prismatic RGB chromatic dispersion rim, zero noisy grain
-  const glassFactor = 0.40 + 0.16 * Math.max(0, Math.min(1, p));
-  const baseGlassAlpha = Math.max(0.34, Math.min(0.60, islandOpacity * glassFactor));
+  // Apple Optical Liquid Glass Mode: real desktop edge-lens refraction distortion, neutral optical tint, zero rainbow
+  requestLiquidBackdropCapture(x, y, w, h);
+
+  const glassFactor = 0.42 + 0.16 * Math.max(0, Math.min(1, p));
+  const baseGlassAlpha = Math.max(0.36, Math.min(0.62, islandOpacity * glassFactor));
 
   c.save();
   tracePath();
-  // Optical depth gradient: clearer optical center, gently denser smoked glass toward edges
+  c.clip();
+
+  // 1. Real Desktop Backdrop with Curved Border Lens Distortion (elongates text/edges near glass borders)
+  if (liquidBackdropImg && liquidBackdropImg.complete && liquidBackdropImg.naturalWidth > 0 && w > 36 && h > 24) {
+    const iw = liquidBackdropImg.naturalWidth;
+    const ih = liquidBackdropImg.naturalHeight;
+    const edgeX = Math.min(18, Math.max(8, Math.round(w * 0.08)));
+    const edgeY = Math.min(14, Math.max(6, Math.round(h * 0.10)));
+
+    c.save();
+    // Base center pass (clean, undistorted interior)
+    c.globalAlpha = 0.88;
+    c.drawImage(liquidBackdropImg, 0, 0, iw, ih, x, y, w, h);
+
+    // Left & Right border optical lens stretch (magnifies/elongates horizontal widths near vertical borders)
+    const stripsX = 5;
+    const stripDstW = edgeX / stripsX;
+    for (let i = 0; i < stripsX; i++) {
+      // t = 0 at outermost border (strongest stretch), t = 1 at inner edge of bevel (normal 1:1)
+      const t = i / stripsX;
+      const lensScale = 0.46 + 0.54 * (t * t); // outer edge samples narrower slice -> stretches horizontally
+      // Left border strip
+      const dstLx = x + i * stripDstW;
+      const srcLx = ((i * stripDstW) / w) * iw;
+      const srcLw = Math.max(1, ((stripDstW * lensScale) / w) * iw);
+      c.drawImage(liquidBackdropImg, srcLx, 0, srcLw, ih, dstLx, y, stripDstW + 0.6, h);
+
+      // Right border strip (mirrored)
+      const dstRx = x + w - (i + 1) * stripDstW;
+      const srcRw = Math.max(1, ((stripDstW * lensScale) / w) * iw);
+      const srcRx = Math.max(0, iw - ((i * stripDstW) / w) * iw - srcRw);
+      c.drawImage(liquidBackdropImg, srcRx, 0, srcRw, ih, dstRx, y, stripDstW + 0.6, h);
+    }
+
+    // Top & Bottom border optical lens stretch (magnifies vertical widths near horizontal borders)
+    const stripsY = 4;
+    const stripDstH = edgeY / stripsY;
+    for (let i = 0; i < stripsY; i++) {
+      const t = i / stripsY;
+      const lensScale = 0.50 + 0.50 * (t * t);
+      // Top border strip
+      const dstTy = y + i * stripDstH;
+      const srcTy = ((i * stripDstH) / h) * ih;
+      const srcTh = Math.max(1, ((stripDstH * lensScale) / h) * ih);
+      c.drawImage(liquidBackdropImg, 0, srcTy, iw, srcTh, x, dstTy, w, stripDstH + 0.6);
+
+      // Bottom border strip
+      const dstBy = y + h - (i + 1) * stripDstH;
+      const srcBh = Math.max(1, ((stripDstH * lensScale) / h) * ih);
+      const srcBy = Math.max(0, ih - ((i * stripDstH) / h) * ih - srcBh);
+      c.drawImage(liquidBackdropImg, 0, srcBy, iw, srcBh, x, dstBy, w, stripDstH + 0.6);
+    }
+    c.restore();
+  }
+
+  // 2. Neutral smoked optical glass tint (clearer center, slightly denser smoked bevel edges)
   const cxGlass = x + w * 0.5;
   const cyGlass = y + h * 0.45;
   const lensRad = Math.max(w, h) * 0.68;
   const bodyGrad = c.createRadialGradient(cxGlass, cyGlass, Math.min(w, h) * 0.08, cxGlass, cyGlass, lensRad);
-  bodyGrad.addColorStop(0.0, `rgba(22, 22, 26, ${(baseGlassAlpha * 0.86).toFixed(3)})`);
-  bodyGrad.addColorStop(0.68, `rgba(18, 18, 22, ${baseGlassAlpha.toFixed(3)})`);
-  bodyGrad.addColorStop(1.0, `rgba(30, 30, 36, ${Math.min(0.72, baseGlassAlpha * 1.18).toFixed(3)})`);
+  bodyGrad.addColorStop(0.0, `rgba(18, 18, 22, ${(baseGlassAlpha * 0.88).toFixed(3)})`);
+  bodyGrad.addColorStop(0.70, `rgba(14, 14, 18, ${baseGlassAlpha.toFixed(3)})`);
+  bodyGrad.addColorStop(1.0, `rgba(24, 24, 30, ${Math.min(0.76, baseGlassAlpha * 1.18).toFixed(3)})`);
   c.fillStyle = bodyGrad;
-  c.fill();
-  c.clip();
+  c.fillRect(x - 24, y, w + 48, h);
 
   // Subtle top-to-bottom optical sky reflection
   const skyGrad = c.createLinearGradient(x, y, x, y + h);
-  skyGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.13)');
-  skyGrad.addColorStop(0.24, 'rgba(255, 255, 255, 0.025)');
+  skyGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.12)');
+  skyGrad.addColorStop(0.24, 'rgba(255, 255, 255, 0.02)');
   skyGrad.addColorStop(0.78, 'rgba(255, 255, 255, 0.01)');
-  skyGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.075)');
+  skyGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.07)');
   c.fillStyle = skyGrad;
   c.fillRect(x - 24, y, w + 48, h);
 
@@ -4878,15 +5058,15 @@ function paintCapsuleSurface(c, {
     c.fillRect(x - 24, y, w + 48, h);
   }
 
-  // Thick curved-lens inner refraction bevel (bright glass edge thickness)
+  // Thick curved-lens inner refraction bevel (pure neutral optical glass, no rainbow)
   c.save();
   traceRim();
   const bevelGrad = c.createLinearGradient(x, y, x + w * 0.35, y + h);
-  bevelGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.22)');
+  bevelGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.24)');
   bevelGrad.addColorStop(0.35, 'rgba(255, 255, 255, 0.04)');
   bevelGrad.addColorStop(0.75, 'rgba(255, 255, 255, 0.03)');
-  bevelGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.15)');
-  c.lineWidth = 4.2;
+  bevelGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.16)');
+  c.lineWidth = 4.0;
   c.strokeStyle = bevelGrad;
   c.stroke();
   c.restore();
@@ -4895,37 +5075,21 @@ function paintCapsuleSurface(c, {
   if (mouseX >= x - 60 && mouseX <= x + w + 60 && mouseY >= y - 20 && mouseY <= y + h + 40) {
     const bloomR = Math.max(85, Math.min(200, w * 0.40));
     const bloom = c.createRadialGradient(mouseX, mouseY, 2, mouseX, mouseY, bloomR);
-    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.14)');
-    bloom.addColorStop(0.45, 'rgba(255, 255, 255, 0.035)');
+    bloom.addColorStop(0.0, 'rgba(255, 255, 255, 0.13)');
+    bloom.addColorStop(0.45, 'rgba(255, 255, 255, 0.03)');
     bloom.addColorStop(1.0, 'rgba(255, 255, 255, 0.0)');
     c.fillStyle = bloom;
     c.fillRect(x - 24, y, w + 48, h);
   }
   c.restore();
 
-  // Prismatic RGB Chromatic Dispersion + Specular Fresnel Glass Rim
+  // Crisp Neutral Fresnel Glass Rim (zero rainbow chromatic band)
   c.save();
-  // 1. Subtle outer dark glass depth contour
   traceRim();
-  c.lineWidth = 2.2;
-  c.strokeStyle = 'rgba(0, 0, 0, 0.26)';
+  c.lineWidth = 2.0;
+  c.strokeStyle = 'rgba(0, 0, 0, 0.28)';
   c.stroke();
 
-  // 2. Chromatic dispersion layer (cyan -> magenta -> warm amber prism along curved edge)
-  if (!forceSemanticRim) {
-    traceRim();
-    const prismGrad = c.createLinearGradient(x, y, x + w, y + h);
-    prismGrad.addColorStop(0.0, 'rgba(120, 210, 255, 0.34)');
-    prismGrad.addColorStop(0.28, 'rgba(255, 255, 255, 0.14)');
-    prismGrad.addColorStop(0.55, 'rgba(244, 114, 182, 0.26)');
-    prismGrad.addColorStop(0.82, 'rgba(251, 191, 36, 0.22)');
-    prismGrad.addColorStop(1.0, 'rgba(120, 210, 255, 0.30)');
-    c.lineWidth = 1.65;
-    c.strokeStyle = prismGrad;
-    c.stroke();
-  }
-
-  // 3. Razor-crisp bright specular white lens catchlight
   traceRim();
   const rimGrad = c.createLinearGradient(x, y, x + w * 0.52, y + h);
   if (accentTintStrength > 0.05 && palette) {
@@ -4937,11 +5101,11 @@ function paintCapsuleSurface(c, {
     rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.52)');
   } else {
     rimGrad.addColorStop(0.0, 'rgba(255, 255, 255, 0.78)');
-    rimGrad.addColorStop(0.22, 'rgba(255, 255, 255, 0.22)');
-    rimGrad.addColorStop(0.72, 'rgba(255, 255, 255, 0.14)');
-    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.48)');
+    rimGrad.addColorStop(0.22, 'rgba(255, 255, 255, 0.24)');
+    rimGrad.addColorStop(0.72, 'rgba(255, 255, 255, 0.16)');
+    rimGrad.addColorStop(1.0, 'rgba(255, 255, 255, 0.50)');
   }
-  c.lineWidth = 1.0;
+  c.lineWidth = 1.05;
   c.strokeStyle = forceSemanticRim ? rimColor : rimGrad;
   c.stroke();
   c.restore();
@@ -6136,16 +6300,18 @@ function renderDetachedSideIslands(x, y, w, h, alpha) {
       : (isAiHov ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.14)');
     drawDetachedPillSurface(ax, y, aiW, h, pillRadius, rim);
 
-    // Antigravity Logo (18x18 rounded)
+    // AI Provider Logo (Antigravity, Claude Code, or Codex)
     const logoSize = 18;
     const logoX = ax + 9;
     const logoY = y + (h - logoSize) / 2;
-    if (antigravityLogo.complete && antigravityLogo.naturalWidth > 0) {
+    const primaryAi = (activeProjs && activeProjs[0]) || antigravityState;
+    const provImg = getProviderLogoImage(primaryAi && primaryAi.provider);
+    if (provImg && provImg.complete && provImg.naturalWidth > 0) {
       ctx.save();
       ctx.beginPath();
       ctx.roundRect(logoX, logoY, logoSize, logoSize, 4.5);
       ctx.clip();
-      ctx.drawImage(antigravityLogo, logoX, logoY, logoSize, logoSize);
+      ctx.drawImage(provImg, logoX, logoY, logoSize, logoSize);
       ctx.restore();
     }
 
@@ -6276,11 +6442,25 @@ function renderExpandedView(x, y, w, h, alpha) {
     return;
   }
 
-  // View Body positioned to the right of the left vertical icon rail
-  const railW = 44;
-  const contentX = x + railW;
-  const contentW = Math.max(200, w - railW);
-  const contentY = y - 6;
+  // Compute content area cleanly around the configured Tab Bar position (left/right/top/bottom)
+  const railW = Math.max(44, Math.round(currentRailW || 44));
+  let contentX = x;
+  let contentW = w;
+  let contentY = y - 6;
+  let contentH = h;
+  if (tabBarPosition === 'left') {
+    contentX = x + railW;
+    contentW = Math.max(200, w - railW);
+  } else if (tabBarPosition === 'right') {
+    contentX = x;
+    contentW = Math.max(200, w - railW);
+  } else if (tabBarPosition === 'top') {
+    contentY = y + 30;
+    contentH = Math.max(120, h - 34);
+  } else if (tabBarPosition === 'bottom') {
+    contentY = y - 6;
+    contentH = Math.max(120, h - 34);
+  }
   const now = performance.now();
   const tabDuration = Math.max(120, 220 / (animSpeedMultiplier || 1.0));
   const elapsed = now - tabTransitionStartTime;
@@ -6305,7 +6485,7 @@ function renderExpandedView(x, y, w, h, alpha) {
       ctx.save();
       ctx.globalAlpha = outAlpha;
       ctx.translate(offsets.outgoingOffset, 0);
-      renderViewContent(previousView, contentX, contentY, contentW, h);
+      renderViewContent(previousView, contentX, contentY, contentW, contentH);
       ctx.restore();
       interactiveButtons.length = savedLen;
     }
@@ -6317,7 +6497,7 @@ function renderExpandedView(x, y, w, h, alpha) {
     ctx.save();
     ctx.globalAlpha = inAlpha;
     ctx.translate(inOffset, 0);
-    renderViewContent(currentView, contentX, contentY, contentW, h);
+    renderViewContent(currentView, contentX, contentY, contentW, contentH);
     ctx.restore();
     for (let i = incomingStartIndex; i < interactiveButtons.length; i++) {
       interactiveButtons[i].x += inOffset;
@@ -6325,10 +6505,10 @@ function renderExpandedView(x, y, w, h, alpha) {
 
     ctx.restore();
   } else {
-    renderViewContent(currentView, contentX, contentY, contentW, h);
+    renderViewContent(currentView, contentX, contentY, contentW, contentH);
   }
 
-  // Left-Side Vertical Icon Rail + Top-Right Mode/Exit Controls
+  // Configurable Navigation Bar (Left / Right / Top / Bottom) + Top-Right Mode/Exit Controls
   renderTopNav(x, y, w, h);
 
   ctx.restore();
@@ -6724,6 +6904,16 @@ function drawNavTabIcon(c, tabId, cx, cy, color, hasBadge = false) {
     c.lineTo(cx + 3.8, cy - 4.2);
     c.lineTo(cx + 3.8, cy + 1.6);
     c.stroke();
+  } else if (tabId === 'nav_agent') {
+    // 4-point AI sparkle star
+    c.beginPath();
+    c.moveTo(cx, cy - 4.6);
+    c.quadraticCurveTo(cx + 0.8, cy - 0.8, cx + 4.6, cy);
+    c.quadraticCurveTo(cx + 0.8, cy + 0.8, cx, cy + 4.6);
+    c.quadraticCurveTo(cx - 0.8, cy + 0.8, cx - 4.6, cy);
+    c.quadraticCurveTo(cx - 0.8, cy - 0.8, cx, cy - 4.6);
+    c.closePath();
+    c.stroke();
   } else if (tabId === 'nav_call') {
     c.beginPath();
     c.arc(cx, cy, 4.0, 0.75 * Math.PI, 1.75 * Math.PI);
@@ -6764,187 +6954,330 @@ function drawNavTabIcon(c, tabId, cx, cy, color, hasBadge = false) {
   c.restore();
 }
 
-function renderTopNav(x, y, w, h = 160) {
+function getConfiguredNavItems() {
   const hasUnreadNotifs = notificationList.some(n => !n.read && !String(`${n.app || ''} ${n.title || ''}`).toLowerCase().includes('antigravity'));
-  const navItems = [
-    { id: 'nav_home', label: 'Home' },
-    { id: 'nav_notif', label: 'Notif', badge: hasUnreadNotifs },
-    { id: 'nav_calendar', label: 'Calendar' },
-    { id: 'nav_clock', label: 'Clock' },
-    { id: 'nav_todo', label: 'Notes' },
-    { id: 'nav_media', label: 'Media' }
-  ];
+  const catalog = {
+    home: { id: 'nav_home', label: 'Home' },
+    notifications: { id: 'nav_notif', label: 'Notif', badge: hasUnreadNotifs },
+    calendar: { id: 'nav_calendar', label: 'Calendar' },
+    clock: { id: 'nav_clock', label: 'Clock' },
+    todo: { id: 'nav_todo', label: 'Notes' },
+    media: { id: 'nav_media', label: 'Media' },
+    agent: { id: 'nav_agent', label: 'AI', badge: hasActiveAgent() },
+    dropzone: { id: 'nav_dropzone', label: 'Shelf' },
+    clipboard: { id: 'nav_clipboard', label: 'Clip' },
+    settings: { id: 'nav_settings', label: 'Settings' }
+  };
+  const hiddenSet = new Set((tabBarHidden || []).filter(id => id !== 'home' && id !== 'settings'));
+  const items = [];
+  tabBarOrder.forEach(key => {
+    if (catalog[key] && !hiddenSet.has(key)) {
+      items.push(catalog[key]);
+    }
+  });
   if (hasActiveCall() || currentView === 'call') {
-    navItems.push({ id: 'nav_call', label: 'Call' });
+    const settingsIdx = items.findIndex(i => i.id === 'nav_settings');
+    const callItem = { id: 'nav_call', label: 'Call' };
+    if (settingsIdx >= 0) items.splice(settingsIdx, 0, callItem);
+    else items.push(callItem);
   }
-  navItems.push(
-    { id: 'nav_dropzone', label: 'Shelf' },
-    { id: 'nav_clipboard', label: 'Clip' },
-    { id: 'nav_settings', label: 'Settings', iconOnly: true }
-  );
+  return items;
+}
 
-  // Left Vertical Icon Rail inside expanded capsule (larger icons, active tab extends label rightward)
-  const railW = 44;
+function renderTopNav(x, y, w, h = 160) {
+  const navItems = getConfiguredNavItems();
+  const isVertical = tabBarPosition === 'left' || tabBarPosition === 'right';
   const pillW = 28;
-  const railX = x + Math.round((railW - pillW) / 2) + 2;
-  const count = navItems.length;
-  const vPad = 10;
-  const gap = h < 190 ? 2 : 3;
-  const availH = Math.max(count * 16, h - vPad * 2);
-  const pillH = Math.max(16, Math.min(24, Math.floor((availH - (count - 1) * gap) / count)));
-  const totalRailH = count * pillH + (count - 1) * gap;
-  let curY = y + Math.round((h - totalRailH) / 2);
-
-  // Subtle vertical hairline separating the left rail from view content
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(x + railW + 2, y + 14);
-  ctx.lineTo(x + railW + 2, y + h - 14);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  ctx.restore();
-
-  let activePillY = null;
-  let activePillH = null;
-  let activePillW = pillW;
-  let hoveredTooltip = null;
-  const itemLayouts = [];
-  let anyTabWidthAnimating = false;
   const widthLerpK = Math.min(1.0, (currentDt || 0.016) * 16.0 * (animSpeedMultiplier || 1.0));
+  let anyTabWidthAnimating = false;
 
   ctx.save();
   ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-  navItems.forEach((item) => {
-    const isCur = !item.iconOnly && (currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif'));
-    const py = curY;
-    curY += pillH + gap;
 
-    const labelW = (!item.iconOnly && item.label) ? Math.ceil(ctx.measureText(item.label).width) : 0;
-    const targetW = (isCur && labelW > 0) ? (pillW + labelW + 12) : pillW;
-    if (navTabWidths[item.id] === undefined) {
-      navTabWidths[item.id] = targetW;
-    } else if (reducedMotionEnabled || liteModeEnabled) {
-      navTabWidths[item.id] = targetW;
+  if (isVertical) {
+    // Vertical Rail (Left or Right) — expands cleanly so hovered/active tab label NEVER crosses the divider line
+    const count = navItems.length;
+    const vPad = 10;
+    const gap = h < 190 ? 2 : 3;
+    const availH = Math.max(count * 16, h - vPad * 2);
+    const pillH = Math.max(16, Math.min(24, Math.floor((availH - (count - 1) * gap) / count)));
+    const totalRailH = count * pillH + (count - 1) * gap;
+    let curY = y + Math.round((h - totalRailH) / 2);
+
+    let maxTargetW = pillW;
+    let maxCurW = pillW;
+    let activePillY = null;
+    let activePillH = null;
+    let activePillW = pillW;
+    const itemLayouts = [];
+
+    navItems.forEach((item) => {
+      const isCur = (currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif'));
+      const isHov = hoveredButtonId === item.id;
+      const shouldExpand = (isCur || isHov) && Boolean(item.label);
+      const py = curY;
+      curY += pillH + gap;
+
+      const labelW = item.label ? Math.ceil(ctx.measureText(item.label).width) : 0;
+      const targetW = (shouldExpand && labelW > 0) ? (pillW + labelW + 12) : pillW;
+      if (targetW > maxTargetW) maxTargetW = targetW;
+
+      if (navTabWidths[item.id] === undefined || reducedMotionEnabled || liteModeEnabled) {
+        navTabWidths[item.id] = targetW;
+      } else {
+        const diff = targetW - navTabWidths[item.id];
+        if (Math.abs(diff) > 0.25) {
+          navTabWidths[item.id] += diff * widthLerpK;
+          anyTabWidthAnimating = true;
+        } else {
+          navTabWidths[item.id] = targetW;
+        }
+      }
+
+      const curW = navTabWidths[item.id];
+      if (curW > maxCurW) maxCurW = curW;
+      const expandProgress = labelW > 0 ? Math.max(0, Math.min(1, (curW - pillW) / (labelW + 12))) : 0;
+
+      if (isCur) {
+        activePillY = py;
+        activePillH = pillH;
+        activePillW = curW;
+      }
+      itemLayouts.push({ item, py, isCur, isHov, curW, expandProgress });
+    });
+    ctx.restore();
+
+    // Smoothly expand the rail column itself to contain the widest expanded pill
+    targetRailW = Math.max(44, Math.ceil(maxTargetW + 18));
+    if (reducedMotionEnabled || liteModeEnabled) {
+      currentRailW = targetRailW;
     } else {
-      const diff = targetW - navTabWidths[item.id];
-      if (Math.abs(diff) > 0.25) {
-        navTabWidths[item.id] += diff * widthLerpK;
+      const rDiff = targetRailW - currentRailW;
+      if (Math.abs(rDiff) > 0.25) {
+        currentRailW += rDiff * widthLerpK;
         anyTabWidthAnimating = true;
       } else {
-        navTabWidths[item.id] = targetW;
+        currentRailW = targetRailW;
       }
     }
 
-    const curW = navTabWidths[item.id];
-    const expandProgress = labelW > 0 ? Math.max(0, Math.min(1, (curW - pillW) / (labelW + 12))) : 0;
+    const railW = Math.max(44, Math.round(currentRailW));
+    const isRight = tabBarPosition === 'right';
+    const dividerX = isRight ? (x + w - railW) : (x + railW);
 
-    if (isCur) {
-      activePillY = py;
-      activePillH = pillH;
-      activePillW = curW;
-    }
-    itemLayouts.push({ item, py, isCur, curW, expandProgress });
-  });
-  ctx.restore();
-
-  // Smooth vertical gliding active pill
-  if (activePillY !== null) {
-    const step = computeSlidingPillStep(navIndicatorY, navIndicatorH, activePillY, activePillH, currentDt, animSpeedMultiplier);
-    navIndicatorY = step.x;
-    navIndicatorH = step.w;
-    isNavPillAnimating = !step.isSettled || anyTabWidthAnimating;
-  } else {
-    isNavPillAnimating = anyTabWidthAnimating;
-  }
-
-  // 1. Inactive icon backdrops
-  itemLayouts.forEach(({ item, py, isCur }) => {
-    if (isCur) return;
-    const isHov = hoveredButtonId === item.id;
-    ctx.beginPath();
-    ctx.roundRect(railX, py, pillW, pillH, Math.min(9, pillH / 2));
-    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.045)';
-    ctx.fill();
-  });
-
-  // 2. Gliding & rightward-expanding Apple frosted glass active pill
-  if (navIndicatorY !== null && navIndicatorH !== null) {
+    // Vertical hairline separating rail from content panel
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(railX, navIndicatorY, activePillW, navIndicatorH, Math.min(9, navIndicatorH / 2));
-    // Solid frosted backing so extended label reads cleanly over content
-    ctx.fillStyle = liquidGlassEnabled ? 'rgba(20, 22, 28, 0.84)' : 'rgba(24, 24, 30, 0.90)';
-    ctx.fill();
-    const glassPillGrad = ctx.createLinearGradient(railX, navIndicatorY, railX, navIndicatorY + navIndicatorH);
-    glassPillGrad.addColorStop(0, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.20)');
-    glassPillGrad.addColorStop(1, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.10)');
-    ctx.fillStyle = glassPillGrad;
-    ctx.fill();
-    ctx.lineWidth = 0.95;
-    ctx.strokeStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.44)' : 'rgba(255, 255, 255, 0.28)';
+    ctx.moveTo(dividerX, y + 14);
+    ctx.lineTo(dividerX, y + h - 14);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 1;
     ctx.stroke();
     ctx.restore();
-  }
 
-  // 3. Draw larger vector icons + rightward expanded label on active tab
-  itemLayouts.forEach(({ item, py, isCur, curW, expandProgress }) => {
-    const isHov = hoveredButtonId === item.id;
-    const fg = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
-    const scaleIcon = pillH < 18 ? 0.96 : 1.14;
-    ctx.save();
-    ctx.translate(railX + pillW / 2, py + pillH / 2);
-    ctx.scale(scaleIcon, scaleIcon);
-    drawNavTabIcon(ctx, item.id, 0, 0, fg, Boolean(item.badge && !isCur));
-    ctx.restore();
+    if (activePillY !== null) {
+      const step = computeSlidingPillStep(navIndicatorY, navIndicatorH, activePillY, activePillH, currentDt, animSpeedMultiplier);
+      navIndicatorY = step.x;
+      navIndicatorH = step.w;
+      isNavPillAnimating = !step.isSettled || anyTabWidthAnimating;
+    } else {
+      isNavPillAnimating = anyTabWidthAnimating;
+    }
 
-    if (isCur && expandProgress > 0.12 && item.label && !item.iconOnly) {
+    const getPillX = (pw) => isRight ? (x + w - 9 - pw) : (x + 9);
+
+    // 1. Inactive & hovered icon pills
+    itemLayouts.forEach(({ item, py, isCur, isHov, curW }) => {
+      if (isCur) return;
+      const px = getPillX(curW);
+      ctx.beginPath();
+      ctx.roundRect(px, py, curW, pillH, Math.min(9, pillH / 2));
+      ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.045)';
+      ctx.fill();
+      if (isHov) {
+        ctx.lineWidth = 0.8;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.stroke();
+      }
+    });
+
+    // 2. Active frosted glass pill
+    if (navIndicatorY !== null && navIndicatorH !== null) {
+      const apx = getPillX(activePillW);
       ctx.save();
       ctx.beginPath();
-      ctx.roundRect(railX, py, curW, pillH, Math.min(9, pillH / 2));
-      ctx.clip();
-      ctx.globalAlpha = Math.max(0, Math.min(1, (expandProgress - 0.12) / 0.88));
-      ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
-      ctx.fillStyle = '#ffffff';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(item.label, railX + pillW + 2, py + pillH / 2 + 0.5);
+      ctx.roundRect(apx, navIndicatorY, activePillW, navIndicatorH, Math.min(9, navIndicatorH / 2));
+      ctx.fillStyle = liquidGlassEnabled ? 'rgba(20, 22, 28, 0.78)' : 'rgba(24, 24, 30, 0.88)';
+      ctx.fill();
+      const glassPillGrad = ctx.createLinearGradient(apx, navIndicatorY, apx, navIndicatorY + navIndicatorH);
+      glassPillGrad.addColorStop(0, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.26)' : 'rgba(255, 255, 255, 0.20)');
+      glassPillGrad.addColorStop(1, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.11)' : 'rgba(255, 255, 255, 0.10)');
+      ctx.fillStyle = glassPillGrad;
+      ctx.fill();
+      ctx.lineWidth = 0.95;
+      ctx.strokeStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.28)';
+      ctx.stroke();
       ctx.restore();
-    } else if (isHov && !isCur && item.label) {
-      hoveredTooltip = { label: item.label, y: py + pillH / 2 };
     }
-    interactiveButtons.push({ id: item.id, x: railX - 2, y: py, w: Math.max(pillW, curW) + 4, h: pillH });
-  });
 
-  // Compact hover tooltip floating right beside hovered rail icon
-  if (hoveredTooltip) {
+    // 3. Icons + expanded labels (both active and hovered)
+    itemLayouts.forEach(({ item, py, isCur, isHov, curW, expandProgress }) => {
+      const px = getPillX(curW);
+      const fg = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
+      const scaleIcon = pillH < 18 ? 0.96 : 1.12;
+      const iconCenterX = isRight ? (px + curW - pillW / 2) : (px + pillW / 2);
+      ctx.save();
+      ctx.translate(iconCenterX, py + pillH / 2);
+      ctx.scale(scaleIcon, scaleIcon);
+      drawNavTabIcon(ctx, item.id, 0, 0, fg, Boolean(item.badge && !isCur));
+      ctx.restore();
+
+      if (expandProgress > 0.12 && item.label) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(px, py, curW, pillH, Math.min(9, pillH / 2));
+        ctx.clip();
+        ctx.globalAlpha = Math.max(0, Math.min(1, (expandProgress - 0.12) / 0.88));
+        ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = isCur ? '#ffffff' : '#e4e4e7';
+        ctx.textAlign = isRight ? 'right' : 'left';
+        ctx.textBaseline = 'middle';
+        const textX = isRight ? (px + curW - pillW - 2) : (px + pillW + 2);
+        ctx.fillText(item.label, textX, py + pillH / 2 + 0.5);
+        ctx.restore();
+      }
+      interactiveButtons.push({ id: item.id, x: px - 2, y: py, w: curW + 4, h: pillH });
+    });
+  } else {
+    // Horizontal Bar (Top or Bottom)
+    currentRailW = 44;
+    targetRailW = 44;
+    const isTop = tabBarPosition === 'top';
+    const barH = 24;
+    const barY = isTop ? (y + 9) : (y + h - barH - 8);
+    const divY = isTop ? (y + 37) : (y + h - 37);
+
+    // Horizontal hairline separating bar from content
     ctx.save();
-    ctx.font = '600 9.5px "Segoe UI Variable Text", Inter, sans-serif';
-    const tw = ctx.measureText(hoveredTooltip.label).width + 12;
-    const th = 18;
-    const tx = x + railW + 6;
-    const ty = Math.max(y + 8, Math.min(y + h - th - 8, hoveredTooltip.y - th / 2));
     ctx.beginPath();
-    ctx.roundRect(tx, ty, tw, th, 6);
-    ctx.fillStyle = 'rgba(18, 18, 22, 0.92)';
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.moveTo(x + 16, divY);
+    ctx.lineTo(x + w - 16, divY);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
     ctx.lineWidth = 1;
-    ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(hoveredTooltip.label, tx + tw / 2, ty + th / 2);
+    ctx.restore();
+
+    const gap = 4;
+    const itemLayouts = [];
+    let totalW = 0;
+
+    navItems.forEach((item) => {
+      const isCur = (currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif'));
+      const isHov = hoveredButtonId === item.id;
+      const shouldExpand = (isCur || isHov) && Boolean(item.label);
+      const labelW = item.label ? Math.ceil(ctx.measureText(item.label).width) : 0;
+      const targetW = (shouldExpand && labelW > 0) ? (pillW + labelW + 10) : pillW;
+
+      if (navTabWidths[item.id] === undefined || reducedMotionEnabled || liteModeEnabled) {
+        navTabWidths[item.id] = targetW;
+      } else {
+        const diff = targetW - navTabWidths[item.id];
+        if (Math.abs(diff) > 0.25) {
+          navTabWidths[item.id] += diff * widthLerpK;
+          anyTabWidthAnimating = true;
+        } else {
+          navTabWidths[item.id] = targetW;
+        }
+      }
+      const curW = navTabWidths[item.id];
+      const expandProgress = labelW > 0 ? Math.max(0, Math.min(1, (curW - pillW) / (labelW + 10))) : 0;
+      totalW += curW;
+      itemLayouts.push({ item, isCur, isHov, curW, expandProgress });
+    });
+    ctx.restore();
+
+    totalW += Math.max(0, navItems.length - 1) * gap;
+    const rightReserve = isTop ? 116 : 16;
+    const availW = Math.max(120, w - 16 - rightReserve);
+    let curX = isTop ? (x + 14) : (x + Math.max(14, Math.round((w - totalW) / 2)));
+
+    let activeX = null;
+    let activeW = null;
+    itemLayouts.forEach(entry => {
+      entry.px = curX;
+      if (entry.isCur) {
+        activeX = curX;
+        activeW = entry.curW;
+      }
+      curX += entry.curW + gap;
+    });
+
+    if (activeX !== null) {
+      const step = computeSlidingPillStep(navIndicatorX, navIndicatorW, activeX, activeW, currentDt, animSpeedMultiplier);
+      navIndicatorX = step.x;
+      navIndicatorW = step.w;
+      isNavPillAnimating = !step.isSettled || anyTabWidthAnimating;
+    } else {
+      isNavPillAnimating = anyTabWidthAnimating;
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 10, barY - 2, availW + (isTop ? 0 : rightReserve), barH + 4);
+    ctx.clip();
+
+    itemLayouts.forEach(({ item, px, isCur, isHov, curW }) => {
+      if (isCur) return;
+      ctx.beginPath();
+      ctx.roundRect(px, barY, curW, barH, 10);
+      ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.045)';
+      ctx.fill();
+    });
+
+    if (navIndicatorX !== null && navIndicatorW !== null) {
+      ctx.beginPath();
+      ctx.roundRect(navIndicatorX, barY, navIndicatorW, barH, 10);
+      ctx.fillStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.16)';
+      ctx.fill();
+      ctx.lineWidth = 0.9;
+      ctx.strokeStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.26)';
+      ctx.stroke();
+    }
+
+    itemLayouts.forEach(({ item, px, isCur, isHov, curW, expandProgress }) => {
+      const fg = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
+      ctx.save();
+      ctx.translate(px + pillW / 2, barY + barH / 2);
+      ctx.scale(1.08, 1.08);
+      drawNavTabIcon(ctx, item.id, 0, 0, fg, Boolean(item.badge && !isCur));
+      ctx.restore();
+
+      if (expandProgress > 0.12 && item.label) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(px, barY, curW, barH, 10);
+        ctx.clip();
+        ctx.globalAlpha = Math.max(0, Math.min(1, (expandProgress - 0.12) / 0.88));
+        ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
+        ctx.fillStyle = isCur ? '#ffffff' : '#e4e4e7';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(item.label, px + pillW + 1, barY + barH / 2 + 0.5);
+        ctx.restore();
+      }
+      interactiveButtons.push({ id: item.id, x: px, y: barY, w: curW, h: barH });
+    });
     ctx.restore();
   }
 
-  // Top-Right Mode Switcher + Exit Button (compact, unobtrusive)
+  // Top-Right Mode Switcher + Exit Button (clear of right rail when tabBarPosition === 'right')
   const topY = y + 10;
+  const rightRailReserve = tabBarPosition === 'right' ? Math.max(44, Math.round(currentRailW || 44)) : 0;
 
-  // Dedicated Exit Application Button (✕) on the far right
+  // Dedicated Exit Application Button (✕)
   const exitW = 22;
   const exitH = 22;
-  const exitX = x + w - exitW - 14;
+  const exitX = x + w - rightRailReserve - exitW - 14;
   const isExitHov = hoveredButtonId === 'btn_top_exit';
 
   // Display Mode Quick Switcher immediately to the left of the Exit Button
@@ -9158,18 +9491,33 @@ function renderAgentView(x, y, w, h) {
 
   const projs = getActiveProjects();
 
-  // If only 1 project, render the classic spacious card
+  // If only 1 project, render the classic spacious card with provider logo
   if (projs.length <= 1) {
     const proj = projs[0] || antigravityState;
+    const provImg = getProviderLogoImage(proj.provider);
+    const provName = proj.provider || 'Google Antigravity';
 
-    // Header Title
+    // Provider Logo + Header Title
+    let titleStartX = contentX;
+    if (provImg && provImg.complete && provImg.naturalWidth > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(contentX, topY - 1, 18, 18, 4);
+      ctx.clip();
+      ctx.drawImage(provImg, contentX, topY - 1, 18, 18);
+      ctx.restore();
+      titleStartX = contentX + 24;
+    }
+
     ctx.font = '600 13px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#38bdf8';
+    ctx.fillStyle = String(provName).toLowerCase().includes('claude')
+      ? '#f09575'
+      : (String(provName).toLowerCase().includes('codex') ? '#74aa9c' : '#38bdf8');
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     const cleanProj = (proj.project ? String(proj.project).replace(/[\r\n\t\\]+/g, ' ').trim() : 'Island') || 'Island';
-    const projTitle = (cleanProj !== 'Antigravity' && cleanProj !== 'Island') ? `✦ AI Monitor: ${cleanProj}` : '✦ AI Real-Time Monitor';
-    ctx.fillText(projTitle, contentX, topY);
+    const projTitle = (cleanProj !== 'Antigravity' && cleanProj !== 'Island') ? `${provName}: ${cleanProj}` : `${provName} Monitor`;
+    ctx.fillText(truncateToWidth(projTitle, contentW - 140, ctx.font), titleStartX, topY);
 
     // Jump to IDE window button
     const jW = 110;
@@ -9303,13 +9651,26 @@ function renderAgentView(x, y, w, h) {
     ctx.fill();
     ctx.stroke();
 
-    // 1. Project Title + Traffic Light Dot
+    // 1. Provider Logo + Project Title + Traffic Light Dot
+    const pLogo = getProviderLogoImage(proj.provider);
+    let cardTitleX = cx + 10;
+    if (pLogo && pLogo.complete && pLogo.naturalWidth > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(cx + 9, cy + 9, 14, 14, 3);
+      ctx.clip();
+      ctx.drawImage(pLogo, cx + 9, cy + 9, 14, 14);
+      ctx.restore();
+      cardTitleX = cx + 27;
+    }
     ctx.font = '600 11.5px "Segoe UI Variable Display", Inter, sans-serif';
-    ctx.fillStyle = '#38bdf8';
+    ctx.fillStyle = String(proj.provider || '').toLowerCase().includes('claude')
+      ? '#f09575'
+      : (String(proj.provider || '').toLowerCase().includes('codex') ? '#74aa9c' : '#38bdf8');
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     const rawName = (proj.project && proj.project !== 'Antigravity') ? proj.project : (`Chat ${idx + 1}`);
-    ctx.fillText(truncateToWidth(`✦ ${sanitizeProjectName(rawName)}`, cardSize - 34, ctx.font), cx + 10, cy + 10);
+    ctx.fillText(truncateToWidth(sanitizeProjectName(rawName), (cx + cardSize - 22) - cardTitleX, ctx.font), cardTitleX, cy + 10);
     renderTrafficLightDot(cx + cardSize - 14, cy + 16, proj.status);
 
     // 2. Phase text wrapped up to 2 lines
@@ -9569,8 +9930,8 @@ function renderMediaView(x, y, w, h) {
       ctx.globalAlpha = lyricsEase;
       ctx.beginPath();
       ctx.roundRect(toggleX, toggleY, toggleW, toggleH, 9);
-      ctx.fillStyle = isHovToggle ? 'rgba(255, 255, 255, 0.11)' : 'rgba(255, 255, 255, 0.06)';
-      ctx.strokeStyle = isDyn ? colorWithAlpha(albumAccentColor || '#ffffff', 0.45) : 'rgba(255, 255, 255, 0.12)';
+      ctx.fillStyle = isHovToggle ? 'rgba(56, 189, 248, 0.14)' : 'rgba(15, 23, 42, 0.65)';
+      ctx.strokeStyle = isDyn ? 'rgba(56, 189, 248, 0.55)' : 'rgba(59, 130, 246, 0.35)';
       ctx.lineWidth = 1;
       ctx.fill();
       ctx.stroke();
@@ -9579,17 +9940,25 @@ function renderMediaView(x, y, w, h) {
       const thumbW = (toggleW - thumbPad * 2) / 2;
       const thumbH = toggleH - thumbPad * 2;
       const thumbX = toggleX + thumbPad + lyricModeToggleAnim * thumbW;
+      const blueGrad = ctx.createLinearGradient(thumbX, toggleY + thumbPad, thumbX + thumbW, toggleY + thumbPad + thumbH);
+      if (isDyn) {
+        blueGrad.addColorStop(0.0, '#0ea5e9');
+        blueGrad.addColorStop(1.0, '#2563eb');
+      } else {
+        blueGrad.addColorStop(0.0, '#2563eb');
+        blueGrad.addColorStop(1.0, '#1d4ed8');
+      }
       ctx.beginPath();
       ctx.roundRect(thumbX, toggleY + thumbPad, thumbW, thumbH, 7);
-      ctx.fillStyle = isDyn ? (albumAccentColor || 'rgba(255, 255, 255, 0.24)') : 'rgba(255, 255, 255, 0.18)';
+      ctx.fillStyle = blueGrad;
       ctx.fill();
 
       ctx.font = '600 8.5px "Segoe UI Variable Text", Inter, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = lyricModeToggleAnim < 0.5 ? '#ffffff' : '#94a3b8';
+      ctx.fillStyle = lyricModeToggleAnim < 0.5 ? '#ffffff' : '#93c5fd';
       ctx.fillText('Line', toggleX + thumbPad + thumbW / 2, toggleY + toggleH / 2);
-      ctx.fillStyle = lyricModeToggleAnim >= 0.5 ? '#ffffff' : '#94a3b8';
+      ctx.fillStyle = lyricModeToggleAnim >= 0.5 ? '#ffffff' : '#93c5fd';
       ctx.fillText('Word', toggleX + thumbPad + thumbW * 1.5, toggleY + toggleH / 2);
       ctx.restore();
 
