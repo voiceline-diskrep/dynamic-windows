@@ -617,8 +617,8 @@ const UI = {
   ACTIVE_BAR_H: 36,
 
   EXPANDED_W: 648,
-  HOME_EXPANDED_W: 548,
-  HOME_H: 152,
+  HOME_EXPANDED_W: 452,
+  HOME_H: 228,
   CALENDAR_H: 330,
   CLOCK_H: 260,
   TODO_H: 342,
@@ -653,6 +653,7 @@ let navIndicatorY = null;
 let navIndicatorH = null;
 let isNavPillAnimating = false;
 let mediaTabLyricsVisible = true;
+let mediaLyricsPanelAnim = 1.0;
 let currentExpandedH = UI.HOME_H;
 let currentExpandedW = UI.HOME_EXPANDED_W;
 let currentDt = 0.016;
@@ -6276,7 +6277,7 @@ function renderExpandedView(x, y, w, h, alpha) {
   }
 
   // View Body positioned to the right of the left vertical icon rail
-  const railW = 38;
+  const railW = 44;
   const contentX = x + railW;
   const contentW = Math.max(200, w - railW);
   const contentY = y - 6;
@@ -6782,23 +6783,23 @@ function renderTopNav(x, y, w, h = 160) {
     { id: 'nav_settings', label: 'Settings', iconOnly: true }
   );
 
-  // Left Vertical Icon Rail inside expanded capsule (dynamically fits any capsule height)
-  const railW = 38;
-  const pillW = 24;
+  // Left Vertical Icon Rail inside expanded capsule (larger icons, active tab extends label rightward)
+  const railW = 44;
+  const pillW = 28;
   const railX = x + Math.round((railW - pillW) / 2) + 2;
   const count = navItems.length;
   const vPad = 10;
   const gap = h < 190 ? 2 : 3;
-  const availH = Math.max(count * 13, h - vPad * 2);
-  const pillH = Math.max(13, Math.min(22, Math.floor((availH - (count - 1) * gap) / count)));
+  const availH = Math.max(count * 16, h - vPad * 2);
+  const pillH = Math.max(16, Math.min(24, Math.floor((availH - (count - 1) * gap) / count)));
   const totalRailH = count * pillH + (count - 1) * gap;
   let curY = y + Math.round((h - totalRailH) / 2);
 
   // Subtle vertical hairline separating the left rail from view content
   ctx.save();
   ctx.beginPath();
-  ctx.moveTo(x + railW + 1, y + 14);
-  ctx.lineTo(x + railW + 1, y + h - 14);
+  ctx.moveTo(x + railW + 2, y + 14);
+  ctx.lineTo(x + railW + 2, y + h - 14);
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
   ctx.lineWidth = 1;
   ctx.stroke();
@@ -6806,70 +6807,113 @@ function renderTopNav(x, y, w, h = 160) {
 
   let activePillY = null;
   let activePillH = null;
+  let activePillW = pillW;
   let hoveredTooltip = null;
   const itemLayouts = [];
+  let anyTabWidthAnimating = false;
+  const widthLerpK = Math.min(1.0, (currentDt || 0.016) * 16.0 * (animSpeedMultiplier || 1.0));
 
+  ctx.save();
+  ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
   navItems.forEach((item) => {
     const isCur = !item.iconOnly && (currentView === item.id.replace('nav_', '') || (currentView === 'notifications' && item.id === 'nav_notif'));
     const py = curY;
     curY += pillH + gap;
+
+    const labelW = (!item.iconOnly && item.label) ? Math.ceil(ctx.measureText(item.label).width) : 0;
+    const targetW = (isCur && labelW > 0) ? (pillW + labelW + 12) : pillW;
+    if (navTabWidths[item.id] === undefined) {
+      navTabWidths[item.id] = targetW;
+    } else if (reducedMotionEnabled || liteModeEnabled) {
+      navTabWidths[item.id] = targetW;
+    } else {
+      const diff = targetW - navTabWidths[item.id];
+      if (Math.abs(diff) > 0.25) {
+        navTabWidths[item.id] += diff * widthLerpK;
+        anyTabWidthAnimating = true;
+      } else {
+        navTabWidths[item.id] = targetW;
+      }
+    }
+
+    const curW = navTabWidths[item.id];
+    const expandProgress = labelW > 0 ? Math.max(0, Math.min(1, (curW - pillW) / (labelW + 12))) : 0;
+
     if (isCur) {
       activePillY = py;
       activePillH = pillH;
+      activePillW = curW;
     }
-    itemLayouts.push({ item, py, isCur });
+    itemLayouts.push({ item, py, isCur, curW, expandProgress });
   });
+  ctx.restore();
 
   // Smooth vertical gliding active pill
   if (activePillY !== null) {
     const step = computeSlidingPillStep(navIndicatorY, navIndicatorH, activePillY, activePillH, currentDt, animSpeedMultiplier);
     navIndicatorY = step.x;
     navIndicatorH = step.w;
-    isNavPillAnimating = !step.isSettled;
+    isNavPillAnimating = !step.isSettled || anyTabWidthAnimating;
   } else {
-    isNavPillAnimating = false;
+    isNavPillAnimating = anyTabWidthAnimating;
   }
 
   // 1. Inactive icon backdrops
-  itemLayouts.forEach(({ item, py }) => {
+  itemLayouts.forEach(({ item, py, isCur }) => {
+    if (isCur) return;
     const isHov = hoveredButtonId === item.id;
     ctx.beginPath();
-    ctx.roundRect(railX, py, pillW, pillH, Math.min(8, pillH / 2));
-    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.04)';
+    ctx.roundRect(railX, py, pillW, pillH, Math.min(9, pillH / 2));
+    ctx.fillStyle = isHov ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.045)';
     ctx.fill();
   });
 
-  // 2. Gliding Apple frosted glass active pill
+  // 2. Gliding & rightward-expanding Apple frosted glass active pill
   if (navIndicatorY !== null && navIndicatorH !== null) {
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(railX, navIndicatorY, pillW, navIndicatorH, Math.min(8, navIndicatorH / 2));
+    ctx.roundRect(railX, navIndicatorY, activePillW, navIndicatorH, Math.min(9, navIndicatorH / 2));
+    // Solid frosted backing so extended label reads cleanly over content
+    ctx.fillStyle = liquidGlassEnabled ? 'rgba(20, 22, 28, 0.84)' : 'rgba(24, 24, 30, 0.90)';
+    ctx.fill();
     const glassPillGrad = ctx.createLinearGradient(railX, navIndicatorY, railX, navIndicatorY + navIndicatorH);
-    glassPillGrad.addColorStop(0, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.30)' : 'rgba(255, 255, 255, 0.22)');
-    glassPillGrad.addColorStop(1, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.12)');
+    glassPillGrad.addColorStop(0, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.28)' : 'rgba(255, 255, 255, 0.20)');
+    glassPillGrad.addColorStop(1, liquidGlassEnabled ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.10)');
     ctx.fillStyle = glassPillGrad;
     ctx.fill();
-    ctx.lineWidth = 0.9;
+    ctx.lineWidth = 0.95;
     ctx.strokeStyle = liquidGlassEnabled ? 'rgba(255, 255, 255, 0.44)' : 'rgba(255, 255, 255, 0.28)';
     ctx.stroke();
     ctx.restore();
   }
 
-  // 3. Draw vertical vector icons & capture hover tooltip
-  itemLayouts.forEach(({ item, py, isCur }) => {
+  // 3. Draw larger vector icons + rightward expanded label on active tab
+  itemLayouts.forEach(({ item, py, isCur, curW, expandProgress }) => {
     const isHov = hoveredButtonId === item.id;
     const fg = isCur ? '#ffffff' : (isHov ? '#f4f4f5' : '#a1a1aa');
-    const scaleIcon = pillH < 17 ? 0.84 : 1.0;
+    const scaleIcon = pillH < 18 ? 0.96 : 1.14;
     ctx.save();
     ctx.translate(railX + pillW / 2, py + pillH / 2);
     ctx.scale(scaleIcon, scaleIcon);
     drawNavTabIcon(ctx, item.id, 0, 0, fg, Boolean(item.badge && !isCur));
     ctx.restore();
 
-    if (isHov && item.label) {
+    if (isCur && expandProgress > 0.12 && item.label && !item.iconOnly) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(railX, py, curW, pillH, Math.min(9, pillH / 2));
+      ctx.clip();
+      ctx.globalAlpha = Math.max(0, Math.min(1, (expandProgress - 0.12) / 0.88));
+      ctx.font = '600 10.5px "Segoe UI Variable Text", Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(item.label, railX + pillW + 2, py + pillH / 2 + 0.5);
+      ctx.restore();
+    } else if (isHov && !isCur && item.label) {
       hoveredTooltip = { label: item.label, y: py + pillH / 2 };
     }
-    interactiveButtons.push({ id: item.id, x: railX - 2, y: py, w: pillW + 4, h: pillH });
+    interactiveButtons.push({ id: item.id, x: railX - 2, y: py, w: Math.max(pillW, curW) + 4, h: pillH });
   });
 
   // Compact hover tooltip floating right beside hovered rail icon
@@ -8981,12 +9025,13 @@ function renderHomeView(x, y, w, h) {
   const timeStr = formatClockTime(now, { clock24h, showSeconds: true, showAmPm });
   const dateStr = now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
-  const clockX = x + 20;
+  const clockX = x + 18;
+  const homeBaseY = y + Math.max(44, Math.round((h - 118) / 2) + 8);
 
-  // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation (clean spacing, no greeting clutter)
+  // 1. Digital Clock on Left with Mechanical Rolling Tumbler Lock Wheel Animation
   const isHomeClockHov = hoveredButtonId === 'home_clock_display';
-  const homeClockFontSize = (!clock24h && showAmPm) ? 23 : 27;
-  const homeClockY = (!clock24h && showAmPm) ? (y + 44) : (y + 42);
+  const homeClockFontSize = (!clock24h && showAmPm) ? 25 : 29;
+  const homeClockY = (!clock24h && showAmPm) ? (homeBaseY + 2) : homeBaseY;
   drawRollingTime(ctx, 'home_digital_clock', timeStr, clockX, homeClockY, {
     font: `700 ${homeClockFontSize}px "Segoe UI Variable Display", Inter, sans-serif`,
     fillStyle: isHomeClockHov ? '#38bdf8' : '#ffffff',
@@ -8999,24 +9044,24 @@ function renderHomeView(x, y, w, h) {
   interactiveButtons.push({
     id: 'home_clock_display',
     x: clockX - 4,
-    y: y + 40,
-    w: 136,
-    h: 34
+    y: homeBaseY - 2,
+    w: 146,
+    h: 36
   });
 
   // 1a. Date + Laptop Battery Row (generous vertical gap below clock — zero overlap)
-  ctx.font = '500 11.5px "Segoe UI Variable Text", Inter, sans-serif';
+  ctx.font = '500 12px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = '#94a3b8';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   if (batteryState && batteryState.hasBattery) {
     const shortDateStr = now.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    ctx.fillText(shortDateStr, clockX, y + 83);
+    ctx.fillText(shortDateStr, clockX, homeBaseY + 42);
 
-    const homeBattW = 60;
-    const homeBattH = 18;
-    const homeBattX = clockX + 132 - homeBattW;
-    const homeBattY = y + 80;
+    const homeBattW = 62;
+    const homeBattH = 19;
+    const homeBattX = clockX + 148 - homeBattW;
+    const homeBattY = homeBaseY + 39;
     const isHomeBattHov = hoveredButtonId === 'home_battery_badge';
 
     ctx.save();
@@ -9042,14 +9087,14 @@ function renderHomeView(x, y, w, h) {
       h: homeBattH
     });
   } else {
-    ctx.fillText(dateStr, clockX, y + 82);
+    ctx.fillText(dateStr, clockX, homeBaseY + 42);
   }
 
   // 1b. Latest Notification Card below Date/Battery
   const notifCardX = clockX;
-  const notifCardY = y + 100;
-  const notifCardW = 148;
-  const notifCardH = 40;
+  const notifCardY = homeBaseY + 66;
+  const notifCardW = 156;
+  const notifCardH = 44;
   const isNotifHov = hoveredButtonId === 'nav_notif_card';
 
   ctx.save();
@@ -9095,11 +9140,11 @@ function renderHomeView(x, y, w, h) {
 
   interactiveButtons.push({ id: 'nav_notif_card', x: notifCardX, y: notifCardY, w: notifCardW, h: notifCardH });
 
-  // 2. Compact Right Calendar Widget (tight Apple day spacing, fits narrower Home capsule)
+  // 2. Compact Right Calendar Widget (tight Apple day spacing, zero dead middle gap)
   const calW = 196;
-  const calH = 100;
-  const calX = x + w - calW - 18;
-  const calY = y + 40;
+  const calH = 116;
+  const calX = x + w - calW - 16;
+  const calY = homeBaseY - 4;
   renderCalendarWidget(calX, calY, calW, calH);
 }
 
@@ -9441,8 +9486,22 @@ function renderMediaView(x, y, w, h) {
   ctx.fillText(`${srcName}${lyrStatus}`, metaX, artY + 41);
   const badgeTextW = ctx.measureText(`${srcName}${lyrStatus}`).width;
 
-  // Message / Speech Bubble Lyrics Hide/Show Icon + Sliding [ Line | Word ] Pill
+  // Message / Speech Bubble Lyrics Hide/Show Icon + Smoothly Animated [ Line | Word ] Pill
   const showMediaLyrics = Boolean(liveLyricsEnabled && mediaTabLyricsVisible);
+  const targetLyricsAnim = showMediaLyrics ? 1.0 : 0.0;
+  if (reducedMotionEnabled || liteModeEnabled) {
+    mediaLyricsPanelAnim = targetLyricsAnim;
+  } else {
+    const lk = Math.min(1.0, (currentDt || 0.016) * 14.0 * (animSpeedMultiplier || 1.0));
+    mediaLyricsPanelAnim += (targetLyricsAnim - mediaLyricsPanelAnim) * lk;
+    if (Math.abs(targetLyricsAnim - mediaLyricsPanelAnim) < 0.004) {
+      mediaLyricsPanelAnim = targetLyricsAnim;
+    } else {
+      isNavPillAnimating = true;
+    }
+  }
+  const lyricsEase = mediaLyricsPanelAnim * mediaLyricsPanelAnim * (3 - 2 * mediaLyricsPanelAnim);
+
   if (liveLyricsEnabled) {
     const msgBtnW = 22;
     const msgBtnH = 18;
@@ -9489,10 +9548,10 @@ function renderMediaView(x, y, w, h) {
     ctx.restore();
     interactiveButtons.push({ id: 'media_toggle_tab_lyrics', x: msgBtnX, y: msgBtnY, w: msgBtnW, h: msgBtnH });
 
-    if (showMediaLyrics) {
+    if (lyricsEase > 0.02) {
       const toggleW = 84;
       const toggleH = 18;
-      const toggleX = msgBtnX + msgBtnW + 6;
+      const toggleX = msgBtnX + msgBtnW + 6 - (1 - lyricsEase) * 8;
       const toggleY = artY + 38;
       const isDyn = Boolean(dynamicLyricsEnabled && !liteModeEnabled);
       const isHovToggle = hoveredButtonId === 'toggle_dynamic_lyrics';
@@ -9507,6 +9566,7 @@ function renderMediaView(x, y, w, h) {
       }
 
       ctx.save();
+      ctx.globalAlpha = lyricsEase;
       ctx.beginPath();
       ctx.roundRect(toggleX, toggleY, toggleW, toggleH, 9);
       ctx.fillStyle = isHovToggle ? 'rgba(255, 255, 255, 0.11)' : 'rgba(255, 255, 255, 0.06)';
@@ -9533,15 +9593,17 @@ function renderMediaView(x, y, w, h) {
       ctx.fillText('Word', toggleX + thumbPad + thumbW * 1.5, toggleY + toggleH / 2);
       ctx.restore();
 
-      interactiveButtons.push({ id: 'toggle_dynamic_lyrics', x: toggleX, y: toggleY, w: toggleW, h: toggleH });
+      if (showMediaLyrics) {
+        interactiveButtons.push({ id: 'toggle_dynamic_lyrics', x: toggleX, y: toggleY, w: toggleW, h: toggleH });
+      }
     }
   }
 
-  // 2. Middle Row: Rolling Lyrics Stage (hidden when toggled off via message icon or Live Lyrics setting)
+  // 2. Middle Row: Rolling Lyrics Stage (smoothly expands/collapses on message icon toggle)
   const lyricsY = topY + 62;
-  const lyricsH = showMediaLyrics ? 54 : 0;
+  const lyricsH = Math.round(54 * lyricsEase);
 
-  if (showMediaLyrics) {
+  if (lyricsH > 2) {
     const around = getExpandedAroundLyrics();
     const stageElapsed = (lyricModeStageAnimStart > 0 && !reducedMotionEnabled && !liteModeEnabled)
       ? Math.min(1.0, (performance.now() - lyricModeStageAnimStart) / 420)
@@ -9550,6 +9612,7 @@ function renderMediaView(x, y, w, h) {
     const stageEase = 1 - Math.pow(1 - stageElapsed, 3);
 
     ctx.save();
+    ctx.globalAlpha = lyricsEase;
     ctx.beginPath();
     ctx.roundRect(contentX, lyricsY, contentW, lyricsH, 8);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
@@ -9561,6 +9624,7 @@ function renderMediaView(x, y, w, h) {
     ctx.fill();
     ctx.stroke();
     ctx.clip();
+    ctx.translate(0, (1 - lyricsEase) * -8);
 
     if (stageActive) {
       if (lyricModeStageTarget === 'word') {
@@ -9668,7 +9732,7 @@ function renderMediaView(x, y, w, h) {
   const durMs = Math.max(0, mediaState.duration_ms || 0);
   const ratio = durMs > 0 ? Math.max(0, Math.min(1, posMs / durMs)) : 0;
 
-  const timeY = liveLyricsEnabled ? (lyricsY + lyricsH + 13) : (topY + 66);
+  const timeY = lyricsY + lyricsH + Math.round(4 + 9 * lyricsEase);
   ctx.font = '600 10px "Segoe UI Variable Text", Inter, sans-serif';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
   ctx.textBaseline = 'middle';

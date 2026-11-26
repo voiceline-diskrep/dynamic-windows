@@ -93,7 +93,7 @@ test('TabAnimationEngine: sliding pill indicator step and fluid stretch', () => 
 });
 
 test('TabAnimationEngine: target expanded heights for distinct views', () => {
-  assert.strictEqual(getTargetExpandedHeight('home'), 152);
+  assert.strictEqual(getTargetExpandedHeight('home'), 228);
   assert.strictEqual(getTargetExpandedHeight('calendar'), 330);
   assert.strictEqual(getTargetExpandedHeight('clock'), 260);
   assert.strictEqual(getTargetExpandedHeight('clock', { activeAlarmRinging: true }), 280);
