@@ -540,7 +540,7 @@ fn push_initial_states(state: &AppState, proxy: &EventLoopProxy<UserEvent>) {
         send(
             "tab-bar-config-changed",
             json!({
-                "tabBarPosition": cfg.get_str("tabBarPosition", "left"),
+                "tabBarPosition": cfg.get_str("tabBarPosition", "top"),
                 "tabBarOrder": cfg.get("tabBarOrder").cloned().unwrap_or_else(|| json!([])),
                 "tabBarHidden": cfg.get("tabBarHidden").cloned().unwrap_or_else(|| json!([]))
             }),
@@ -697,7 +697,7 @@ fn handle_ipc_message(
                     bcast(
                         "tab-bar-config-changed",
                         json!({
-                            "tabBarPosition": cfg.get_str("tabBarPosition", "left"),
+                            "tabBarPosition": cfg.get_str("tabBarPosition", "top"),
                             "tabBarOrder": cfg.get("tabBarOrder").cloned().unwrap_or_else(|| json!([])),
                             "tabBarHidden": cfg.get("tabBarHidden").cloned().unwrap_or_else(|| json!([]))
                         }),

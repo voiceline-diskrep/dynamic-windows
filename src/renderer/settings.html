@@ -1223,7 +1223,7 @@
       { id: 'clipboard', label: 'Clipboard', locked: false },
       { id: 'settings', label: 'Settings', locked: true }
     ];
-    let currentTabPos = 'left';
+    let currentTabPos = 'top';
     let currentTabOrder = TAB_META.map(t => t.id);
     let currentTabHidden = [];
 
@@ -1260,7 +1260,7 @@
 
     function renderTabBarConfigUI(cfg) {
       if (cfg) {
-        currentTabPos = ['left', 'top', 'right', 'bottom'].includes(cfg.tabBarPosition) ? cfg.tabBarPosition : 'left';
+        currentTabPos = ['left', 'top', 'right', 'bottom'].includes(cfg.tabBarPosition) ? cfg.tabBarPosition : 'top';
         currentTabOrder = normalizeTabOrder(cfg.tabBarOrder);
         currentTabHidden = Array.isArray(cfg.tabBarHidden)
           ? cfg.tabBarHidden.filter(id => id !== 'home' && id !== 'settings')

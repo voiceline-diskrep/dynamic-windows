@@ -41,7 +41,7 @@ pub fn default_config_map() -> Map<String, Value> {
         "liteMode": false,
         "reducedMotion": false,
         "displayMode": "island",
-        "tabBarPosition": "left",
+        "tabBarPosition": "top",
         "tabBarOrder": [
             "home",
             "notifications",
